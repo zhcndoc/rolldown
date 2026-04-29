@@ -1,25 +1,25 @@
-# ESM External Require Plugin
+# ESM 外部依赖 Require 插件
 
-The `esmExternalRequirePlugin` is a built-in Rolldown plugin that converts CommonJS `require()` calls for external dependencies into ESM `import` statements, ensuring compatibility in environments that don't support the Node.js module API.
+`esmExternalRequirePlugin` 是 Rolldown 内置的插件，它会将外部依赖的 CommonJS `require()` 调用转换为 ESM `import` 语句，从而确保在不支持 Node.js 模块 API 的环境中也能兼容。
 
-:::tip NOTE
-This plugin sets `resolveId.meta.order` to `'pre'` to ensure external requires are resolved before other plugins. Additionally, it sets `enforce: 'pre'` by default for Vite compatibility.
+:::tip 注意
+该插件会将 `resolveId.meta.order` 设置为 `'pre'`，以确保外部 `require` 先于其他插件解析。此外，为了兼容 Vite，它默认还会设置 `enforce: 'pre'`。
 :::
 
-## Why This Is Needed
+## 为什么需要它
 
-When bundling code with Rolldown, `require()` calls for external dependencies are not automatically converted to ESM imports to preserve the semantics of `require()`. While Rolldown injects `require` function when `platform: 'node'` is set, it does so by generating code like:
+在使用 Rolldown 打包代码时，为了保留 `require()` 的语义，外部依赖的 `require()` 调用不会自动转换为 ESM 导入。虽然当设置了 `platform: 'node'` 时，Rolldown 会注入 `require` 函数，但它的方式是生成类似下面的代码：
 
 ```js
 import { createRequire } from 'node:module';
 var __require = createRequire(import.meta.url);
 ```
 
-However, this approach relies on the Node.js module API, which isn't available in some environments. This approach is also problematic for libraries that are expected to be bundled later, as this code is difficult to be analyzed and transformed by bundlers.
+不过，这种方式依赖于 Node.js 模块 API，而某些环境并不支持它。对于那些预计之后还会被再次打包的库来说，这种方式也有问题，因为这段代码很难被打包器分析和转换。
 
-## Usage
+## 用法
 
-Import and use the plugin from Rolldown's experimental exports:
+从 Rolldown 的实验性导出中导入并使用该插件：
 
 ```js
 import { defineConfig } from 'rolldown';
@@ -39,64 +39,64 @@ export default defineConfig({
 });
 ```
 
-## Options
+## 选项
 
 ### `external`
 
-Type: `(string | RegExp)[]`
+类型：`(string | RegExp)[]`
 
-Defines which dependencies should be treated as external. When the output format is ESM, their `require()` calls will be converted to `import` statements. For non-ESM output formats, the dependencies will be marked as external but the `require()` calls will remain unchanged.
+定义哪些依赖应被视为外部依赖。当输出格式为 ESM 时，它们的 `require()` 调用将被转换为 `import` 语句。对于非 ESM 输出格式，这些依赖仍会被标记为外部依赖，但 `require()` 调用将保持不变。
 
 ### `skipDuplicateCheck`
 
-Type: `boolean`
-Default: `false`
+类型：`boolean`
+默认值：`false`
 
-When enabled, skips checking for duplicate externals between this plugin and the top-level `external` option. This can improve build performance when you're confident there are no duplicates.
+启用后，将跳过检查此插件与顶层 `external` 选项之间是否存在重复外部依赖。当你确信不存在重复项时，这可以提升构建性能。
 
 ```javascript
 esmExternalRequirePlugin({
   external: ['react', 'vue'],
-  skipDuplicateCheck: true, // Skip duplicate check for better performance
+  skipDuplicateCheck: true, // 跳过重复检查以获得更好的性能
 });
 ```
 
-## Duplicate External Detection
+## 重复外部依赖检测
 
-By default, the plugin checks if any externals you specify are also configured in the top-level `external` option. If duplicates are found, you'll see a warning:
+默认情况下，插件会检查你指定的外部依赖是否也配置在顶层 `external` 选项中。如果发现重复项，你会看到一条警告：
 
 ```
 Found 2 duplicate external: `react`, `vue`. Remove them from top-level `external` as they're already handled by 'builtin:esm-external-require' plugin.
 ```
 
-This helps avoid configuration confusion and ensures the plugin handles ESM `require()` transforms correctly. You can disable this check by setting `skipDuplicateCheck: true` if you're confident about your configuration.
+这有助于避免配置混淆，并确保插件正确处理 ESM `require()` 转换。如果你对自己的配置很有信心，可以通过设置 `skipDuplicateCheck: true` 来禁用此检查。
 
-## Limitations
+## 限制
 
-Since this plugin changes `require()` calls to `import` statements, there are some semantic differences after bundling:
+由于该插件会将 `require()` 调用改为 `import` 语句，因此打包后会存在一些语义差异：
 
-- resolution is now based on `import` behavior, not `require` behavior
-  - For example, `import` condition is used instead of `require` condition
-- The values may be different from the original `require()` calls, especially for modules with default exports.
+- 解析现在基于 `import` 行为，而不是 `require` 行为
+  - 例如，会使用 `import` 条件而不是 `require` 条件
+- 返回值可能与原始的 `require()` 调用不同，尤其是对于具有默认导出的模块。
 
-## How It Works
+## 工作原理
 
-This plugin intercepts `require()` calls for dependencies specified in the option and creates virtual facade modules that:
+该插件会拦截选项中指定的依赖的 `require()` 调用，并创建虚拟门面模块，这些模块会：
 
-1. Import the dependency using ESM `import * as m from '...'`
-2. Re-export it using `module.exports = m` for CommonJS compatibility
-3. Replace the original `require()` with the virtual module reference
+1. 使用 ESM `import * as m from '...'` 导入依赖
+2. 使用 `module.exports = m` 将其重新导出，以兼容 CommonJS
+3. 用虚拟模块引用替换原始的 `require()`
 
-For non-external `require()` calls, Rolldown automatically wraps them and converts them into ESM imports.
+对于非外部的 `require()` 调用，Rolldown 会自动包裹它们并将其转换为 ESM 导入。
 
 ```js
-// Input code
+// 输入代码
 const react = require('react');
 
-// Transformed output
+// 转换后的输出
 const react = require('builtin:esm-external-require-react');
 
-// Virtual module: builtin:esm-external-require-react
+// 虚拟模块：builtin:esm-external-require-react
 import * as m from 'react';
 module.exports = m;
 ```

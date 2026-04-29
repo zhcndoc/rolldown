@@ -10,43 +10,43 @@ import { createHooksGraphProcessor } from './markdown-hooks-graph.ts';
 
 const sidebarForUserGuide: DefaultTheme.SidebarItem[] = [
   {
-    text: 'Guide',
+    text: '指南',
     items: [
-      { text: 'Introduction', link: '/guide/introduction.md' },
-      { text: 'Getting Started', link: '/guide/getting-started.md' },
-      { text: 'Notable Features', link: '/guide/notable-features.md' },
+      { text: '简介', link: '/guide/introduction.md' },
+      { text: '快速开始', link: '/guide/getting-started.md' },
+      { text: '特色功能', link: '/guide/notable-features.md' },
       {
-        text: 'Troubleshooting',
+        text: '故障排查',
         link: '/guide/troubleshooting.md',
       },
     ],
   },
   {
-    text: 'APIs',
+    text: 'API',
     items: [
-      { text: 'Configuration Options', link: '/reference' },
-      { text: 'Bundler API', link: '/apis/bundler-api.md' },
+      { text: '配置项', link: '/reference' },
+      { text: '打包器 API', link: '/apis/bundler-api.md' },
       {
-        text: 'Plugin API',
+        text: '插件 API',
         link: '/apis/plugin-api.md',
         items: [
-          { text: 'Hook Filters', link: '/apis/plugin-api/hook-filters.md' },
-          { text: 'File URLs', link: '/apis/plugin-api/file-urls.md' },
-          { text: 'Source Code Transformations', link: '/apis/plugin-api/transformations.md' },
+          { text: 'Hook 过滤器', link: '/apis/plugin-api/hook-filters.md' },
+          { text: '文件 URL', link: '/apis/plugin-api/file-urls.md' },
+          { text: '源码转换', link: '/apis/plugin-api/transformations.md' },
           {
-            text: 'Inter-plugin communication',
+            text: '插件间通信',
             link: '/apis/plugin-api/inter-plugin-communication.md',
           },
         ],
       },
-      { text: 'Command Line Interface', link: '/apis/cli.md' },
+      { text: '命令行接口', link: '/apis/cli.md' },
     ],
   },
   {
-    text: 'Builtin Plugins',
+    text: '内置插件',
     items: [
       {
-        text: 'Introduction',
+        text: '简介',
         link: '/builtin-plugins/',
       },
       {
@@ -63,27 +63,27 @@ const sidebarForUserGuide: DefaultTheme.SidebarItem[] = [
 
 const sidebarForInDepth: DefaultTheme.SidebarItem[] = [
   {
-    text: 'In-Depth',
+    text: '深入了解',
     items: [
-      { text: 'Why Bundlers', link: '/in-depth/why-bundlers.md' },
-      { text: 'Module Types', link: '/in-depth/module-types.md' },
-      { text: 'Top Level Await', link: '/in-depth/tla-in-rolldown.md' },
-      { text: 'Automatic Code Splitting', link: '/in-depth/automatic-code-splitting.md' },
-      { text: 'Manual Code Splitting', link: '/in-depth/manual-code-splitting.md' },
-      { text: 'Bundling CJS', link: '/in-depth/bundling-cjs.md' },
+      { text: '为什么需要打包器', link: '/in-depth/why-bundlers.md' },
+      { text: '模块类型', link: '/in-depth/module-types.md' },
+      { text: '顶层 Await', link: '/in-depth/tla-in-rolldown.md' },
+      { text: '自动代码拆分', link: '/in-depth/automatic-code-splitting.md' },
+      { text: '手动代码拆分', link: '/in-depth/manual-code-splitting.md' },
+      { text: '打包 CJS', link: '/in-depth/bundling-cjs.md' },
       {
-        text: 'Non ESM Output Formats',
+        text: '非 ESM 输出格式',
         link: '/in-depth/non-esm-output-formats.md',
       },
-      { text: 'Dead Code Elimination', link: '/in-depth/dead-code-elimination.md' },
-      { text: 'Lazy Barrel Optimization', link: '/in-depth/lazy-barrel-optimization.md' },
-      { text: 'Native MagicString', link: '/in-depth/native-magic-string.md' },
+      { text: '死代码消除', link: '/in-depth/dead-code-elimination.md' },
+      { text: '延迟 Barrel 优化', link: '/in-depth/lazy-barrel-optimization.md' },
+      { text: '原生 MagicString', link: '/in-depth/native-magic-string.md' },
       {
-        text: 'Why Plugin Hook Filter',
+        text: '为什么要有插件 Hook 过滤器',
         link: '/in-depth/why-plugin-hook-filter.md',
       },
-      { text: 'External Modules', link: '/in-depth/external-modules.md' },
-      { text: 'Directives', link: '/in-depth/directives.md' },
+      { text: '外部模块', link: '/in-depth/external-modules.md' },
+      { text: '指令', link: '/in-depth/directives.md' },
     ],
   },
 ];
@@ -143,7 +143,7 @@ function getOptionsSidebar() {
 
 const sidebarForReference: DefaultTheme.SidebarItem[] = [
   {
-    text: 'Options',
+    text: '选项',
     base: '/reference',
     items: getOptionsSidebar(),
     collapsed: false,
@@ -153,45 +153,45 @@ const sidebarForReference: DefaultTheme.SidebarItem[] = [
 
 const sidebarForDevGuide: DefaultTheme.SidebarItem[] = [
   {
-    text: 'Contribution Guide',
+    text: '贡献指南',
     items: [
       {
-        text: 'Overview',
+        text: '概览',
         link: '/contribution-guide/',
       },
       {
-        text: 'Etiquette',
+        text: '社区礼仪',
         link: 'https://developer.mozilla.org/en-US/docs/MDN/Community/Open_source_etiquette',
       },
     ],
   },
   {
-    text: 'Development Guide',
+    text: '开发指南',
     items: [
       {
-        text: 'Setup the project',
+        text: '项目搭建',
         link: '/development-guide/setup-the-project.md',
       },
       {
-        text: 'Building and running',
+        text: '构建与运行',
         link: '/development-guide/building-and-running.md',
       },
-      { text: 'Testing', link: '/development-guide/testing.md' },
+      { text: '测试', link: '/development-guide/testing.md' },
       {
-        text: 'Benchmarking',
+        text: '基准测试',
         link: '/development-guide/benchmarking.md',
       },
       {
-        text: 'Tracing/Logging',
+        text: '追踪 / 日志',
         link: '/development-guide/tracing-logging.md',
       },
       {
-        text: 'Profiling',
+        text: '性能分析',
         link: '/development-guide/profiling.md',
       },
-      { text: 'Docs', link: '/development-guide/docs.md' },
+      { text: '文档', link: '/development-guide/docs.md' },
       {
-        text: 'Coding Style',
+        text: '编码风格',
         link: '/development-guide/coding-style.md',
       },
     ],
@@ -200,36 +200,36 @@ const sidebarForDevGuide: DefaultTheme.SidebarItem[] = [
 
 const sidebarForGlossary: DefaultTheme.SidebarItem[] = [
   {
-    text: 'Glossary',
+    text: '术语表',
     items: [
-      { text: 'Barrel Module', link: '/glossary/barrel-module.md' },
-      { text: 'Entry', link: '/glossary/entry.md' },
-      { text: 'Entry Chunk', link: '/glossary/entry-chunk.md' },
-      { text: 'Entry Name', link: '/glossary/entry-name.md' },
-      { text: 'User-defined Entry', link: '/glossary/user-defined-entry.md' },
+      { text: 'Barrel 模块', link: '/glossary/barrel-module.md' },
+      { text: '入口', link: '/glossary/entry.md' },
+      { text: '入口块', link: '/glossary/entry-chunk.md' },
+      { text: '入口名称', link: '/glossary/entry-name.md' },
+      { text: '用户定义入口', link: '/glossary/user-defined-entry.md' },
     ],
   },
 ];
 
 const sidebarForResources: DefaultTheme.SidebarItem[] = [
   {
-    text: 'Team',
+    text: '团队',
     link: '/team.md',
   },
   {
-    text: 'Acknowledgements',
+    text: '致谢',
     link: '/acknowledgements.md',
   },
 ];
 
 // https://vitepress.dev/reference/site-config
 const config = defineConfig({
-  title: 'Rolldown',
-  description: 'Fast Rust-based bundler for JavaScript with Rollup-compatible API',
+  title: 'Rolldown 中文文档',
+  description: '基于 Rust 的快速 JavaScript 打包器，兼容 Rollup API',
   lastUpdated: true,
   cleanUrls: true,
   sitemap: {
-    hostname: 'https://rolldown.rs',
+    hostname: 'https://rolldown.zhcndoc.com',
   },
   head: [
     [
@@ -242,34 +242,26 @@ const config = defineConfig({
     ],
     ['meta', { name: 'theme-color', content: '#ff7e17' }],
     ['meta', { property: 'og:type', content: 'website' }],
-    ['meta', { property: 'og:locale', content: 'en' }],
+    ['meta', { property: 'og:locale', content: 'zh-CN' }],
     [
       'meta',
       {
         property: 'og:title',
-        content: 'Rolldown | Rust bundler for JavaScript',
+        content: 'Rolldown 中文文档 - 基于 Rust 的 JavaScript 打包工具',
       },
     ],
     [
       'meta',
       {
         property: 'og:image',
-        content: 'https://rolldown.rs/og.jpg',
+        content: 'https://rolldown.zhcndoc.com/og.jpg',
       },
     ],
-    ['meta', { property: 'og:site_name', content: 'Rolldown' }],
-    ['meta', { property: 'og:url', content: 'https://rolldown.rs/' }],
+    ['meta', { property: 'og:site_name', content: 'Rolldown 中文文档' }],
+    ['meta', { property: 'og:url', content: 'https://rolldown.zhcndoc.com/' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:site', content: '@rolldown_rs' }],
-    [
-      'script',
-      {
-        src: 'https://cdn.usefathom.com/script.js',
-        'data-site': 'RBMPDFTV',
-        'data-spa': 'auto',
-        defer: '',
-      },
-    ],
+    ['script', { async: '', src: 'https://www.zhcndoc.com/js/common.js' }],
   ],
 
   themeConfig: {
@@ -285,46 +277,47 @@ const config = defineConfig({
 
     banner: {
       id: 'viteplus-alpha',
-      text: 'Announcing Vite+ Alpha: Open source. Unified. Next-gen.',
-      url: 'https://voidzero.dev/posts/announcing-vite-plus-alpha?utm_source=rolldown&utm_content=top_banner',
+      text: 'Vite+ Alpha 发布：开源、统一、现代化',
+      url: 'https://viteplus.zhcndoc.com',
+      target: '_blank',
     },
 
     // https://vitepress.dev/reference/default-theme-config
     nav: [
       {
-        text: 'Docs',
+        text: '文档',
         activeMatch: '/(guide|in-depth|glossary|apis|builtin-plugins)',
         items: [
           {
-            text: 'Guide',
+            text: '指南',
             activeMatch: '/(guide|apis|builtin-plugins)',
             link: '/guide/getting-started.md',
           },
           {
-            text: 'In-Depth',
+            text: '深入了解',
             activeMatch: '/in-depth',
             link: '/in-depth/why-bundlers.md',
           },
           {
-            text: 'Glossary',
+            text: '术语表',
             activeMatch: '/glossary',
             link: '/glossary/',
           },
         ],
       },
-      { text: 'Options & APIs', activeMatch: '/reference', link: '/reference' },
+      { text: '选项与 API', activeMatch: '/reference', link: '/reference' },
       { text: 'REPL', link: 'https://repl.rolldown.rs/' },
       {
-        text: 'Resources',
+        text: '资源',
         activeMatch: '/(team|acknowledgements|contribution-guide|development-guide)',
         items: [
           {
-            text: 'Team',
+            text: '团队',
             activeMatch: '/(team|acknowledgements)',
             link: '/team.md',
           },
           {
-            text: 'Contribute',
+            text: '参与贡献',
             activeMatch: '/(contribution-guide|development-guide)',
 
             link: '/contribution-guide/',
@@ -336,6 +329,7 @@ const config = defineConfig({
           },
         ],
       },
+      { text: '简中文档', link: 'https://www.zhcndoc.com', target: '_blank' },
     ],
 
     sidebar: {
@@ -373,24 +367,40 @@ const config = defineConfig({
         {
           title: 'Rolldown',
           items: [
-            { text: 'Guide', link: '/guide/getting-started' },
-            { text: 'Options & APIs', link: '/reference' },
-            { text: 'Plugins', link: '/builtin-plugins/' },
-            { text: 'Contribute', link: '/contribution-guide/' },
+            { text: '指南', link: '/guide/getting-started' },
+            { text: '选项与 API', link: '/reference' },
+            { text: '插件', link: '/builtin-plugins/' },
+            { text: '参与贡献', link: '/contribution-guide/' },
             { text: 'REPL', link: 'https://repl.rolldown.rs/' },
           ],
         },
         {
-          title: 'Resources',
+          title: '资源',
           items: [
             {
-              text: 'Roadmap',
+              text: '路线图',
               link: 'https://github.com/rolldown/rolldown/discussions/153',
             },
-            { text: 'Team', link: '/team' },
+            { text: '团队', link: '/team' },
           ],
         },
-      ],
+        {
+          title: '友情链接',
+          items: [
+            {
+              text: '简中文档',
+              link: 'https://www.zhcndoc.com',
+              target: '_blank',
+            },
+            {
+              text: '沪ICP备2024070610号-3',
+              link: 'https://beian.miit.gov.cn',
+              target: '_blank',
+              rel: 'nofollow noopener noreferrer',
+            },
+          ],
+        },
+      ] as any,
       social: [
         { icon: 'github', link: 'https://github.com/rolldown/rolldown' },
         { icon: 'discord', link: 'https://chat.rolldown.rs' },
@@ -400,8 +410,8 @@ const config = defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/rolldown/rolldown/edit/main/docs/:path',
-      text: 'Edit this page on GitHub',
+      pattern: 'https://github.com/zhcndoc/rolldown/edit/main/docs/:path',
+      text: '在 GitHub 上编辑此页',
     },
   },
 
@@ -440,7 +450,7 @@ const config = defineConfig({
     // Automatically handle OG images for all markdown files.
     if (!pageData.frontmatter.image && pageData.relativePath !== 'index.md') {
       await addOgImage(pageData, ctx, {
-        domain: 'https://rolldown.rs',
+        domain: 'https://rolldown.zhcndoc.com',
         maxTitleSizePerLine: 16,
       });
     }

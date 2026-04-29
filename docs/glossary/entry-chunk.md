@@ -1,14 +1,14 @@
-# Entry Chunk
+# 入口块
 
-An entry chunk is created, because we need to output a JavaScript file for:
+入口块会被创建，因为我们需要为以下目的输出一个 JavaScript 文件：
 
-- Exporting the exports of the entry module
-- Representing the executing point of the corresponding [entry](./entry.md).
-- Storing the code of the entry module and its dependencies (if not code-split into separate chunks)
+- 导出入口模块的导出内容
+- 表示对应 [入口](./entry.md) 的执行点
+- 存储入口模块及其依赖的代码（如果没有被拆分到单独的块中）
 
-Let's say you have an app that could run separately but also could be used as a library by other apps.
+假设你有一个应用，它既可以单独运行，也可以被其他应用作为库使用。
 
-File structure:
+文件结构：
 
 ```js
 // component.js
@@ -31,7 +31,7 @@ render(component);
 export { component } from './component.js';
 ```
 
-Config:
+配置：
 
 ```js
 export default defineConfig({
@@ -42,7 +42,7 @@ export default defineConfig({
 });
 ```
 
-Rolldown will create outputs like:
+Rolldown 会生成如下输出：
 
 ::: code-group
 
@@ -68,6 +68,6 @@ export function component() {
 
 :::
 
-- `lib.js` is created because we need to create the export signature `export { component }` and export it in `lib.js`.
-- For `app.js`, though it doesn't export anything, we still need to create `app.js` as the executing point of the app.
-- You'll also notice, from the executing point `app.js`, only modules, like `render.js`, imported are executed. This is another reason and promise made by being the executing point.
+- 创建 `lib.js` 是因为我们需要创建导出签名 `export { component }`，并在 `lib.js` 中导出它。
+- 对于 `app.js`，虽然它没有导出任何内容，我们仍然需要创建 `app.js` 作为应用的执行点。
+- 你还会注意到，从执行点 `app.js` 出发，只有被导入的模块（例如 `render.js`）会被执行。这也是执行点的另一个原因和承诺。

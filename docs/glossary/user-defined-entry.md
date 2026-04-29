@@ -1,3 +1,3 @@
-# User-defined Entry
+# 用户定义的条目
 
-A user-defined entry is an [entry](./entry.md) that's explicitly defined by the user via the [`input`](/reference/InputOptions.input) option.
+用户定义的条目是由用户通过 [`input`](/reference/InputOptions.input) 选项显式定义的 [条目](./entry.md)。

@@ -1,21 +1,21 @@
 # Bundling CJS
 
-Rolldown provides first-class support for CommonJS modules. This document explains how Rolldown handles CJS modules and their interoperability with ES modules.
+Rolldown 为 CommonJS 模块提供一等支持。本文档解释了 Rolldown 如何处理 CJS 模块，以及它们与 ES 模块之间的互操作性。
 
-## Key Features
+## 关键特性
 
-### Native CJS Support
+### 原生 CJS 支持
 
-Rolldown automatically recognizes and processes CommonJS modules without requiring any additional plugins or packages. This native support means:
+Rolldown 会自动识别并处理 CommonJS 模块，无需任何额外的插件或包。这种原生支持意味着：
 
-- No need to install extra dependencies
-- Better performance compared to plugin-based solutions
+- 无需安装额外依赖
+- 与基于插件的方案相比性能更好
 
-### On-demand Execution
+### 按需执行
 
-Rolldown preserves the on-demand execution semantics of CommonJS modules, which is a key feature of the CommonJS module system. This means modules are only executed when they are actually required.
+Rolldown 保留了 CommonJS 模块的按需执行语义，这是 CommonJS 模块系统的一项关键特性。这意味着模块只有在真正被 require 时才会执行。
 
-Here's an example:
+下面是一个示例：
 
 ```js
 // index.js
@@ -27,11 +27,11 @@ const getFooExports = () => require('./foo.js');
 module.exports = { value: 'foo' };
 ```
 
-When bundled, it produces:
+打包后会生成：
 
 ```js
 // #region \0rolldown/runtime.js
-// ...runtime code
+// ...运行时代码
 // #endregion
 
 // #region foo.js
@@ -47,13 +47,13 @@ const getFooExports = () => require_foo();
 // #endregion
 ```
 
-In this example, the `foo.js` module won't be executed until `getFooExports()` is called, maintaining the lazy-loading behavior of CommonJS.
+在这个示例中，`foo.js` 模块在调用 `getFooExports()` 之前不会执行，从而保持了 CommonJS 的懒加载行为。
 
-### ESM/CJS Interoperability
+### ESM/CJS 互操作性
 
-Rolldown provides seamless interoperability between ES modules and CommonJS modules.
+Rolldown 提供了 ES 模块与 CommonJS 模块之间的无缝互操作。
 
-Example of ESM importing from CJS:
+ESM 从 CJS 导入的示例：
 
 ```js
 // index.js
@@ -65,11 +65,11 @@ console.log(value);
 module.exports = { value: 'foo' };
 ```
 
-Bundled output:
+打包输出：
 
 ```js
 // #region \0rolldown/runtime.js
-// ...runtime code
+// ...运行时代码
 // #endregion
 
 // #region foo.js
@@ -87,26 +87,26 @@ console.log(import_foo.value);
 // #endregion
 ```
 
-The `__toESM` helper ensures that CommonJS exports are properly converted to ES module format, allowing seamless access to the exported values.
+`__toESM` 辅助函数确保 CommonJS 导出会被正确转换为 ES 模块格式，从而可以无缝访问导出的值。
 
-## Caveats
+## 注意事项
 
-### `require` external modules
+### `require` 外部模块
 
-By default, Rolldown tries to keep the semantics of `require` and does not convert `require` against external modules to `import`. This is because the semantics of `require` are different from `import` in ES modules. For example, `require` are evaluated lazily, while `import` are evaluated before the code is executed.
+默认情况下，Rolldown 会尽量保持 `require` 的语义，不会把针对外部模块的 `require` 转换为 `import`。这是因为 `require` 的语义与 ES 模块中的 `import` 不同。例如，`require` 是延迟求值的，而 `import` 会在代码执行之前求值。
 
-::: tip Still want to convert `require` to `import`?
+::: tip 仍然想把 `require` 转换为 `import`？
 
-If you want to convert `require` calls to `import` statements, you can use [the built-in `esmExternalRequirePlugin`](/builtin-plugins/esm-external-require).
+如果你想把 `require` 调用转换为 `import` 语句，可以使用 [内置的 `esmExternalRequirePlugin`](/builtin-plugins/esm-external-require)。
 
 :::
 
-For [`platform: 'node'`](../guide/notable-features.md#platform-presets), Rolldown will generate a `require` function from [`module.createRequire`](https://nodejs.org/docs/latest/api/module.html#modulecreaterequirefilename). This keeps the semantics of `require` completely intact. Note that compared to converting to `import`, there's two downsides to this approach:
+对于 [`platform: 'node'`](../guide/notable-features.md#platform-presets)，Rolldown 会基于 [`module.createRequire`](https://nodejs.org/docs/latest/api/module.html#modulecreaterequirefilename) 生成一个 `require` 函数。这会完全保留 `require` 的语义。需要注意的是，与转换为 `import` 相比，这种方式有两个缺点：
 
-1. Requires the `module.createRequire` function support in the runtime, which may not be available in partially Node compatible environments
-2. Unsuitable for libraries that expects to be bundled as the `require` function will be a local variable and that makes it harder for bundlers to statically analyze the code
+1. 运行时需要支持 `module.createRequire`，在某些部分兼容 Node 的环境中可能不可用
+2. 不适合期望以被打包形式发布的库，因为 `require` 函数会成为一个局部变量，这会让打包器更难静态分析代码
 
-For other platforms, Rolldown will leave it as-is, allowing the running environment to provide a `require` function or inject one manually. For example, you can inject the `require` function that returns the value obtained by `import` by using [`inject` feature](../guide/notable-features.md#inject).
+对于其他平台，Rolldown 会保持原样不变，允许运行环境提供一个 `require` 函数，或者手动注入一个。例如，你可以使用 [`inject` 功能](../guide/notable-features.md#inject) 注入一个返回通过 `import` 获取的值的 `require` 函数。
 
 ::: code-group
 
@@ -126,27 +126,27 @@ export default (id) => {
   if (id === 'node:fs') {
     return fs;
   }
-  throw new Error(`Requiring ${JSON.stringify(id)} is not allowed.`);
+  throw new Error(`不允许 require ${JSON.stringify(id)}。`);
 };
 ```
 
 :::
 
-### Ambiguous `default` import from CJS modules
+### 来自 CJS 模块的歧义 `default` 导入
 
-In the ecosystem, there's two common ways to handle imports from CJS modules. While Rolldown tries to support both interpretations automatically, they are **incompatible for `default` imports**. In that case, Rolldown uses a similar heuristic to [Webpack](https://webpack.js.org/) and [esbuild](https://esbuild.github.io/) to determine the value of `default` imports.
+在生态系统中，处理来自 CJS 模块的导入有两种常见方式。虽然 Rolldown 会尝试自动支持这两种解释，但它们对于 `default` 导入来说是**不兼容**的。在这种情况下，Rolldown 会使用类似 [Webpack](https://webpack.js.org/) 和 [esbuild](https://esbuild.github.io/) 的启发式规则来确定 `default` 导入的值。
 
-If it matches one of the conditions below, the `default` import is the `module.exports` value of the importee CJS module. Otherwise, the `default` import is the `module.exports.default` value of the importee CJS module.
+如果满足下面任一条件，那么 `default` 导入就是被导入的 CJS 模块的 `module.exports` 值。否则，`default` 导入就是被导入的 CJS 模块的 `module.exports.default` 值。
 
-- The importer is `.mjs` or `.mts`
-- (When it's a dynamic import) The importer is `.cjs` or `.cts`
-- The closest `package.json` for the importer has a `type` field set to `module`
-- (When it's a dynamic import) The closest `package.json` for the importer has a `type` field set to `commonjs`
-- The `module.exports.__esModule` value of the importee CJS module is not set to `true`
+- 导入方是 `.mjs` 或 `.mts`
+- （当它是动态导入时）导入方是 `.cjs` 或 `.cts`
+- 导入方最近的 `package.json` 中 `type` 字段设置为 `module`
+- （当它是动态导入时）导入方最近的 `package.json` 中 `type` 字段设置为 `commonjs`
+- 被导入的 CJS 模块的 `module.exports.__esModule` 值未设置为 `true`
 
-:::: details Behavior in details
+:::: details 详细行为
 
-Let's assume the following ESM importer module and CJS importee module:
+假设有如下 ESM 导入方模块和 CJS 被导入方模块：
 
 ::: code-group
 
@@ -164,26 +164,26 @@ module.exports.default = 'foo';
 
 :::
 
-In the first interpretation, the way [Babel](https://babel.dev/) interprets, this code will print `foo`. In this interpretation, the behavior is changed based on the `__esModule` flag. `__esModule` is commonly set by transformers to indicate that the module was written in ESM syntax (e.g. `export default 'foo'` in this case) and was transformed to CJS syntax. The rationale for this behavior is that the transformed module should behave the same as the original module did without the transformation. [`@rollup/plugin-commonjs`](https://github.com/rollup/plugins/tree/master/packages/commonjs) uses this interpretation by default.
+在第一种解释中，也就是 [Babel](https://babel.dev/) 的解释方式，这段代码会打印 `foo`。在这种解释下，行为会根据 `__esModule` 标志而改变。`__esModule` 通常由转换器设置，用于表示该模块原本是用 ESM 语法编写的（例如这里的 `export default 'foo'`），并已被转换为 CJS 语法。这样处理的原因是，转换后的模块应当与未经转换时表现一致。[`@rollup/plugin-commonjs`](https://github.com/rollup/plugins/tree/master/packages/commonjs) 默认使用这种解释方式。
 
-In the second interpretation, the way Node.js interprets, this code will print `{ default: 'foo' }`. The rationale for this behavior is that CJS modules sets the export keys dynamically while ESM requires the export keys to be statically known, so to allow accessing all the exports, the entire `module.exports` is exposed as the default export. `@rollup/plugin-commonjs` uses this interpretation when `defaultIsModuleExports: false` is set.
+在第二种解释中，也就是 Node.js 的解释方式，这段代码会打印 `{ default: 'foo' }`。这样处理的原因是，CJS 模块可以动态设置导出键，而 ESM 要求导出键在静态上已知，因此为了允许访问所有导出，整个 `module.exports` 会作为默认导出暴露出来。`@rollup/plugin-commonjs` 在设置了 `defaultIsModuleExports: false` 时使用这种解释方式。
 
-These two interpretations expects different values for `default` imports and Rolldown has to decide which one to use.
+这两种解释对于 `default` 导入期望不同的值，而 Rolldown 必须决定使用哪一种。
 
 ::::
 
-::: details What is the rationale for this heuristic?
+:::: details 这种启发式规则的依据是什么？
 
-Rolldown's heuristic is based on the assumption that the files affected by Node.js's module determination concept are expected to be runnable in Node.js. For ESM files to be runnable in Node.js, they need to have `.mjs` or the closest `package.json` to have a `type` field set to `module` ([so that the ESM loader is used](https://nodejs.org/api/packages.html#determining-module-system)), and the code should be written in a way that expects the Node.js interpretation. On the otherhand, for files written in ESM syntax but not marked as ESM in the Node.js's module determination concept, the code is highly likely to be transformed by other tools, which commonly follows the Babel's interpretation.
+Rolldown 的启发式规则基于这样一个假设：受 Node.js 模块判定概念影响的文件，应当能够在 Node.js 中运行。对于 ESM 文件而言，要能在 Node.js 中运行，它们需要使用 `.mjs`，或者其最近的 `package.json` 中 `type` 字段被设置为 `module`（[这样才会使用 ESM 加载器](https://nodejs.org/api/packages.html#determining-module-system)），并且代码应当以符合 Node.js 解释方式的形式编写。另一方面，对于使用 ESM 语法编写、但在 Node.js 的模块判定概念中未被标记为 ESM 的文件，这些代码很可能会被其他工具转换，而这些工具通常遵循 Babel 的解释方式。
 
-:::
+::::
 
-#### Recommendations for Library Authors
+#### 给库作者的建议
 
-If you are writing a new code, we strongly recommend you to **publish your code as ESM syntax**. With [the `require(ESM)` feature](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require) shipped in Node.js, there's no major blocker to do so.
-If you still need to publish your code as CJS syntax, we strongly recommend to **avoid using the `default` export**.
+如果你正在编写新代码，我们强烈建议你**以 ESM 语法发布你的代码**。随着 Node.js 中已提供 [require(ESM) 功能](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require)，这样做不会有太大的障碍。
+如果你仍然需要以 CJS 语法发布代码，我们强烈建议你**避免使用 `default` 导出**。
 
-When importing a default export from a CJS module, we recommend to write a code that handles both interpretations. For example, you can use the following code to handle both interpretations:
+当从 CJS 模块导入默认导出时，我们建议编写能够同时处理这两种解释的代码。例如，你可以使用下面的代码同时兼容两种解释：
 
 ```js
 import rawFoo from './importee.cjs';
@@ -192,23 +192,23 @@ const foo =
 console.log(foo);
 ```
 
-This code will print `foo` in both interpretations. Note that TypeScript may show a type error when using this code; this is because [TypeScript does not support this behavior](https://github.com/microsoft/TypeScript/issues/54102), but it is safe to ignore the error.
+这段代码在两种解释下都会打印 `foo`。需要注意的是，TypeScript 在使用这段代码时可能会报类型错误；这是因为 [TypeScript 不支持这种行为](https://github.com/microsoft/TypeScript/issues/54102)，但可以安全地忽略该错误。
 
-#### Recommendations for Library Users
+#### 给库使用者的建议
 
-If you find an issue that seems to be caused by this incompatibility, try using [publint](https://publint.dev/) to check the package. It has [a rule that detects the incompatibility](https://publint.dev/rules#cjs_with_esmodule_default_export) (note that it only checks some of the files in the package, not all of them).
+如果你发现的问题似乎是由这种不兼容引起的，可以先使用 [publint](https://publint.dev/) 检查该包。它有 [一条可检测这种不兼容的规则](https://publint.dev/rules#cjs_with_esmodule_default_export)（注意，它只检查包中的部分文件，而不是全部文件）。
 
-If the heuristic is not working for you, you can use the code in the section above that handles both interpretations. If the import is in a dependency, we recommend to raise an issue to the dependency. In the meantime, you can use [`patch-package`](https://github.com/ds300/patch-package) or [`pnpm patch`](https://pnpm.io/cli/patch) or alternatives as an escape hatch.
+如果这种启发式规则对你不起作用，你可以使用上面那段同时处理两种解释的代码。如果导入来自某个依赖，我们建议向该依赖提 issue。与此同时，你也可以使用 [`patch-package`](https://github.com/ds300/patch-package)、[`pnpm patch`](https://pnpm.io/cli/patch) 或其他替代方案作为临时解决办法。
 
-### Strict Mode Applied to `.js` files
+### `.js` 文件应用严格模式
 
-For files ending with `.js`, Rolldown parses the file as ESM ([#7009](https://github.com/rolldown/rolldown/issues/7009)) without falling back to CJS. This means that syntaxes only allowed in non-strict mode (sloppy mode) will be rejected.
+对于以 `.js` 结尾的文件，Rolldown 会将其作为 ESM 解析（[#7009](https://github.com/rolldown/rolldown/issues/7009)），而不会回退到 CJS。这意味着只有非严格模式（sloppy mode）下才允许的语法会被拒绝。
 
-For now, you can change the file extension to `.cjs` as a workaround.
+目前，你可以临时将文件扩展名改为 `.cjs` 作为变通方法。
 
-## Future Plans
+## 未来计划
 
-Rolldown's first-class support for CommonJS modules enables several potential optimizations:
+Rolldown 对 CommonJS 模块的一等支持带来了若干潜在优化：
 
-- Advanced tree-shaking capabilities for CommonJS modules
-- Better dead code elimination
+- 针对 CommonJS 模块的高级 tree-shaking 能力
+- 更好的死代码消除

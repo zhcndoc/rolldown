@@ -1,8 +1,8 @@
-# File URLs
+# 文件 URL
 
-To reference a file URL reference from within JS code, use the `import.meta.ROLLUP_FILE_URL_referenceId` replacement. This will generate code that depends on the output format and generates a URL that points to the emitted file in the target environment. Note that the transformation assumes `URL` is available and `import.meta.url` is polyfilled except for CJS and ESM output formats.
+要从 JS 代码中引用文件 URL，请使用 `import.meta.ROLLUP_FILE_URL_referenceId` 替换。这将生成依赖于输出格式的代码，并生成一个指向目标环境中已发出文件的 URL。请注意，该转换假设 `URL` 可用，并且 `import.meta.url` 已被 polyfill，除了 CJS 和 ESM 输出格式之外。
 
-The following example will detect imports of `.svg` files, emit the imported files as assets, and return their URLs to be used e.g. as the `src` attribute of an `img` tag:
+下面的示例将检测 `.svg` 文件的导入，将导入的文件作为资源发出，并返回它们的 URL，以便例如用作 `img` 标签的 `src` 属性：
 
 ::: code-group
 
@@ -43,9 +43,9 @@ document.body.appendChild(image);
 
 :::
 
-Similar to assets, emitted chunks can be referenced from within JS code via `import.meta.ROLLUP_FILE_URL_referenceId` as well.
+与资源类似，发出的 chunk 也可以在 JS 代码中通过 `import.meta.ROLLUP_FILE_URL_referenceId` 引用。
 
-The following example will detect imports prefixed with `register-paint-worklet:` and generate the necessary code and separate chunk to generate a CSS paint worklet. Note that this will only work in modern browsers and will only work if the output format is set to `es`.
+下面的示例将检测以前缀 `register-paint-worklet:` 的导入，并生成所需的代码和单独的 chunk，以生成一个 CSS paint worklet。请注意，这仅适用于现代浏览器，并且只有在输出格式设置为 `es` 时才有效。
 
 ::: code-group
 
@@ -70,9 +70,9 @@ function registerPaintWorkletPlugin() {
     resolveId: {
       filter: { id: prefixRegex(REGISTER_WORKLET) },
       handler(source, importer) {
-        // We remove the prefix, resolve everything to absolute ids and
-        // add the prefix again. This makes sure that you can use
-        // relative imports to define worklets
+        // 我们移除前缀，将所有内容解析为绝对 id，然后
+        // 再加回前缀。这确保你可以使用
+        // 相对导入来定义 worklet
         return this.resolve(source.slice(REGISTER_WORKLET.length), importer).then(
           (resolvedId) => REGISTER_WORKLET + resolvedId.id,
         );
@@ -112,4 +112,4 @@ export const size = 6;
 
 :::
 
-If you build this code, both the main chunk and the worklet will share the code from `config.js` via a shared chunk. This enables us to make use of the browser cache to reduce transmitted data and speed up loading the worklet.
+如果你构建这段代码，主 chunk 和 worklet 都会通过一个共享 chunk 共享来自 `config.js` 的代码。这使我们能够利用浏览器缓存来减少传输的数据量，并加快 worklet 的加载速度。

@@ -63,7 +63,7 @@ export default {
     const optionSidebar: OptionSidebar = JSON.parse(fs.readFileSync(optionSidebarPath, 'utf-8'));
 
     optionSidebar.forEach((item) => {
-      if (item.text === 'output' && 'items' in item) {
+      if (item.text === '输出选项' && 'items' in item) {
         outputOptions.push(...item.items);
       } else if ('link' in item) {
         inputOptions.push(item);
@@ -72,16 +72,16 @@ export default {
 
     const transformedOptionSidebar: APIReference[] = [
       {
-        text: 'Input Options',
-        anchor: slugify('Input Options'),
+        text: '输入选项',
+        anchor: slugify('输入选项'),
         items: inputOptions.map((item) => ({
           ...item,
           link: transformLink(item.link),
         })),
       },
       {
-        text: 'Output Options',
-        anchor: slugify('Output Options'),
+        text: '输出选项',
+        anchor: slugify('输出选项'),
         items: outputOptions.map((item) => ({
           ...item,
           link: transformLink(item.link),

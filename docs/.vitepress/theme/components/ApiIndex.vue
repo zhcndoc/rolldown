@@ -89,23 +89,20 @@ const filtered = computed(() => {
 <template>
   <div id="api-index">
     <div class="header">
-      <h1>Options & APIs Reference</h1>
+      <h1>选项与 API 索引</h1>
       <div class="api-filter">
-        <label for="api-filter">Filter</label>
+        <label for="api-filter">筛选</label>
         <input
           ref="search"
           type="search"
-          placeholder="Enter keyword"
+          placeholder="输入关键词"
           id="api-filter"
           v-model="query"
         />
       </div>
     </div>
 
-    <p>
-      These are the automatically generated references for Rolldown's options and APIs. Use the
-      sidebar navigation to browse specific options and APIs.
-    </p>
+    <p>这里汇总了 Rolldown 选项与 API 的自动生成文档。可通过侧边栏浏览具体条目。</p>
 
     <div v-for="section of filtered" :key="section.text" class="api-section">
       <h2>{{ section.text }}</h2>
@@ -116,9 +113,7 @@ const filtered = computed(() => {
       </div>
     </div>
 
-    <div v-if="!filtered.length" class="no-match">
-      No API reference matching "{{ query }}" found.
-    </div>
+    <div v-if="!filtered.length" class="no-match">未找到匹配“{{ query }}”的 API 条目。</div>
   </div>
 </template>
 

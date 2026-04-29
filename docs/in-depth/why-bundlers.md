@@ -1,66 +1,66 @@
-# Why do we still need bundlers?
+# 为什么我们仍然需要打包器？
 
-## Skipping the build step is impractical
+## 跳过构建步骤并不现实
 
-With the general availability of native ES modules and HTTP/2 in modern browsers, some developers are advocating for an unbundled approach for shipping web applications, even in production. While this approach works for smaller applications, in our opinion bundling is still very much necessary if you are shipping anything non-trivial and care about performance (which translates to better user experience).
+随着现代浏览器对原生 ES 模块和 HTTP/2 的广泛支持，一些开发者主张在发布 Web 应用时采用不打包的方式，甚至用于生产环境。虽然这种方式适用于较小的应用，但在我们看来，如果你要交付任何非平凡的应用并且关注性能（这也就意味着更好的用户体验），打包仍然是非常必要的。
 
-Even in a polished unbundled deployment model, a build step is still often unavoidable. Take Rails 8's default import-map-based approach for example: all JavaScript assets still go through a build step in order to fingerprint the assets and generate the import map and modulepreload directives. It's just handled via `importmap-rails` and Propshaft instead of a JavaScript bundler.
+即使在一个成熟的不打包部署模型中，构建步骤也往往仍然不可避免。以 Rails 8 默认的基于 import map 的方案为例：所有 JavaScript 资源仍然需要经过构建步骤，以便为资源生成指纹并生成 import map 和 modulepreload 指令。只是这部分由 `importmap-rails` 和 Propshaft 来处理，而不是由 JavaScript 打包器来处理。
 
-Moreover, the unbundled approach will hit its limits if you have any of the following requirements:
+此外，如果你有以下任一需求，不打包方案就会达到其极限：
 
-- Require modern JavaScript features like ES6+, TypeScript, or JSX.
-- Need to leverage bundler-specific optimizations like tree-shaking, code splitting, or minification.
-- Utilize libraries or frameworks that depend on a build step.
-- Utilize NPM dependencies that ship unbundled source code (results in too many requests).
+- 需要 ES6+、TypeScript 或 JSX 等现代 JavaScript 特性。
+- 需要利用 tree-shaking、代码拆分或压缩等打包器特有优化。
+- 使用依赖构建步骤的库或框架。
+- 使用以未打包源代码发布的 NPM 依赖（会导致请求过多）。
 
-Going with unbundled means locking yourself out of a big part of the JS ecosystem and giving up on many possible performance optimizations that could benefit your end users.
+选择不打包，就等于把自己限制在 JS 生态系统很大一部分之外，并放弃许多可能带来性能提升、进而惠及最终用户的优化手段。
 
-The main argument of avoiding JavaScript bundlers is added complexity and slowing down the dev feedback loop. However, modern JS tooling has improved a lot on this front over the past few years. Our goal with Vite / Rolldown is to improve these aspects further and make the build step feel invisible.
+避免使用 JavaScript 打包器的主要理由是增加了复杂度，并拖慢了开发反馈循环。然而，近几年现代 JS 工具链在这方面已经有了很大改进。我们在 Vite / Rolldown 上的目标，就是进一步改善这些方面，让构建步骤几乎无感。
 
-## The case for bundlers
+## 支持打包器的理由
 
-Fundamentally, bundlers exist because of the unique constraints of web applications: they need to be delivered over the network on-demand. Bundlers can make web applications more performant in three ways:
+从根本上说，打包器之所以存在，是因为 Web 应用有其独特约束：它们需要按需通过网络交付。打包器可以通过三种方式让 Web 应用性能更好：
 
-1. Reduce the amount of network requests and waterfalls.
-2. Reduce total bytes sent over the network.
-3. Improve JavaScript execution performance.
+1. 减少网络请求数量和瀑布流。
+2. 减少通过网络发送的总字节数。
+3. 提升 JavaScript 执行性能。
 
-## Reduce network requests and waterfalls
+## 减少网络请求和瀑布流
 
-The first important thing we need to acknowledge is that **HTTP/2 does not mean you can stop caring about number of HTTP requests**.
+我们首先需要承认的一件重要事情是：**HTTP/2 并不意味着你可以不再关注 HTTP 请求数量**。
 
-Although HTTP/2 theoretically supports unlimited multiplexing, most browsers / servers have a default limit of around 100 on the maximum number of concurrent streams per connection. Every network request also comes with fixed overhead (header processing, TLS encryption, multiplexing, etc.) on both the server and the client. More requests means more server load, and the actual concurrency is limited by how fast your server can serve the module files. Applications that contain thousands of unbundled modules will still create serious network bottlenecks even under HTTP/2.
+尽管 HTTP/2 理论上支持无限多路复用，但大多数浏览器 / 服务器对单连接的最大并发流数量默认限制在大约 100 左右。每个网络请求在服务端和客户端都会带来固定开销（头部处理、TLS 加密、多路复用等）。请求越多，服务器负载就越高，而实际并发能力还取决于服务器提供模块文件的速度。即使在 HTTP/2 下，包含数千个未打包模块的应用仍然会形成严重的网络瓶颈。
 
-Deep import chains also result in network waterfalls - i.e. the browser needs to make multiple network roundtrips to fetch the entire module graph. This can be mitigated to some extent with `modulepreload` directives, but generating these requires tooling support, and bloating the HTML with thousands of `modulepreload` directives in `<head>` is also a performance issue in itself.
+深层导入链还会导致网络瀑布流——也就是说，浏览器需要进行多次网络往返才能获取完整的模块图。这可以通过 `modulepreload` 指令在一定程度上缓解，但生成这些指令需要工具支持，而且在 `<head>` 中塞入成千上万个 `modulepreload` 指令本身也是一种性能问题。
 
-Bundling can drastically reduce such overhead by combining thousands of modules into an optimal number of chunks that both the server and the browser can handle with ease. Bundling also flattens the import chain depth to reduce waterfalls, and can provide the data needed to generate `modulepreload` directives. In its essence, bundling moves the work of combining the module graph to the build phase, instead of incurring it as a runtime cost for every visitor. This makes large applications load significantly faster on initial visit, especially in poor network conditions.
+打包可以通过把成千上万个模块合并成对服务端和浏览器都易于处理的最优数量的 chunk，极大地降低这类开销。打包还会压平导入链深度以减少瀑布流，并且可以提供生成 `modulepreload` 指令所需的数据。从本质上讲，打包把合并模块图的工作移到了构建阶段，而不是让每个访问者在运行时承担这份成本。这使得大型应用在首次访问时加载速度显著更快，尤其是在网络条件较差的情况下。
 
-### Trade-offs in caching strategy
+### 缓存策略中的权衡
 
-One argument supporting the unbundled approach is that it allows each module to be cached individually, reducing the amount of cache invalidation when the application is updated. However, this comes with the trade-off of a much slower initial load as explained above.
+支持不打包方案的一个理由是，它允许每个模块单独缓存，从而在应用更新时减少缓存失效的范围。然而，这种做法的代价就是如上所述，首次加载要慢得多。
 
-Sub-optimal bundling configurations can cause cascading chunk hash validations, causing users to have to re-download a large part of the app when the app is updated. But this is a solvable problem: bundlers can also leverage import maps and advanced chunking control to limit hash invalidation and improve cache hit rate. We do intend to provide an improved, more caching-friendly default chunking strategy in Vite / Rolldown in the future.
+不够理想的打包配置可能会导致级联的 chunk hash 验证，使用户在应用更新时不得不重新下载应用的大部分内容。但这是一个可以解决的问题：打包器也可以利用 import map 和更高级的 chunk 控制来限制 hash 失效范围并提高缓存命中率。我们确实打算在未来为 Vite / Rolldown 提供一种改进的、对缓存更友好的默认 chunk 拆分策略。
 
-## Reduce total bytes sent over the network
+## 减少通过网络发送的总字节数
 
-Bundling can also greatly reduce overall size of JavaScript sent over the wire.
+打包还可以大幅减少通过网络传输的 JavaScript 总体大小。
 
-First, bundles can hoist multiple modules into the same scope, removing all the import / export statements between them.
+首先，bundle 可以把多个模块提升到同一个作用域中，从而移除它们之间所有的 import / export 语句。
 
-Second, treeshaking / dead code elimination is an optimization that can only be performed by statically analyzing the source code at build time. Native ESM loads and evaluates everything eagerly, so even if you only use a single export from a big module, the entire module has to be downloaded and evaluated. With a smart bundler, exports that are not used can be completely removed from the final bundle, saving lots of bytes.
+其次，treeshaking / dead code elimination 是一种只能在构建时通过静态分析源代码来执行的优化。原生 ESM 会立即加载并执行所有内容，所以即便你只使用某个大模块中的一个导出，整个模块也必须被下载并求值。借助智能打包器，未使用的导出可以被完全移出最终 bundle，从而节省大量字节。
 
-Finally, minification and gzip / brotli compression are considerably more efficient when performed on bundled code compared to individual modules.
+最后，与对单个模块分别处理相比，对打包后的代码执行压缩以及 gzip / brotli 压缩时，效率会高得多。
 
-With these factors combined, users download less code, and your servers use less outbound bandwidth.
+将这些因素结合起来，用户下载的代码更少，你的服务器也会使用更少的对外带宽。
 
-## Improve JavaScript execution performance
+## 提升 JavaScript 执行性能
 
-JavaScript is an interpreted language, and modern JavaScript engines often employ advanced JIT compilation to make it run faster. However, there is also non-trivial cost involved in parsing and compiling JavaScript.
+JavaScript 是一种解释型语言，而现代 JavaScript 引擎通常会采用先进的 JIT 编译来提升运行速度。不过，解析和编译 JavaScript 本身也有不容忽视的成本。
 
-Sending less JavaScript code not only saves bandwidth - it also means less JavaScript needs to be compiled and evaluated in the browser, leading to faster application startup time.
+发送更少的 JavaScript 代码不仅能节省带宽，也意味着浏览器需要编译和求值的 JavaScript 更少，从而加快应用启动时间。
 
-Some bundlers / minifiers also can perform optimizations like constant folding / ahead-of-time evaluation to varying extent, making the bundled code more efficient than their hand-written source.
+一些打包器 / 压缩器还可以在不同程度上执行常量折叠 / 提前求值等优化，使打包后的代码比手写源码更加高效。
 
 ---
 
-In conclusion, bundling is still a beneficial, and in many cases necessary step in web development, and will continue to be so in the foreseeable future.
+总之，打包在 Web 开发中仍然是一个有益的、且在许多情况下是必要的步骤，并且在可预见的未来里，它都将继续如此。

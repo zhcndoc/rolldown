@@ -3,18 +3,16 @@
     <div class="flex flex-col p-10 justify-between items-center md:items-start">
       <div class="flex flex-col gap-5 text-center md:text-left items-center md:items-start">
         <a class="flex items-center gap-2" href="https://voidzero.dev" target="_blank">
-          <span class="text-grey text-xs font-mono uppercase tracking-wide">By</span>
+          <span class="text-grey text-xs font-mono uppercase tracking-wide">由</span>
           <img src="@assets/logos/voidzero-light.svg" alt="VoidZero" class="h-2.5" />
         </a>
-        <h1 class="text-white text-pretty max-w-[35rem]">
-          Blazing Fast<br />Rust-based bundler for JavaScript
-        </h1>
-        <p class="text-white/70 text-lg max-w-[30rem] text-pretty">
-          with Rollup-compatible API and esbuild feature parity
+        <h1 class="text-white text-pretty max-w-140">基于 Rust 的 JavaScript 打包工具</h1>
+        <p class="text-white/70 text-lg max-w-120 text-pretty">
+          兼容 Rollup 的 API，并提供与 esbuild 相近的特性
         </p>
         <div class="flex items-center gap-5 mt-6">
           <a href="/guide/getting-started" class="button button--primary inline-block w-fit">
-            <span>Get Started</span>
+            <span>开始使用</span>
           </a>
           <a
             href="https://github.com/rolldown/rolldown"
@@ -22,7 +20,7 @@
             rel="noopener noreferrer"
             class="button inline-flex items-center gap-2 w-fit"
           >
-            <span>View on GitHub</span>
+            <span>在 GitHub 查看</span>
             <svg class="size-3" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path
                 d="M3.18228 2.81797L9.54624 2.81797L9.54624 9.18193"
@@ -49,7 +47,7 @@
               src="@assets/icons/rolldown-light.svg"
               alt="Rolldown"
             />
-            <figcaption class="text-sm">Try Rolldown in the REPL</figcaption>
+            <figcaption class="text-sm">在 REPL 中试用 Rolldown</figcaption>
             <svg class="size-3" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path
                 d="M3.18228 2.81797L9.54624 2.81797L9.54624 9.18193"
@@ -68,7 +66,7 @@
         </a>
       </div>
     </div>
-    <div class="flex flex-col min-h-[22rem] sm:min-h-[30rem]">
+    <div class="flex flex-col min-h-88 sm:min-h-120">
       <div
         class="relative pl-6 sm:pl-16 h-full flex flex-col justify-center overflow-clip py-8 sm:py-16 hero-background"
       >
@@ -88,11 +86,11 @@
         <img
           src="@assets/rolldown/rolldown-thumbnail.png"
           alt="Video thumbnail"
-          class="h-16 aspect-[244/144] group-hover:opacity-75 group-hover:scale-105 transition-[scale,opacity]"
+          class="h-16 aspect-244/144 group-hover:opacity-75 group-hover:scale-105 transition-[scale,opacity]"
         />
         <div>
-          <h5 class="text-white">What is Rolldown</h5>
-          <p class="text-base">Rolldown explained in 37 seconds</p>
+          <h5 class="text-white">什么是 Rolldown</h5>
+          <p class="text-base">37 秒了解 Rolldown</p>
         </div>
         <span class="absolute top-5 right-5 text-fire bg-slate rounded px-3 py-1 text-xs font-mono"
           >0:37</span

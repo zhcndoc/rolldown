@@ -35,10 +35,8 @@ const performanceData = [
   >
     <div class="flex flex-col gap-3 justify-between">
       <div class="p-5 sm:p-15 pb-0 sm:pb-0 flex flex-col gap-3">
-        <h5 class="text-balance sm:text-pretty text-white">Speed of Rust</h5>
-        <p class="sm:max-w-[30rem] text-pretty">
-          Rolldown handles tens of thousands of modules without breaking a sweat
-        </p>
+        <h5 class="text-balance sm:text-pretty text-white">Rust 的速度</h5>
+        <p class="sm:max-w-120 text-pretty">Rolldown 可以轻松处理数以万计的模块</p>
       </div>
       <div class="p-5 sm:p-15 flex flex-col gap-10">
         <div class="flex flex-col gap-4">
@@ -55,12 +53,12 @@ const performanceData = [
               href="https://github.com/rolldown/benchmarks/tree/f3997c801b7d261e8aaa15d4affbf6730cc19884?tab=readme-ov-file#ubuntu-latest-updated-2025-12-21"
               target="_blank"
               class="text-white font-medium"
-              >Benchmark</a
+              >基准测试</a
             >
-            bundling <span class="text-white font-medium">19k</span> modules.
+            打包 <span class="text-white font-medium">19k</span> 个模块。
           </p>
           <p class="text-xs">
-            10k React JSX components + 9k iconify JS files, with minification and source maps.
+            1 万个 React JSX 组件 + 9000 个 iconify JS 文件，包含压缩与 sourcemap。
           </p>
         </div>
       </div>
@@ -68,8 +66,8 @@ const performanceData = [
 
     <div class="flex flex-col gap-3 border-r-0 justify-between overflow-hidden">
       <div class="p-5 sm:p-15 sm:pb-10 flex flex-col gap-3">
-        <h5 class="text-white">Rollup Compatible</h5>
-        <p class="max-w-[30rem] text-pretty">Familiar API & options with a rich plugin ecosystem</p>
+        <h5 class="text-white">兼容 Rollup</h5>
+        <p class="max-w-120 text-pretty">熟悉的 API 与选项，加上丰富的插件生态</p>
       </div>
       <div class="relative px-5 sm:px-20 pt-5 sm:pt-10 flex justify-center bg-[#ed4d01]">
         <img
@@ -86,16 +84,16 @@ const performanceData = [
           class="-mb-[60px] z-1"
           inert
           loading="lazy"
-          alt="rollup compatible"
+          alt="兼容 Rollup"
         />
       </div>
     </div>
 
     <div class="flex flex-col gap-3 justify-between">
       <div class="p-5 sm:p-15 pb-0 sm:pb-0 flex flex-col gap-3">
-        <h5 class="text-white">Esbuild Feature Parity</h5>
-        <p class="max-w-[26rem] text-pretty">
-          Built-in transforms, define, inject, minify, CSS bundling & more...
+        <h5 class="text-white">与 esbuild 特性对齐</h5>
+        <p class="max-w-104 text-pretty">
+          内置转换、define、inject、压缩、CSS 打包等功能应有尽有……
         </p>
       </div>
       <div class="flex-1 flex items-center justify-center p-8 sm:p-15 sm:pt-10">
@@ -105,7 +103,7 @@ const performanceData = [
           height="493"
           inert
           loading="lazy"
-          alt="esbuild feature parity"
+          alt="与 esbuild 特性对齐"
           class="w-full max-h-60 object-contain"
         />
       </div>
@@ -113,8 +111,8 @@ const performanceData = [
 
     <div class="flex flex-col gap-3 justify-between">
       <div class="p-5 sm:p-15 pb-0 sm:pb-0 flex flex-col gap-3">
-        <h5 class="text-white">Designed for Vite</h5>
-        <p class="max-w-[25rem] text-pretty">The unified bundler powering Vite 8+</p>
+        <h5 class="text-white">为 Vite 而生</h5>
+        <p class="max-w-100 text-pretty">驱动 Vite 8+ 的统一打包器</p>
       </div>
       <RiveAnimation
         :desktop-src="vitePoweredAnimation"

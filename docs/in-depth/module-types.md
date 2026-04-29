@@ -1,14 +1,14 @@
-# Module Types
+# 模块类型
 
-As a web bundler, JavaScript is not the only file type with built-in support in Rolldown. For example, Rolldown can handle TypeScript and JSX files directly, parsing and transforming them to JavaScript before bundling them. We refer to these file types with first-class support in Rolldown as **Module Types**.
+作为一个 web 打包器，JavaScript 并不是 Rolldown 唯一内置支持的文件类型。例如，Rolldown 可以直接处理 TypeScript 和 JSX 文件，在打包之前先将它们解析并转换为 JavaScript。我们将 Rolldown 中这些具有一等支持的文件类型称为 **模块类型**。
 
-## How module types affect users
+## 模块类型如何影响用户
 
-End users usually do not need to concern themselves with Module Types, since Rolldown automatically recognizes and handles known Module Types.
+最终用户通常不需要关心模块类型，因为 Rolldown 会自动识别并处理已知的模块类型。
 
-By default, Rolldown determines the module type of a module based on its file extension. However, in some cases this may not be sufficient. For example, imagine a file containing JSON data, but its extension is `.data`. Rolldown can't recognize it as a JSON file because the extension is not `.json`.
+默认情况下，Rolldown 会根据模块的文件扩展名来确定其模块类型。然而，在某些情况下这可能不够。例如，假设有一个包含 JSON 数据的文件，但它的扩展名是 `.data`。Rolldown 无法将其识别为 JSON 文件，因为该扩展名不是 `.json`。
 
-In this case, users need to explicitly tell Rolldown that files with the `.data` extension should be treated as the JSON module type. This can be done via the `moduleTypes` option in the config:
+在这种情况下，用户需要显式告诉 Rolldown，带有 `.data` 扩展名的文件应当被视为 JSON 模块类型。这可以通过配置中的 `moduleTypes` 选项来实现：
 
 ```js [rolldown.config.js]
 export default {
@@ -18,9 +18,9 @@ export default {
 };
 ```
 
-## Module types and plugins
+## 模块类型与插件
 
-Plugins can specify the module type of a specific file via the `load` hook and the `transform` hook:
+插件可以通过 `load` 钩子和 `transform` 钩子为特定文件指定模块类型：
 
 ```js
 const myPlugin = {
@@ -35,10 +35,10 @@ const myPlugin = {
 };
 ```
 
-The main significance of module types is that it provides a central convention for supported types, making it easier to chain multiple plugins that need to operate on the same module type.
+模块类型的主要意义在于，它为受支持的类型提供了一种统一约定，使得需要对同一种模块类型进行处理的多个插件更容易串联起来。
 
-For example, `@vitejs/plugin-vue` currently creates virtual css modules for the style blocks in `.vue` files and append `?lang=css` to the id of a virtual module, allowing these modules to be recognized as css by the vue plugin. However, this is only a convention of the vue plugin - other plugins may ignore the query string and thus not recognize the convention.
+例如，`@vitejs/plugin-vue` 目前会为 `.vue` 文件中的 style 块创建虚拟 css 模块，并在虚拟模块的 id 后追加 `?lang=css`，从而让 vue 插件能够将这些模块识别为 css。然而，这只是 vue 插件的一种约定——其他插件可能会忽略该查询字符串，因此无法识别这一约定。
 
-With module types, `@vitejs/plugin-vue` can explicitly specify the module type of virtual css modules as `css`, and other plugins like the postcss plugin can process these css modules without being aware of the vue plugin.
+有了模块类型，`@vitejs/plugin-vue` 就可以显式地将虚拟 css 模块的模块类型指定为 `css`，而诸如 postcss 插件之类的其他插件则可以在不了解 vue 插件的情况下处理这些 css 模块。
 
-Another example: to add support for `.jsonc` files, a plugin could simply strip comments of `.jsonc` files in the `load` hook and return `moduleType: 'json'`. Rolldown will handle the rest.
+另一个例子：为了支持 `.jsonc` 文件，一个插件只需在 `load` 钩子中去除 `.jsonc` 文件的注释，并返回 `moduleType: 'json'`。剩下的部分由 Rolldown 处理。

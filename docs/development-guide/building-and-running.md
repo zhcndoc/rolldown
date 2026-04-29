@@ -1,75 +1,75 @@
-# Building and running
+# 构建和运行
 
-Make sure you have gone through the [setup process](./setup-the-project.md) before continuing.
+在继续之前，请确保你已经完成了 [设置流程](./setup-the-project.md)。
 
-## What is `just`?
+## 什么是 `just`？
 
-`just` is a command runner for the `rolldown` repository. It could build, test, and lint the project with a single command.
+`just` 是 `rolldown` 仓库的命令运行器。它可以用一条命令构建、测试和检查项目。
 
-### Usage
+### 用法
 
-You could get a list of available commands by running the command `just` only.
+你只需运行 `just` 命令，就可以获取可用命令列表。
 
-### Important Commands
+### 重要命令
 
-- `just roll` - Build rolldown from scratch and run all the tests and checks.
-- `just test` - Runs all tests.
-- `just lint` - Format and lint the codebase.
-- `just fix` - Fix formatting and linting issues.
-- `just build` - Build the `rolldown` node package (and `@rolldown/pluginutils` node package).
-- `just run` - Run the `rolldown` cli using node.
+- `just roll` - 从头构建 rolldown，并运行所有测试和检查。
+- `just test` - 运行所有测试。
+- `just lint` - 格式化并检查代码库。
+- `just fix` - 修复格式化和检查问题。
+- `just build` - 构建 `rolldown` node 包（以及 `@rolldown/pluginutils` node 包）。
+- `just run` - 使用 node 运行 `rolldown` cli。
 
-> Most of commands will run both Rust and Node.js scripts. To only target one, append `-rust` or `-node` to the just command. For example, `just lint-rust` or `just test-node`.
+> 大多数命令都会同时运行 Rust 和 Node.js 脚本。若只想针对其中之一，可在 just 命令后附加 `-rust` 或 `-node`。例如，`just lint-rust` 或 `just test-node`。
 
 ::: tip
-`just roll` would be the most used command in your development workflow. It will help you, without any thinking, to check if everything is working correctly for any changes you made.
+`just roll` 会是你开发工作流中最常用的命令。它会帮你不费脑筋地检查你所做的任何修改是否都能正常工作。
 
-It will help you catch errors locally rather than pushing your changes to GitHub and waiting for the CI.
+它能帮助你在本地捕获错误，而不是把更改推送到 GitHub 后再等待 CI。
 
-- `just roll-rust` - Run only Rust checks.
-- `just roll-node` - Run only Node.js checks.
-- `just roll-repo` - Checks for non-code related issues, like file name.
+- `just roll-rust` - 仅运行 Rust 检查。
+- `just roll-node` - 仅运行 Node.js 检查。
+- `just roll-repo` - 检查与代码无关的问题，例如文件名。
 
 :::
 
-## Building
+## 构建
 
-Rolldown is built on Rust and Node.js, so a building process includes building Rust crates, Node.js packages and the glue part that binds them together. The glue part is also a Node.js package, but building it will also trigger building the Rust crates.
+Rolldown 基于 Rust 和 Node.js 构建，因此构建过程包括构建 Rust crate、Node.js 包，以及将它们连接起来的胶水层。胶水层本身也是一个 Node.js 包，但构建它也会触发 Rust crate 的构建。
 
-Luckily, NAPI-RS has encapsulated the process of building the glue part, we don't need to worry about the details.
+幸运的是，NAPI-RS 已经封装了构建胶水层的过程，我们不需要关心细节。
 
 ### `rolldown`
 
-To build the `rolldown` package, there are two commands:
+要构建 `rolldown` 包，有两个命令：
 
 - `just build`/`just build-rolldown`
-- `just build-rolldown-release` (**important if running benchmarks**)
+- `just build-rolldown-release`（**如果运行基准测试，这一点很重要**）
 
-They will automatically build the Rust crates and the Node.js package. So no matter what changes you made, you can always run these commands to build the latest `rolldown` package.
+它们会自动构建 Rust crate 和 Node.js 包。因此，无论你做了什么修改，都可以随时运行这些命令来构建最新的 `rolldown` 包。
 
 ### WASI
 
-Rolldown supports WASI by considering is as a special platform. So we still use the `rolldown` package to distribute the WASI version of Rolldown.
+Rolldown 通过将 WASI 视为一个特殊平台来支持它。因此，我们仍然使用 `rolldown` 包来分发 Rolldown 的 WASI 版本。
 
-To build the WASI version, you can run the following command:
+要构建 WASI 版本，你可以运行以下命令：
 
 - `just build-browser`
-- `just build-browser-release` (**important if running benchmarks**)
+- `just build-browser-release`（**如果运行基准测试，这一点很重要**）
 
-Building the WASI version will remove the native version of Rolldown. We designed the local build process on purpose that is you either build the native version or the WASI version. You can't mix them together, though NAPI-RS supports it.
+构建 WASI 版本会移除 Rolldown 的原生版本。我们有意这样设计本地构建流程，也就是说，你要么构建原生版本，要么构建 WASI 版本。虽然 NAPI-RS 支持混合构建，但你不能把它们混在一起。
 
-## Running
+## 运行
 
-You could use `just run` to run the `rolldown` cli with node.
+你可以使用 `just run` 通过 node 运行 `rolldown` cli。
 
-The `rolldown` package is linked to `node_modules` via pnpm workspace automatically, so you can run it with the following command:
+`rolldown` 包会通过 pnpm workspace 自动链接到 `node_modules`，因此你可以使用以下命令运行它：
 
 ```sh
 pnpm rolldown
 ```
 
-`just run` is just an alias for the above command.
+`just run` 只是上面命令的别名。
 
 ::: warning
-Make sure you have built the `rolldown` package using `just build` before running it.
+在运行之前，请确保你已经使用 `just build` 构建了 `rolldown` 包。
 :::

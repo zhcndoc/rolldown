@@ -1,22 +1,22 @@
-# Top Level Await(TLA) in Rolldown
+# Rolldown 中的顶层 await（TLA）
 
-Background knowledge:
+背景知识：
 
 - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/await#top_level_await
 - https://github.com/tc39/proposal-top-level-await
 
-## How rolldown handles TLA
+## Rolldown 如何处理 TLA
 
-At this point, the principle of supporting TLA in rolldown is: we will make it work after bundling without preserving 100% semantic as the original code.
+目前，rolldown 支持 TLA 的原则是：我们会在打包后让它可用，但不会 100% 保留与原始代码完全一致的语义。
 
-Current rules are:
+当前规则是：
 
-- If your input contains TLA, it could only be bundled and emitted with `esm` format.
-- `require` TLA module is forbidden.
+- 如果你的输入包含 TLA，那么它只能以 `esm` 格式打包和输出。
+- 禁止 `require` TLA 模块。
 
-## Concurrent to sequential
+## 从并发到顺序
 
-One downside of TLA in rolldown is that it will change the original code's behavior from concurrent to sequential. It still ensures the relative order, but indeed slows down the execution and may break the execution if the original code relies on concurrency.
+rolldown 中 TLA 的一个缺点是，它会把原始代码的行为从并发改为顺序。它仍然能保证相对顺序，但确实会降低执行速度，并且如果原始代码依赖并发，可能会导致执行失败。
 
 ```dot
 digraph {
@@ -27,7 +27,7 @@ digraph {
     compound=true;
 
     subgraph cluster_before {
-        label="Before bundling (concurrent)";
+        label="打包前（并发）";
         labeljust="l";
         fontname="Arial";
         fontsize=12;
@@ -39,7 +39,7 @@ digraph {
         b_all [label="Promise.all([\n  tla1,\n  tla2\n])", fillcolor="${#dcfce7|#14532d}"];
         b_tla1 [label="tla1.js\nawait ...", fillcolor="${#dbeafe|#1e3a5f}"];
         b_tla2 [label="tla2.js\nawait ...", fillcolor="${#dbeafe|#1e3a5f}"];
-        b_done [label="both resolved", fillcolor="${#dcfce7|#14532d}"];
+        b_done [label="均已解析", fillcolor="${#dcfce7|#14532d}"];
 
         b_main -> b_all;
         b_all -> b_tla1;
@@ -49,7 +49,7 @@ digraph {
     }
 
     subgraph cluster_after {
-        label="After bundling (sequential)";
+        label="打包后（顺序）";
         labeljust="l";
         fontname="Arial";
         fontsize=12;
@@ -67,7 +67,7 @@ digraph {
 }
 ```
 
-A real-world example would looks like
+一个真实世界中的例子可能如下所示
 
 ```js
 // main.js
@@ -89,7 +89,7 @@ export const foo2 = await Promise.resolve('foo2');
 export const bar = 'bar';
 ```
 
-After bundling, it will be
+打包之后，它会变成
 
 ```js
 // tla1.js
@@ -105,9 +105,9 @@ const bar = 'bar';
 console.log(foo1, foo2, bar);
 ```
 
-You can see that, in bundled code, promise `foo1` and `foo2` are resolved sequentially, but in the original code, they are resolved concurrently.
+你可以看到，在打包后的代码中，promise `foo1` 和 `foo2` 是顺序解析的，而在原始代码中，它们是并发解析的。
 
-There's a very [good example](https://github.com/tc39/proposal-top-level-await?tab=readme-ov-file#semantics-as-desugaring) of TLA spec repo, which explains the mental model of how the TLA works
+TLA 规范仓库里有一个非常 [好的例子](https://github.com/tc39/proposal-top-level-await?tab=readme-ov-file#semantics-as-desugaring)，它解释了 TLA 的工作心理模型
 
 ```js
 import { a } from './a.mjs';
@@ -117,7 +117,7 @@ import { c } from './c.mjs';
 console.log(a, b, c);
 ```
 
-could be considered as the following code after desugaring:
+可以被认为在反糖化后等同于如下代码：
 
 ```js
 import { a, promise as aPromise } from './a.mjs';
@@ -129,7 +129,7 @@ export const promise = Promise.all([aPromise, bPromise, cPromise]).then(() => {
 });
 ```
 
-However, in rolldown, it will looks like this after bundling:
+然而，在 rolldown 中，打包后它看起来会像这样：
 
 ```js
 import { a, promise as aPromise } from './a.mjs';

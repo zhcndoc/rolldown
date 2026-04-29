@@ -1,16 +1,16 @@
-# Command Line Interface
+# 命令行界面
 
-Rolldown can be used from the command line. You can provide an optional Rolldown configuration file to simplify command line usage and enable advanced Rolldown functionality.
+Rolldown 可以从命令行使用。你可以提供一个可选的 Rolldown 配置文件，以简化命令行用法并启用高级 Rolldown 功能。
 
-## Configuration Files
+## 配置文件
 
-Rolldown configuration files are optional, but they are powerful and convenient and thus **recommended**.
-A config file is an ES module that exports a default object with the desired options.
-Typically, it is called `rolldown.config.js` and sits in the root directory of your project.
-You can also use CJS syntax in CJS files, which uses `module.exports` instead of `export default`.
-Rolldown also natively supports TypeScript configuration files.
+Rolldown 配置文件是可选的，但它们功能强大且方便，因此**推荐**使用。
+配置文件是一个 ES 模块，它导出一个包含所需选项的默认对象。
+通常，它被命名为 `rolldown.config.js`，并位于项目的根目录中。
+你也可以在 CJS 文件中使用 CJS 语法，此时使用 `module.exports` 而不是 `export default`。
+Rolldown 也原生支持 TypeScript 配置文件。
 
-Consult the [reference](/reference/) for a comprehensive list of options you can include in your config file.
+请参阅 [参考](/reference/) 以获取可包含在配置文件中的完整选项列表。
 
 ```js [rolldown.config.js]
 export default {
@@ -22,25 +22,25 @@ export default {
 };
 ```
 
-To use a config file with Rolldown, pass the `-c` (or `--config`) flag:
+要在 Rolldown 中使用配置文件，请传入 `-c`（或 `--config`）标志：
 
 ```shell
-rolldown -c                 # use rolldown.config.{js,mjs,cjs,ts,mts,cts}
-rolldown --config           # same as above
-rolldown -c my.config.js    # use a custom config file
+rolldown -c                 # 使用 rolldown.config.{js,mjs,cjs,ts,mts,cts}
+rolldown --config           # 同上
+rolldown -c my.config.js    # 使用自定义配置文件
 ```
 
-If you don't pass a file name, Rolldown will try to load `rolldown.config.{js,mjs,cjs,ts,mts,cts}` in the working directory.
-If no config file is found, Rolldown will show an error.
+如果你不传入文件名，Rolldown 将尝试在工作目录中加载 `rolldown.config.{js,mjs,cjs,ts,mts,cts}`。
+如果未找到配置文件，Rolldown 将显示错误。
 
-You can also export a function from your config file. The function will be called with command line arguments so you can dynamically adapt your configuration:
+你也可以从配置文件中导出一个函数。该函数会使用命令行参数调用，因此你可以动态调整配置：
 
 ```js [rolldown.config.js]
 import { defineConfig } from 'rolldown';
 
 export default defineConfig((commandLineArgs) => {
   if (commandLineArgs.watch) {
-    // watch-specific config
+    // 仅用于 watch 的配置
   }
   return {
     input: 'src/main.js',
@@ -48,9 +48,9 @@ export default defineConfig((commandLineArgs) => {
 });
 ```
 
-### Config Intellisense
+### 配置智能提示
 
-Since Rolldown ships with TypeScript typings, you can leverage your IDE's intellisense with JSDoc type hints:
+由于 Rolldown 附带 TypeScript 类型定义，你可以利用 IDE 的 JSDoc 类型提示获得智能提示：
 
 ```js [rolldown.config.js]
 /** @type {import('rolldown').RolldownOptions} */
@@ -59,7 +59,7 @@ export default {
 };
 ```
 
-Alternatively you can use the `defineConfig` helper, which provides intellisense without the need for JSDoc annotations:
+或者，你也可以使用 `defineConfig` 辅助函数，它无需 JSDoc 注解即可提供智能提示：
 
 ```js [rolldown.config.js]
 import { defineConfig } from 'rolldown';
@@ -69,9 +69,9 @@ export default defineConfig({
 });
 ```
 
-### Configuration Arrays
+### 配置数组
 
-To build different bundles from different inputs, you can supply an array of configuration objects:
+要从不同输入构建不同的 bundle，你可以提供一个配置对象数组：
 
 ```js [rolldown.config.js]
 import { defineConfig } from 'rolldown';
@@ -88,9 +88,9 @@ export default defineConfig([
 ]);
 ```
 
-::: tip Different outputs with same inputs
+::: tip 相同输入的不同输出
 
-You can also supply an array for the `output` option to generate multiple outputs from the same input:
+你也可以为 `output` 选项提供一个数组，以便从相同输入生成多个输出：
 
 ```js [rolldown.config.js]
 import { defineConfig } from 'rolldown';
@@ -106,24 +106,24 @@ export default defineConfig({
 
 :::
 
-## Command Line Flags
+## 命令行标志
 
-Flags can be passed as `--foo`, `--foo <value>`, or `--foo=<value>`. Boolean flags like `--minify` don't need a value, while key-value options like `--transform.define` use comma-separated syntax: `--transform.define key:value,key2:value2`. Many flags have short aliases (e.g., `-m` for `--minify`, `-f` for `--format`).
+标志可以通过 `--foo`、`--foo <value>` 或 `--foo=<value>` 传入。像 `--minify` 这样的布尔标志不需要值，而像 `--transform.define` 这样的键值选项使用逗号分隔语法：`--transform.define key:value,key2:value2`。许多标志都有简写别名（例如，`-m` 对应 `--minify`，`-f` 对应 `--format`）。
 
-::: info Integration into other tools
+::: info 集成到其他工具中
 
-Note that your shell interprets arguments before Rolldown sees them—quotes and wildcards may behave unexpectedly. For advanced build processes or integration into other tools, consider using the [JavaScript API](/apis/bundler-api) instead. Key differences when switching from config files to the API:
+请注意，在 Rolldown 看到参数之前，你的 shell 会先对它们进行解释——引号和通配符的行为可能会出乎意料。对于高级构建流程或集成到其他工具中，建议改用 [JavaScript API](/apis/bundler-api)。从配置文件切换到 API 时的关键区别：
 
-- Configuration must be an object (not a Promise or function)
-- Run [`rolldown.rolldown`](/reference/Function.rolldown) separately for each set of `inputOptions` (no config arrays)
-- Use [`bundle.generate(outputOptions)`](/reference/Interface.RolldownBuild#generate) or [`bundle.write(outputOptions)`](/reference/Interface.RolldownBuild#write) instead of the `output` option
+- 配置必须是对象（不能是 Promise 或函数）
+- 对每一组 `inputOptions` 分别运行 [`rolldown.rolldown`](/reference/Function.rolldown)（不支持配置数组）
+- 使用 [`bundle.generate(outputOptions)`](/reference/Interface.RolldownBuild#generate) 或 [`bundle.write(outputOptions)`](/reference/Interface.RolldownBuild#write) 来替代 `output` 选项
 
 :::
 
-Many options have command line flag equivalents.
-See the [reference](/reference/) for details of those flags.
-In those cases, any arguments passed here will override the config file, if you're using one.
-This is a list of all supported flags:
+许多选项都有对应的命令行标志。
+有关这些标志的详细信息，请参阅 [参考](/reference/)。
+在这些情况下，如果你使用了配置文件，这里传入的任何参数都会覆盖配置文件中的设置。
+下面是所有受支持标志的列表：
 
 <script setup>
 import { data } from '../data-loading/cli-help.data'
@@ -133,46 +133,46 @@ import { data } from '../data-loading/cli-help.data'
 {{ data.help }}
 ```
 
-The flags listed below are only available via the command line interface.
+下面列出的标志仅可通过命令行界面使用。
 
 ### `-c, --config <filename>`
 
-Use the specified config file. If the argument is used but no filename is specified, Rolldown will look for a default config file. See [Configuration Files](#configuration-files) for more details.
+使用指定的配置文件。如果使用了该参数但未指定文件名，Rolldown 将查找默认配置文件。有关更多详细信息，请参阅 [配置文件](#configuration-files)。
 
 ### `-h` / `--help`
 
-Show the help message.
+显示帮助信息。
 
 ### `-v` / `--version`
 
-Show the installed version number.
+显示已安装的版本号。
 
 ### `-w` / `--watch`
 
-Rebuild the bundle when source files change on disk.
+当源文件在磁盘上发生变化时重新构建 bundle。
 
-::: info `ROLLDOWN_WATCH` env
-While in watch mode, the `ROLLDOWN_WATCH` and `ROLLUP_WATCH` environment variable will be set to `true` by Rolldown's command line interface and can be checked by other processes. Plugins should instead check [`this.meta.watchMode`](/reference/Interface.PluginContextMeta#watchmode), which is independent of the command line interface.
+::: info `ROLLDOWN_WATCH` 环境变量
+在 watch 模式下，Rolldown 的命令行界面会将 `ROLLDOWN_WATCH` 和 `ROLLUP_WATCH` 环境变量设置为 `true`，并且可以被其他进程检查。插件应改为检查 [`this.meta.watchMode`](/reference/Interface.PluginContextMeta#watchmode)，它不依赖于命令行界面。
 :::
 
 ### `--environment <values>`
 
-Pass additional settings to the config file via `process.env`.
-Values are comma-separated key-value pairs, where a value of `true` can be omitted.
+通过 `process.env` 向配置文件传递额外设置。
+值是以逗号分隔的键值对，其中值为 `true` 时可以省略。
 
-For example:
+例如：
 
 ```shell
 rolldown -c --environment INCLUDE_DEPS,BUILD:production
 ```
 
-This will set `process.env.INCLUDE_DEPS = 'true'` and `process.env.BUILD = 'production'`.
+这会设置 `process.env.INCLUDE_DEPS = 'true'` 和 `process.env.BUILD = 'production'`。
 
-You can invoke this option multiple times.
-In that case, subsequently set variables will overwrite previous definitions.
+你可以多次使用此选项。
+在这种情况下，后续设置的变量将覆盖先前的定义。
 
-::: tip Overwriting the values
-If you have `package.json` scripts:
+::: tip 覆盖这些值
+如果你有 `package.json` 脚本：
 
 ```json
 {
@@ -182,6 +182,6 @@ If you have `package.json` scripts:
 }
 ```
 
-you can call this script with `npm run build -- --environment BUILD:development` to set `process.env.BUILD="development"`.
+你可以通过 `npm run build -- --environment BUILD:development` 来调用此脚本，以设置 `process.env.BUILD="development"`。
 
 :::

@@ -1,6 +1,6 @@
-# Entry
+# 入口
 
-Entry is an abstract term that represents a collection of multiple concepts. An entry means:
+入口是一个抽象术语，表示多个概念的集合。一个入口指的是：
 
-- An entry module used as a starting point for building the module graph
-- An entry chunk that's created for exporting the entry module's exports. It will be also used to store the code of the entry module and its dependencies (if not code-split into separate chunks)
+- 用作构建模块图起点的入口模块
+- 为导出入口模块的导出而创建的入口 chunk。它也将用于存储入口模块及其依赖项的代码（如果没有被代码拆分到单独的 chunk 中）

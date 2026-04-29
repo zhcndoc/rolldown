@@ -1,10 +1,10 @@
-# Profiling
+# 性能分析
 
-## CPU profiling (samply)
+## CPU 性能分析（samply）
 
-### Setup
+### 设置
 
-First you need to install [`samply`](https://github.com/mstange/samply). You can install it with:
+首先，你需要安装 [`samply`](https://github.com/mstange/samply)。你可以使用以下命令安装：
 
 ```bash
 cargo binstall samply
@@ -12,67 +12,67 @@ cargo binstall samply
 
 ::: warning
 
-Samply does not work well on macOS. We recommend using Xcode Instruments instead.
+Samply 在 macOS 上效果不佳。我们建议改用 Xcode Instruments。
 
 :::
 
-### Build
+### 构建
 
-To build Rolldown with the information required by `samply`, you need to build it with:
+要使用 `samply` 所需的信息构建 Rolldown，你需要使用以下命令构建：
 
 ```shell
 just build-rolldown-profile
 ```
 
-### Profiling
+### 性能分析
 
-After building, you can run Rolldown with the following command to profile CPU usage:
+构建完成后，你可以使用以下命令运行 Rolldown 以分析 CPU 使用情况：
 
 ```shell
 samply record node ./path/to/script-rolldown-is-used.js
 ```
 
-If you want to profile the JavaScript part as well, you can pass [the required flags](https://github.com/nodejs/node/pull/58010) to Node:
+如果你也想分析 JavaScript 部分，可以向 Node 传递 [所需的标志](https://github.com/nodejs/node/pull/58010)：
 
 ```shell
 samply record node --perf-prof --perf-basic-prof --perf-prof-unwinding-info --interpreted-frames-native-stack ./path/to/script-rolldown-is-used.js
 ```
 
-## CPU profiling (Xcode Instruments)
+## CPU 性能分析（Xcode Instruments）
 
-### Setup
+### 设置
 
-First, make sure you have Xcode installed.
+首先，确保你已经安装了 Xcode。
 
-### Build
+### 构建
 
-To build Rolldown with the information required by Xcode Instruments, you need to build it with:
+要使用 Xcode Instruments 所需的信息构建 Rolldown，你需要使用以下命令构建：
 
 ```shell
 just build-rolldown-profile
 ```
 
-### Profiling
+### 性能分析
 
-After building, you can run Rolldown with the following command to profile CPU usage:
+构建完成后，你可以使用以下命令运行 Rolldown 以分析 CPU 使用情况：
 
 ```shell
 xctrace record --template "Time Profile" --output . --launch -- node ./path/to/script-rolldown-is-used.js
 ```
 
-then the output file path will be printed. You can open the file with:
+然后会打印输出文件路径。你可以使用以下命令打开该文件：
 
 ```shell
 open ./Launch_node_yyyy-mm-dd_hh.mm.ss_hash.trace
 ```
 
-## Memory profiling
+## 内存性能分析
 
-To profile memory usage, you can use [`heaptrack`](https://github.com/KDE/heaptrack).
+要分析内存使用情况，你可以使用 [`heaptrack`](https://github.com/KDE/heaptrack)。
 
-### Setup
+### 设置
 
-First you need to install `heaptrack` and `heaptrack-gui`. If you are using Ubuntu, you can install it with:
+首先，你需要安装 `heaptrack` 和 `heaptrack-gui`。如果你使用的是 Ubuntu，可以使用以下命令安装：
 
 ```bash
 sudo apt install heaptrack heaptrack-gui
@@ -80,29 +80,29 @@ sudo apt install heaptrack heaptrack-gui
 
 ::: warning
 
-`heaptrack` only supports Linux. It works fine on WSL.
+`heaptrack` 仅支持 Linux。它在 WSL 上运行良好。
 
 :::
 
-### Build
+### 构建
 
-To build Rolldown with the information required by `heaptrack`, you need to build it with:
+要使用 `heaptrack` 所需的信息构建 Rolldown，你需要使用以下命令构建：
 
 ```shell
 just build-rolldown-memory-profile
 ```
 
-### Profiling
+### 性能分析
 
-After building, you can run Rolldown with the following command to profile memory usage:
+构建完成后，你可以使用以下命令运行 Rolldown 以分析内存使用情况：
 
 ```shell
 heaptrack node ./path/to/script-rolldown-is-used.js
 ```
 
-::: tip Using asdf or other version manager that uses shims?
+::: tip 使用 asdf 或其他使用 shim 的版本管理器？
 
-In that case, you may need to use the actual path to the Node binary. For example, if you are using asdf, you can run it with:
+在这种情况下，你可能需要使用 Node 二进制文件的实际路径。例如，如果你使用的是 asdf，可以使用以下命令运行：
 
 ```shell
 heaptrack $(asdf which node) ./path/to/script-rolldown-is-used.js
@@ -110,6 +110,6 @@ heaptrack $(asdf which node) ./path/to/script-rolldown-is-used.js
 
 :::
 
-The heaptrack GUI will open automatically after the script finishes running.
+脚本运行结束后，heaptrack GUI 将自动打开。
 
 ![heaptrack-gui screenshot](./heaptrack-gui.png)

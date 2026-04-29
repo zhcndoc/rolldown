@@ -1,10 +1,10 @@
 # Bundler API
 
-Rolldown provides three main API functions for bundling your code programmatically.
+Rolldown 提供三个主要的 API 函数，用于以编程方式打包你的代码。
 
 ## `rolldown()`
 
-`rolldown()` is the API compatible with Rollup's `rollup` function.
+`rolldown()` 是与 Rollup 的 `rollup` 函数兼容的 API。
 
 ```js
 import { rolldown } from 'rolldown';
@@ -28,11 +28,11 @@ if (bundle) {
 process.exitCode = failed ? 1 : 0;
 ```
 
-See [its reference](/reference/Function.rolldown) for more details.
+更多详情请参见 [其参考文档](/reference/Function.rolldown)。
 
 ## `watch()`
 
-`watch()` is the API compatible with Rollup's `watch` function.
+`watch()` 是与 Rollup 的 `watch` 函数兼容的 API。
 
 ```js
 import { watch } from 'rolldown';
@@ -47,21 +47,21 @@ watcher.on('event', (event) => {
   }
 });
 
-// Stop watching
+// 停止监听
 watcher.close();
 ```
 
-See [its reference](/reference/Function.watch) for more details.
+更多详情请参见 [其参考文档](/reference/Function.watch)。
 
 ## `build()`
 
 ::: warning Experimental
 
-This API is experimental and may change in patch releases.
+此 API 处于实验阶段，可能会在补丁版本中发生变更。
 
 :::
 
-`build()` is the simplest option for most use cases. The API is similar to esbuild's `build` function. It bundles and writes in a single call with automatic cleanup.
+`build()` 对于大多数使用场景来说是最简单的选择。该 API 与 esbuild 的 `build` 函数类似。它会在一次调用中完成打包和写入，并自动清理。
 
 ```js
 import { build } from 'rolldown';
@@ -75,4 +75,4 @@ const result = await build({
 console.log(result);
 ```
 
-See [its reference](/reference/Function.build) for more details.
+更多详情请参见 [其参考文档](/reference/Function.build)。

@@ -1,13 +1,13 @@
-# Dead Code Elimination
+# 死代码消除
 
-Dead code elimination (DCE) is an optimization technique that removes unused code from your bundle, making it smaller and faster to load.
+死代码消除（DCE）是一种优化技术，它会从你的包中移除未使用的代码，使其体积更小、加载更快。
 
-Rolldown removes code that meets **both** of these conditions:
+Rolldown 会移除同时满足以下两个条件的代码：
 
-1. **Not used** - The value is never used
-2. **Has no side effects** - Removing the code won't change the program's behavior
+1. **未被使用** - 该值从未被使用
+2. **没有副作用** - 移除该代码不会改变程序行为
 
-Here's a simple example:
+下面是一个简单示例：
 
 ```js
 // math.js
@@ -24,64 +24,64 @@ import { add } from './math.js';
 console.log(add(2, 3));
 ```
 
-In this example, `multiply` is never imported and has no side effects, so Rolldown removes it from the final bundle.
+在这个示例中，`multiply` 从未被导入，并且没有副作用，因此 Rolldown 会将它从最终 bundle 中移除。
 
 ::: tip Tree-Shaking
-Tree-shaking is a related term [popularized by Rollup](https://rollupjs.org/faqs/#what-is-tree-shaking). It refers to a specific technique for dead code elimination that works by "shaking" the syntax tree to remove unused code.
+Tree-shaking 是一个相关术语，[由 Rollup 推广](https://rollupjs.org/faqs/#what-is-tree-shaking)。它指的是一种通过“摇动”语法树来移除未使用代码的特定死代码消除技术。
 :::
 
-## What Are Side Effects?
+## 什么是副作用？
 
-A side effect is any operation that affects something outside its own scope. Common side effects include:
+副作用是指任何会影响自身作用域之外内容的操作。常见的副作用包括：
 
-- Modifying global variables or the DOM
-- Importing CSS files (which apply styles to the page)
-- Polyfills that modify prototypes or global objects
+- 修改全局变量或 DOM
+- 导入 CSS 文件（会将样式应用到页面）
+- 修改原型或全局对象的 polyfill
 
 ```js
-// side effect: applies styles
+// 副作用：应用样式
 import './styles.css';
-// side effect: modifies global
+// 副作用：修改全局变量
 window.API_URL = '/api';
-// side effect: modifies prototype
+// 副作用：修改原型
 Array.prototype.first = function () {
   return this[0];
 };
 ```
 
-## How Rolldown Detects Side Effects
+## Rolldown 如何检测副作用
 
-Rolldown automatically analyzes your code to detect side effects by examining:
+Rolldown 会通过分析以下内容自动检测你的代码是否有副作用：
 
-- Whether the module has top-level code that runs on import
-- Whether function calls might modify external state
-- Whether property accesses might trigger getters with side effects
+- 模块是否包含在导入时执行的顶层代码
+- 函数调用是否可能修改外部状态
+- 属性访问是否可能触发带有副作用的 getter
 
-However, static analysis has limitations. Some patterns are too dynamic to analyze, so Rolldown may conservatively keep code when it's uncertain. You can tune this behavior with [`treeshake.unknownGlobalSideEffects`](/reference/InputOptions.treeshake#unknownglobalsideeffects) and [`treeshake.propertyReadSideEffects`](/reference/InputOptions.treeshake#propertyreadsideeffects).
+不过，静态分析有其局限性。有些模式过于动态，无法分析，因此当 Rolldown 不确定时，可能会保守地保留代码。你可以通过 [`treeshake.unknownGlobalSideEffects`](/reference/InputOptions.treeshake#unknownglobalsideeffects) 和 [`treeshake.propertyReadSideEffects`](/reference/InputOptions.treeshake#propertyreadsideeffects) 来调整这一行为。
 
-You can also help Rolldown perform more aggressive dead code elimination by explicitly marking code as side-effect-free.
+你也可以通过显式标记代码为无副作用，帮助 Rolldown 执行更激进的死代码消除。
 
-## Marking Code as Side-Effect-Free
+## 将代码标记为无副作用
 
-You can use annotation comments to tell Rolldown that a piece of code is side-effect-free. They are enabled by default and can be disabled with [`treeshake.annotations`](/reference/InputOptions.treeshake#annotations).
+你可以使用注释标记告诉 Rolldown 某段代码是无副作用的。这些注释默认启用，可通过 [`treeshake.annotations`](/reference/InputOptions.treeshake#annotations) 关闭。
 
 ### `@__PURE__`
 
-The `@__PURE__` annotation tells the bundler that a function call has no side effects. If the result is unused, the entire call can be removed.
+`@__PURE__` 注释告诉 bundler 某个函数调用没有副作用。如果结果未被使用，整个调用都可以被移除。
 
 ```js
 const button = /* @__PURE__ */ createButton();
 ```
 
-If `button` is never used, Rolldown removes the `createButton()` call entirely. Without the annotation, Rolldown would keep the call because it can't be certain `createButton()` has no side effects.
+如果 `button` 从未被使用，Rolldown 会完全移除 `createButton()` 调用。若没有该注释，Rolldown 会保留该调用，因为它无法确定 `createButton()` 是否没有副作用。
 
 ::: tip
-The annotation can also be written as `/* #__PURE__ */` (with `#` instead of `@`) for compatibility with other tools.
+为了兼容其他工具，这个注释也可以写成 `/* #__PURE__ */`（使用 `#` 而不是 `@`）。
 :::
 
 ### `@__NO_SIDE_EFFECTS__`
 
-The `@__NO_SIDE_EFFECTS__` annotation tells the bundler that any call of this function declaration has no side effects.
+`@__NO_SIDE_EFFECTS__` 注释告诉 bundler，该函数声明的任何调用都没有副作用。
 
 ```js
 /* @__NO_SIDE_EFFECTS__ */
@@ -94,50 +94,50 @@ function createComponent(name) {
   };
 }
 
-// This call will be removed if `button` is unused
+// 如果 `button` 未使用，这个调用将被移除
 const button = createComponent('button');
-// This call will also be removed if `input` is unused
+// 如果 `input` 未使用，这个调用也将被移除
 const input = createComponent('input');
 ```
 
-This can be more convenient than adding `@__PURE__` to every call site when you know the function itself is always pure.
+当你知道函数本身始终是纯函数时，这种方式可能比在每个调用点都添加 `@__PURE__` 更方便。
 
-## Marking Entire Modules as Side-Effect-Free
+## 将整个模块标记为无副作用
 
-While you can mark individual expressions or functions, you can also mark entire modules as side-effect-free. If you mark a module as side-effect-free, Rolldown will treat every statement in that module as side-effect-free when none of its exports are used.
+虽然你可以标记单个表达式或函数，但你也可以将整个模块标记为无副作用。如果你将某个模块标记为无副作用，那么当它的导出都没有被使用时，Rolldown 会将该模块中的每条语句都视为无副作用。
 
-::: details What does "none of its exports are used" mean?
+::: details “它的导出都没有被使用”是什么意思？
 
-This refers to the exports that are **defined in the module itself**, not re-exports from other modules.
+这里指的是**在模块自身中定义**的导出，而不是从其他模块重新导出的内容。
 
 ```js [utils.js]
-// assume that this file is marked as side-effect-free
-window.loaded = true; // side effect
+// 假设此文件被标记为无副作用
+window.loaded = true; // 副作用
 
-// Defined in this file - counts as "its exports"
+// 在此文件中定义 - 计入“它的导出”
 export function add(a, b) {
   return a + b;
 }
 
-// Re-exported from another file - these does NOT count
+// 从另一个文件重新导出 - 这些不计入
 export { multiply } from './math.js';
 export * from './math2.js';
 import { divide } from './math3.js';
 export { divide };
 ```
 
-In this example:
+在这个示例中：
 
-- If you `import { add } from './utils.js'`, the module is considered "used" because `add` is defined in `utils.js`
-- If you only `import { multiply } from './utils.js'`, the module is considered "unused" because `multiply` is just re-exported, not defined here
+- 如果你 `import { add } from './utils.js'`，则该模块被视为“已使用”，因为 `add` 是在 `utils.js` 中定义的
+- 如果你只 `import { multiply } from './utils.js'`，则该模块被视为“未使用”，因为 `multiply` 只是重新导出，并不是在这里定义的
 
 :::
 
-For example, consider this case:
+例如，考虑以下情况：
 
 ```js
 // math.js
-window.myGlobal = 'hello'; // side effect: modifies global
+window.myGlobal = 'hello'; // 副作用：修改全局变量
 
 export function add(a, b) {
   return a + b;
@@ -148,23 +148,23 @@ import './math.js';
 console.log('main');
 ```
 
-If `math.js` is marked as side-effect-free, the output will be:
+如果 `math.js` 被标记为无副作用，则输出将会是：
 
 ```js
 console.log('main');
 ```
 
-:::: warning This is conditional
+:::: warning 这是有条件的
 
-The statements are only treated as side-effect-free when none of the module's exports are used. If any export is used, side effects are preserved.
+只有当模块的导出都没有被使用时，这些语句才会被视为无副作用。如果任何导出被使用，副作用就会被保留。
 
-::: details Example
+::: details 示例
 
-For example, consider this case:
+例如，考虑以下情况：
 
 ```js
-// math.js (marked as side-effect-free)
-window.myGlobal = 'hello'; // side effect: modifies global
+// math.js（标记为无副作用）
+window.myGlobal = 'hello'; // 副作用：修改全局变量
 
 export function add(a, b) {
   return a + b;
@@ -175,7 +175,7 @@ import { add } from './math.js';
 console.log('main', add(2, 3));
 ```
 
-The output will be:
+输出将会是：
 
 ```js
 window.myGlobal = 'hello';
@@ -187,7 +187,7 @@ function add(a, b) {
 console.log('main', add(2, 3));
 ```
 
-On the other hand, if you mark every statement in `math.js` as side-effect-free, the output will be:
+另一方面，如果你将 `math.js` 中的每条语句都标记为无副作用，则输出将会是：
 
 ```js
 function add(a, b) {
@@ -201,9 +201,9 @@ console.log('main', add(2, 3));
 
 ::::
 
-#### `sideEffects` in package.json
+#### `package.json` 中的 `sideEffects`
 
-The `sideEffects` field in `package.json` tells bundlers which files in your package have side effects:
+`package.json` 中的 `sideEffects` 字段会告诉 bundler 你包里的哪些文件具有副作用：
 
 ```json [package.json]
 {
@@ -212,9 +212,9 @@ The `sideEffects` field in `package.json` tells bundlers which files in your pac
 }
 ```
 
-Setting `sideEffects: false` marks all files in the package as side-effect-free, which is common for utility libraries.
+将 `sideEffects: false` 会把包中的所有文件都标记为无副作用，这在工具库中很常见。
 
-You can also specify an array of files that have side effects:
+你也可以指定一个包含具有副作用文件的数组：
 
 ```json [package.json]
 {
@@ -223,12 +223,12 @@ You can also specify an array of files that have side effects:
 }
 ```
 
-This tells Rolldown that most files have no side effects and can be removed if unused, except for `polyfill.js` and CSS files which must be preserved.
+这会告诉 Rolldown，大多数文件都没有副作用，在未使用时可以被移除，但 `polyfill.js` 和 CSS 文件必须保留。
 
-The array accepts glob patterns (supports `*`, `**`, `{a,b}`, `[a-z]`). Patterns like `*.css` that do not include a `/` will be treated as `**/*.css`.
+该数组支持 glob 模式（支持 `*`、`**`、`{a,b}`、`[a-z]`）。像 `*.css` 这样不包含 `/` 的模式会被视为 `**/*.css`。
 
-::: warning CSS Files
-If your library imports CSS files, make sure to include them in the `sideEffects` array. Otherwise, the CSS imports may be removed:
+::: warning CSS 文件
+如果你的库导入了 CSS 文件，请务必将它们包含在 `sideEffects` 数组中。否则，CSS 导入可能会被移除：
 
 ```json [package.json]
 {
@@ -239,9 +239,9 @@ If your library imports CSS files, make sure to include them in the `sideEffects
 
 :::
 
-#### Plugin Hook: `moduleSideEffects`
+#### 插件钩子：`moduleSideEffects`
 
-Plugins can return [`moduleSideEffects`](/reference/Interface.SourceDescription#modulesideeffects) from the `resolveId`, `load`, or `transform` hooks to override side effect detection for specific modules:
+插件可以在 `resolveId`、`load` 或 `transform` 钩子中返回 [`moduleSideEffects`](/reference/Interface.SourceDescription#modulesideeffects)，以覆盖特定模块的副作用检测：
 
 ```js [rolldown.config.js]
 export default {
@@ -262,17 +262,17 @@ export default {
 };
 ```
 
-The priority order for determining a module's side effects is:
+用于判断模块副作用的优先级顺序为：
 
-1. `transform` hook's returned `moduleSideEffects`
-2. `load` hook's returned `moduleSideEffects`
-3. `resolveId` hook's returned `moduleSideEffects`
-4. [`treeshake.moduleSideEffects`](/reference/InputOptions.treeshake#modulesideeffects) option
-5. `sideEffects` field in `package.json`
+1. `transform` 钩子返回的 `moduleSideEffects`
+2. `load` 钩子返回的 `moduleSideEffects`
+3. `resolveId` 钩子返回的 `moduleSideEffects`
+4. [`treeshake.moduleSideEffects`](/reference/InputOptions.treeshake#modulesideeffects) 选项
+5. `package.json` 中的 `sideEffects` 字段
 
-## Example: Optimizing a Component Library
+## 示例：优化组件库
 
-Consider a component library with this structure:
+考虑一个具有如下结构的组件库：
 
 ```
 my-component-lib/
@@ -302,7 +302,7 @@ export function Button(props) {
 
 :::
 
-To ensure unused components can be removed, mark only the CSS files as having side effects:
+为了确保未使用的组件可以被移除，只将 CSS 文件标记为有副作用：
 
 ```json [package.json]
 {
@@ -311,7 +311,7 @@ To ensure unused components can be removed, mark only the CSS files as having si
 }
 ```
 
-Now when a consumer imports only `Button`:
+现在，当使用者只导入 `Button` 时：
 
 ```js
 import { Button } from 'my-component-lib';
@@ -319,9 +319,9 @@ import { Button } from 'my-component-lib';
 render(<Button />);
 ```
 
-Rolldown will:
+Rolldown 将会：
 
-1. Include `components/Button.js` (because `Button` is used)
-2. Include `components/Button.css` (because it's imported by `components/Button.js` and marked as having side effects)
-3. Exclude `components/Modal.js` (because `Modal` is not used)
-4. Exclude `components/Modal.css` (because `components/Modal.js` is excluded)
+1. 包含 `components/Button.js`（因为使用了 `Button`）
+2. 包含 `components/Button.css`（因为它被 `components/Button.js` 导入，并且被标记为有副作用）
+3. 排除 `components/Modal.js`（因为没有使用 `Modal`）
+4. 排除 `components/Modal.css`（因为 `components/Modal.js` 被排除）

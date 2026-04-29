@@ -61,6 +61,10 @@ type TypedocVitepressThemeOptions = {
 async function runTypedoc(entryPoints: string[]): Promise<void> {
   const options: TypeDocOptions & PluginOptions & TypedocVitepressThemeOptions = {
     tsconfig: path.join(root, 'packages/rolldown/tsconfig.json'),
+    compilerOptions: {
+      allowImportingTsExtensions: true,
+      customConditions: ['dev'],
+    },
     plugin: [
       'typedoc-plugin-markdown',
       'typedoc-vitepress-theme',

@@ -1,5 +1,5 @@
 ---
-title: Options & APIs Reference
+title: 选项与 API 索引
 sidebar: true
 aside: false
 ---

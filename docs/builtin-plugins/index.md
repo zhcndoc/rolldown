@@ -1,3 +1,3 @@
-# Builtin Plugins
+# 内置插件
 
-Rolldown offers a set of built-in plugins, implemented in Rust, to achieve higher performance. These plugins cover common use cases and can be easily included in your build process.
+Rolldown 提供了一组用 Rust 实现的内置插件，以实现更高的性能。这些插件覆盖了常见的使用场景，并且可以轻松集成到你的构建流程中。

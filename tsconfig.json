@@ -6,6 +6,7 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "customConditions": ["dev"],
     "types": ["node"],
     "declaration": true,
     "noEmit": true,

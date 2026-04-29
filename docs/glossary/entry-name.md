@@ -1,3 +1,3 @@
-# Entry Name
+# 入口名称
 
-Entry name is a property of an entry. Rolldown will use the entry name to generate the file name for the corresponding entry chunk, which will replace the `[name]` placeholder in the [`output.entryFileNames`](/reference/OutputOptions.entryFileNames) pattern.
+入口名称是入口的一个属性。Rolldown 将使用入口名称来生成对应入口 chunk 的文件名，这将替换 [`output.entryFileNames`](/reference/OutputOptions.entryFileNames) 模式中的 `[name]` 占位符。

@@ -1,8 +1,8 @@
-# Source Code Transformations
+# 源代码转换
 
-If a plugin transforms source code, it should generate a sourcemap automatically, unless there's a specific `sourceMap: false` option. Rolldown only cares about the `mappings` property (everything else is handled automatically). [magic-string](https://github.com/Rich-Harris/magic-string) provides a simple way to generate such a map for elementary transformations like adding or removing code snippets.
+如果插件转换了源代码，它应该自动生成 sourcemap，除非有特定的 `sourceMap: false` 选项。Rolldown 只关心 `mappings` 属性（其他部分都会自动处理）。[magic-string](https://github.com/Rich-Harris/magic-string) 为诸如添加或删除代码片段之类的基础转换提供了一种简单的方法来生成这样的映射。
 
-If it doesn't make sense to generate a sourcemap, return an empty sourcemap:
+如果生成 sourcemap 没有意义，请返回一个空的 sourcemap：
 
 ```js
 return {
@@ -11,7 +11,7 @@ return {
 };
 ```
 
-If the transformation does not move code, you can preserve existing sourcemaps by returning `null`:
+如果转换没有移动代码，你可以通过返回 `null` 来保留现有的 sourcemap：
 
 ```js
 return {

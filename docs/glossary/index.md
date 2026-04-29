@@ -1,17 +1,17 @@
-# Glossary
+# 术语表
 
-Common terms and concepts used in Rolldown documentation.
+Rolldown 文档中使用的常见术语和概念。
 
 ## B
 
-- [Barrel Module](./barrel-module.md)
+- [聚合模块](./barrel-module.md)
 
 ## E
 
-- [Entry](./entry.md)
-- [Entry Chunk](./entry-chunk.md)
-- [Entry Name](./entry-name.md)
+- [入口](./entry.md)
+- [入口块](./entry-chunk.md)
+- [入口名称](./entry-name.md)
 
 ## U
 
-- [User-defined Entry](./user-defined-entry.md)
+- [用户定义的入口](./user-defined-entry.md)

@@ -1,17 +1,17 @@
-# Why Plugin Hook Filters?
+# 为什么需要插件 Hook 过滤器？
 
-## The Problem
+## 问题
 
-Even though Rolldown's core is written in Rust with parallel processing capabilities, **adding JavaScript plugins can significantly slow down your builds**. Why? Because each plugin hook gets called for _every_ module, even when the plugin doesn't care about most of them.
+尽管 Rolldown 的核心是用 Rust 编写的，并且具备并行处理能力，**添加 JavaScript 插件仍然会显著拖慢构建速度**。为什么？因为每个插件 hook 都会针对 _每个_ 模块被调用一次，即使插件并不关心其中大多数模块。
 
-For example, if you have a CSS plugin that only transforms `.css` files, it still gets called for every `.js`, `.ts`, `.jsx`, and other file in your project. With 10 plugins, this overhead multiplies, causing build times to increase by **3-4x**.
+例如，如果你有一个只处理 `.css` 文件的 CSS 插件，它仍然会对项目中的每个 `.js`、`.ts`、`.jsx` 以及其他文件被调用。随着插件数量增加到 10 个，这种开销会成倍增长，导致构建时间增加 **3-4 倍**。
 
-Plugin hook filters solve this by letting Rolldown skip unnecessary plugin calls at the Rust level, keeping your builds fast even with many plugins.
+插件 hook 过滤器通过让 Rolldown 在 Rust 层跳过不必要的插件调用来解决这个问题，即使有很多插件，也能保持构建速度。
 
-## Real-World Impact
+## 真实影响
 
-Let's see the actual performance difference with a benchmark using [apps/10000](https://github.com/rolldown/benchmarks/tree/main/apps/10000):
-branch: https://github.com/rolldown/benchmarks/pull/3
+让我们通过一个使用 [apps/10000](https://github.com/rolldown/benchmarks/tree/main/apps/10000) 的基准测试来看实际的性能差异：
+分支：https://github.com/rolldown/benchmarks/pull/3
 
 ```diff
 diff --git a/apps/10000/rolldown.config.mjs b/apps/10000/rolldown.config.mjs
@@ -84,14 +84,14 @@ diff --git a/apps/10000/src/index.jsx b/apps/10000/src/index.jsx
  	<React.StrictMode>
 ```
 
-**Setup:**
+**设置：**
 
-- 10 CSS files (`foo1.css` to `foo10.css`)
-- Each plugin transforms only one specific CSS file (e.g., plugin 1 only cares about `foo1.css`)
-- Variable number of plugins controlled via `PLUGIN_COUNT`
-- Plugins use standard pattern: check if file matches, return early if not
+- 10 个 CSS 文件（`foo1.css` 到 `foo10.css`）
+- 每个插件只转换一个特定的 CSS 文件（例如，插件 1 只关心 `foo1.css`）
+- 通过 `PLUGIN_COUNT` 控制插件数量
+- 插件使用标准模式：检查文件是否匹配，不匹配则提前返回
 
-### Without Filter (Traditional Approach)
+### 不使用过滤器（传统方式）
 
 ```bash
 Benchmark 1: PLUGIN_COUNT=0 node --run build:rolldown
@@ -122,11 +122,11 @@ Summary
     3.74 ± 0.10 times faster than 'PLUGIN_COUNT=10 node --run build:rolldown'
 ```
 
-**Key Takeaway:** Build time scales linearly with plugin count - 10 plugins = **3.74x slower** (2.8s vs 745ms).
+**关键结论：** 构建时间会随着插件数量线性增长——10 个插件会慢 **3.74 倍**（2.8s 对比 745ms）。
 
-## The Solution: Plugin Hook Filters
+## 解决方案：插件 Hook 过滤器
 
-Instead of calling every plugin for every module, use `filter` to tell Rolldown which files each plugin cares about. Here's how:
+不要对每个模块都调用每个插件，而是使用 `filter` 告诉 Rolldown 每个插件关心哪些文件。方法如下：
 
 ```diff
 diff --git a/apps/10000/rolldown.config.mjs b/apps/10000/rolldown.config.mjs
@@ -163,13 +163,13 @@ index 822af995..dee07e68 100644
    }
 ```
 
-**What changed:**
+**发生了什么变化：**
 
-- Wrapped the `transform` function in an object with `handler` and `filter` properties
-- Added `filter.id.include` with a regex pattern matching only the files this plugin cares about
-- Rolldown now checks the filter in Rust _before_ calling into JavaScript
+- 将 `transform` 函数包装到一个带有 `handler` 和 `filter` 属性的对象中
+- 添加了 `filter.id.include`，使用正则表达式匹配该插件关心的文件
+- Rolldown 现在会在进入 JavaScript 之前，先在 Rust 中检查过滤器
 
-### With Filter (Optimized)
+### 使用过滤器（优化后）
 
 ```bash
 Benchmark 1: PLUGIN_COUNT=0 node --run build:rolldown
@@ -200,27 +200,27 @@ Summary
     1.04 ± 0.03 times faster than 'PLUGIN_COUNT=1 node --run build:rolldown'
 ```
 
-**Key Takeaway:** With filters, all plugin counts perform nearly identically (~740ms). The overhead has been **eliminated**.
+**关键结论：** 使用过滤器后，所有插件数量的性能几乎一致（约 740ms）。开销已经被**消除**了。
 
-### Performance Comparison
+### 性能对比
 
-| Plugin Count | Without Filter | With Filter | Speedup   |
-| ------------ | -------------- | ----------- | --------- |
-| 0 plugins    | 745ms          | 739ms       | 1.0x      |
-| 1 plugin     | 863ms          | 761ms       | 1.13x     |
-| 2 plugins    | 1,106ms        | 731ms       | 1.51x     |
-| 5 plugins    | 1,848ms        | 742ms       | 2.49x     |
-| 10 plugins   | 2,792ms        | 747ms       | **3.74x** |
+| 插件数量  | 不使用过滤器 | 使用过滤器 | 加速比    |
+| --------- | ------------ | ---------- | --------- |
+| 0 个插件  | 745ms        | 739ms      | 1.0x      |
+| 1 个插件  | 863ms        | 761ms      | 1.13x     |
+| 2 个插件  | 1,106ms      | 731ms      | 1.51x     |
+| 5 个插件  | 1,848ms      | 742ms      | 2.49x     |
+| 10 个插件 | 2,792ms      | 747ms      | **3.74x** |
 
-**Bottom line:** When you have plugins that only care about specific files, use filters to maintain fast build times regardless of how many plugins you add.
+**一句话总结：** 当你的插件只关心特定文件时，请使用过滤器，以便在增加插件数量时仍能保持快速构建。
 
-## How It Works Under the Hood
+## 底层工作原理
 
-To understand why filters are so effective, you need to understand how Rolldown processes modules with JavaScript plugins.
+要理解为什么过滤器如此有效，你需要了解 Rolldown 如何使用 JavaScript 插件处理模块。
 
-Rolldown uses parallel processing (like the [producer-consumer problem](https://en.wikipedia.org/wiki/Producer%E2%80%93consumer_problem)) to build the module graph efficiently. Here's a simple dependency graph to illustrate:
+Rolldown 使用并行处理（类似于 [生产者-消费者问题](https://en.wikipedia.org/wiki/Producer%E2%80%93consumer_problem)）来高效构建模块图。下面是一个简单的依赖图来说明：
 
-**Dependency Graph**
+**依赖图**
 
 ```dot [Dependency Graph]
 digraph {
@@ -244,64 +244,64 @@ digraph {
 }
 ```
 
-### Without JavaScript Plugins
+### 没有 JavaScript 插件
 
-![Bundling without JavaScript plugins](https://github.com/user-attachments/assets/ad071cf9-6a34-4a7d-a669-02efec342d45)
+![没有 JavaScript 插件时的打包](https://github.com/user-attachments/assets/ad071cf9-6a34-4a7d-a669-02efec342d45)
 
-Everything runs in parallel in Rust. Multiple CPU cores process modules simultaneously, maximizing throughput.
+所有任务都在 Rust 中并行运行。多个 CPU 核心同时处理模块，最大化吞吐量。
 
 > [!NOTE]
-> These diagrams show the conceptual algorithm, not exact implementation details. Some time slices are exaggerated for clarity—`fetch_module` actually runs at macrosecond speeds.
+> 这些图展示的是概念性算法，而不是精确的实现细节。为便于说明，有些时间片被夸大了——`fetch_module` 实际上运行速度是微秒级的。
 
-### With JavaScript Plugins (No Filter)
+### 有 JavaScript 插件（无过滤器）
 
-![Bundling with JavaScript plugins](https://github.com/user-attachments/assets/7e95fb60-d345-4d23-a35e-c7d062fa2b70)
+![有 JavaScript 插件时的打包](https://github.com/user-attachments/assets/7e95fb60-d345-4d23-a35e-c7d062fa2b70)
 
-Here's the bottleneck: **JavaScript plugins run in a single thread**. Even though Rolldown's Rust core is parallel, every module must:
+瓶颈在这里：**JavaScript 插件在单线程中运行**。尽管 Rolldown 的 Rust 核心是并行的，但每个模块都必须：
 
-1. Stop at the "diamond" (hook call phase)
-2. Cross the FFI boundary from Rust → JavaScript
-3. Wait for _all_ plugins to run serially
-4. Cross back from JavaScript → Rust
+1. 在“菱形”处停下来（hook 调用阶段）
+2. 跨越 Rust → JavaScript 的 FFI 边界
+3. 等待 _所有_ 插件串行执行
+4. 再从 JavaScript → Rust 返回
 
-This serialization point becomes a major bottleneck. Notice how the diamond section grows wider as more plugins are added, while CPU cores sit idle waiting for JavaScript.
+这个串行化点会成为一个主要瓶颈。注意随着插件数量增加，菱形区域会变得更宽，而 CPU 核心则在等待 JavaScript 时处于空闲状态。
 
-### With Filters (Optimized)
+### 使用过滤器（优化后）
 
-When you add filters, Rolldown evaluates them **in Rust** before crossing into JavaScript:
+添加过滤器后，Rolldown 会在跨入 JavaScript 之前，先在 **Rust 中** 计算过滤条件：
 
 ```
-For each module:
-  For each plugin:
-    ✓ Check filter in Rust (macrosecond)
-    ✗ Skip if no match
-    → Only call JavaScript for matching plugins
+对于每个模块：
+  对于每个插件：
+    ✓ 在 Rust 中检查过滤器（微秒级）
+    ✗ 如果不匹配则跳过
+    → 只为匹配的插件调用 JavaScript
 ```
 
-This eliminates the majority of FFI overhead and JavaScript execution time. In the benchmark, most plugins don't match most files, so nearly all calls are skipped. The diamond shrinks back down, CPU utilization stays high, and build times remain fast.
+这消除了大部分 FFI 开销和 JavaScript 执行时间。在基准测试中，大多数插件并不匹配大多数文件，因此几乎所有调用都被跳过了。菱形区域缩小了，CPU 利用率保持在高位，构建时间依然很快。
 
-## When to Use Filters
+## 何时使用过滤器
 
-**Use filters when:**
+**在以下情况下使用过滤器：**
 
-- ✅ Your plugin only processes specific file types (e.g., `.css`, `.svg`, `.md`)
-- ✅ Your plugin targets specific directories (e.g., `src/**`, `node_modules/**`)
-- ✅ You have multiple plugins in your build
-- ✅ You care about build performance
+- ✅ 你的插件只处理特定文件类型（例如 `.css`、`.svg`、`.md`）
+- ✅ 你的插件针对特定目录（例如 `src/**`、`node_modules/**`）
+- ✅ 你的构建中有多个插件
+- ✅ 你关注构建性能
 
-## Quick Reference
+## 快速参考
 
 ```js
-// ❌ Without filter - called for every module
+// ❌ 没有过滤器 - 对每个模块都会调用
 export default {
   name: 'my-plugin',
   transform(code, id) {
     if (!id.endsWith('.css')) return;
-    // ... transform CSS
+    // ... 转换 CSS
   },
 };
 
-// ✅ With filter - only called for CSS files
+// ✅ 使用过滤器 - 仅对 CSS 文件调用
 export default {
   name: 'my-plugin',
   transform: {
@@ -309,10 +309,10 @@ export default {
       id: { include: /\.css$/ },
     },
     handler(code, id) {
-      // ... transform CSS
+      // ... 转换 CSS
     },
   },
 };
 ```
 
-See the [plugin hook filter usage](/apis/plugin-api/hook-filters) for complete filter api and options.
+查看 [插件钩子过滤器用法](/apis/plugin-api/hook-filters) 以获取完整的过滤器 API 和选项。

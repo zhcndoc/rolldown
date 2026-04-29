@@ -234,7 +234,7 @@ See [${info.parentName}.${info.optionName}](${info.optionFile})
     for (const parent of Object.keys(generatedPage)) {
       if (parent === 'InputOptions') continue;
       sidebarArray.push({
-        text: 'output',
+        text: '输出选项',
         collapsed: true,
         items: generatedPage[parent],
       });
