@@ -91,10 +91,8 @@ const performanceData = [
 
     <div class="flex flex-col gap-3 justify-between">
       <div class="p-5 sm:p-15 pb-0 sm:pb-0 flex flex-col gap-3">
-        <h5 class="text-white">与 esbuild 特性对齐</h5>
-        <p class="max-w-104 text-pretty">
-          内置转换、define、inject、压缩、CSS 打包等功能应有尽有……
-        </p>
+        <h5 class="text-white">Esbuild Feature Parity</h5>
+        <p class="max-w-[26rem] text-pretty">内置转换、define、注入、压缩等更多功能……</p>
       </div>
       <div class="flex-1 flex items-center justify-center p-8 sm:p-15 sm:pt-10">
         <img

@@ -34,7 +34,7 @@ Rolldown 默认支持以下转换，由 [Oxc](https://oxc.rs/docs/guide/usage/tr
 
 ## CJS 支持
 
-Rolldown 默认支持混合的 ESM / CJS 模块图，无需 `@rollup/plugin-commonjs`。它在很大程度上遵循 esbuild 的语义，并且 [通过了所有 esbuild ESM / CJS 互操作测试](https://github.com/rolldown/bundler-esm-cjs-tests)。
+Rolldown 默认支持混合的 ESM / CJS 模块图，无需 `@rollup/plugin-commonjs`。它在很大程度上遵循 esbuild 的语义，并且 [通过了所有 esbuild ESM / CJS 互操作测试](https://github.com/evanw/bundler-esm-cjs-tests)。
 
 更多详情请参见 [打包 CJS](/in-depth/bundling-cjs)。
 
@@ -65,13 +65,7 @@ Rolldown 默认支持混合的 ESM / CJS 模块图，无需 `@rollup/plugin-comm
 
 此功能提供了一种用从模块导出的特定值来模拟全局变量的方法。该功能等同于 [`@rollup/plugin-inject`](https://github.com/rollup/plugins/tree/master/packages/inject)，在概念上类似于 [esbuild 的 `inject` 选项](https://esbuild.github.io/api/#inject)。
 
-## CSS 打包
-
-- ⚠️ 实验性
-
-Rolldown 默认支持打包从 JS 中导入的 CSS。请注意，此功能目前不支持 CSS Modules 和压缩。
-
-## 手动代码拆分
+## Manual Code Splitting
 
 - 可通过 [`output.codeSplitting`](/reference/OutputOptions.codeSplitting) 选项配置。
 
