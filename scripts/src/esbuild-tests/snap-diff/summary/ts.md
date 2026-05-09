@@ -1,13 +1,12 @@
-# Failed Cases
-## [parameter_props_use_define_for_class_fields_true](../../../../../crates/rolldown/tests/esbuild/ts/parameter_props_use_define_for_class_fields_true/diff.md)
-  https://github.com/oxc-project/oxc/issues/21600
+# 失败的用例
 ## [ts_export_default_type_issue316](../../../../../crates/rolldown/tests/esbuild/ts/ts_export_default_type_issue316/diff.md)
-  related to https://github.com/rolldown/rolldown/issues/3048, export pointing to a value declared by `declare var` should be kept
+  与 https://github.com/rolldown/rolldown/issues/3048 相关，指向由 `declare var` 声明的值的导出应被保留
 ## [ts_print_non_finite_number_inside_with](../../../../../crates/rolldown/tests/esbuild/ts/ts_print_non_finite_number_inside_with/diff.md)
-  with statement is rejected due to https://github.com/rolldown/rolldown/issues/7009
-# Passed Cases
+  由于 https://github.com/rolldown/rolldown/issues/7009，`with` 语句被拒绝
+# 通过的用例
 ## [enum_rules_from_type_script_5_0](../../../../../crates/rolldown/tests/esbuild/ts/enum_rules_from_type_script_5_0)
 ## [parameter_props_use_define_for_class_fields_false](../../../../../crates/rolldown/tests/esbuild/ts/parameter_props_use_define_for_class_fields_false)
+## [parameter_props_use_define_for_class_fields_true](../../../../../crates/rolldown/tests/esbuild/ts/parameter_props_use_define_for_class_fields_true)
 ## [parameter_props_use_define_for_class_fields_true_lowered](../../../../../crates/rolldown/tests/esbuild/ts/parameter_props_use_define_for_class_fields_true_lowered)
 ## [this_inside_function_ts](../../../../../crates/rolldown/tests/esbuild/ts/this_inside_function_ts)
 ## [this_inside_function_ts_no_bundle](../../../../../crates/rolldown/tests/esbuild/ts/this_inside_function_ts_no_bundle)
@@ -78,23 +77,23 @@
 ## [ts_sibling_namespace](../../../../../crates/rolldown/tests/esbuild/ts/ts_sibling_namespace)
 ## [ts_side_effects_false_warning_type_declarations](../../../../../crates/rolldown/tests/esbuild/ts/ts_side_effects_false_warning_type_declarations)
 ## [ts_this_is_undefined_warning](../../../../../crates/rolldown/tests/esbuild/ts/ts_this_is_undefined_warning)
-# Ignored Cases
+# 被忽略的用例
 ## [ts_import_in_node_modules_name_collision_with_css](../../../../../crates/rolldown/tests/esbuild/ts/ts_import_in_node_modules_name_collision_with_css)
-  esbuild prefers .js over .ts when resolving extension less imports in node_modules
+  在解析 node_modules 中不带扩展名的导入时，esbuild 更偏好 .js 而不是 .ts
 ## [ts_prefer_js_over_ts_inside_node_modules](../../../../../crates/rolldown/tests/esbuild/ts/ts_prefer_js_over_ts_inside_node_modules)
-  esbuild prefers .js over .ts when resolving extension less imports in node_modules
-# Ignored Cases (not supported)
+  在解析 node_modules 中不带扩展名的导入时，esbuild 更偏好 .js 而不是 .ts
+# 被忽略的用例（不支持）
 ## [export_type_issue379](../../../../../crates/rolldown/tests/esbuild/ts/export_type_issue379)
-  verbatimModuleSyntax=false is not supported
+  不支持 verbatimModuleSyntax=false
 ## [ts_experimental_decorators_mangle_props_assign_semantics](../../../../../crates/rolldown/tests/esbuild/ts/ts_experimental_decorators_mangle_props_assign_semantics)
-  mangle props is not supported by oxc minifier
+  oxc minifier 不支持属性名混淆
 ## [ts_experimental_decorators_mangle_props_define_semantics](../../../../../crates/rolldown/tests/esbuild/ts/ts_experimental_decorators_mangle_props_define_semantics)
-  mangle props is not supported by oxc minifier
+  oxc minifier 不支持属性名混淆
 ## [ts_experimental_decorators_mangle_props_methods](../../../../../crates/rolldown/tests/esbuild/ts/ts_experimental_decorators_mangle_props_methods)
-  mangle props is not supported by oxc minifier
+  属性混淆不受 oxc minifier 支持
 ## [ts_experimental_decorators_mangle_props_static_assign_semantics](../../../../../crates/rolldown/tests/esbuild/ts/ts_experimental_decorators_mangle_props_static_assign_semantics)
-  mangle props is not supported by oxc minifier
+  属性混淆不受 oxc minifier 支持
 ## [ts_experimental_decorators_mangle_props_static_define_semantics](../../../../../crates/rolldown/tests/esbuild/ts/ts_experimental_decorators_mangle_props_static_define_semantics)
-  mangle props is not supported by oxc minifier
+  属性混淆不受 oxc minifier 支持
 ## [ts_experimental_decorators_mangle_props_static_methods](../../../../../crates/rolldown/tests/esbuild/ts/ts_experimental_decorators_mangle_props_static_methods)
-  mangle props is not supported by oxc minifier
+  属性混淆不受 oxc minifier 支持

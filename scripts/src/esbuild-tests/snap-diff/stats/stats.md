@@ -1,13 +1,13 @@
-# Compatibility metric
+# 兼容性指标
 - total: 820
 - ignored: 112
-- passed: 682
-- passed ratio: 87.10%
-# Compatibility metric without not supported case
+- passed: 683
+- passed ratio: 87.23%
+# 不含不支持情况的兼容性指标
 - total: 708
-- passed: 682
-- passed ratio: 96.33%
-# Compatibility metric details
+- passed: 683
+- passed ratio: 96.47%
+# 兼容性指标详情
 ## dce
 - total: 120
 - ignored: 12
@@ -56,5 +56,5 @@
 ## ts
 - total: 84
 - ignored: 9
-- passed: 72
-- passed ratio: 96.00%
+- passed: 73
+- passed ratio: 97.33%

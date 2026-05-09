@@ -8,7 +8,7 @@ import { addOgImage } from 'vitepress-plugin-og';
 import { graphvizMarkdownPlugin } from 'vitepress-plugin-graphviz';
 import { createHooksGraphProcessor } from './markdown-hooks-graph.ts';
 
-const sidebarForUserGuide: DefaultTheme.SidebarItem[] = [
+const sidebarForGuide: DefaultTheme.SidebarItem[] = [
   {
     text: '指南',
     items: [
@@ -22,9 +22,47 @@ const sidebarForUserGuide: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
-    text: 'API',
+    text: '深入了解',
+    collapsed: true,
     items: [
-      { text: '配置项', link: '/reference' },
+      { text: '为什么需要打包器', link: '/in-depth/why-bundlers.md' },
+      {
+        text: '为什么需要插件 Hook 过滤器',
+        link: '/in-depth/why-plugin-hook-filter.md',
+      },
+      { text: '模块类型', link: '/in-depth/module-types.md' },
+      { text: '外部模块', link: '/in-depth/external-modules.md' },
+      { text: '指令', link: '/in-depth/directives.md' },
+      { text: '自动代码分割', link: '/in-depth/automatic-code-splitting.md' },
+      { text: '手动代码分割', link: '/in-depth/manual-code-splitting.md' },
+      { text: '打包 CJS', link: '/in-depth/bundling-cjs.md' },
+      {
+        text: '非 ESM 输出格式',
+        link: '/in-depth/non-esm-output-formats.md',
+      },
+      { text: '顶层 Await', link: '/in-depth/tla-in-rolldown.md' },
+      { text: '死代码消除', link: '/in-depth/dead-code-elimination.md' },
+      { text: '懒加载 Barrel 优化', link: '/in-depth/lazy-barrel-optimization.md' },
+      { text: '原生 MagicString', link: '/in-depth/native-magic-string.md' },
+    ],
+  },
+  {
+    text: '术语表',
+    collapsed: true,
+    items: [
+      { text: 'Barrel 模块', link: '/glossary/barrel-module.md' },
+      { text: '入口', link: '/glossary/entry.md' },
+      { text: '入口 Chunk', link: '/glossary/entry-chunk.md' },
+      { text: '入口名称', link: '/glossary/entry-name.md' },
+      { text: '用户定义入口', link: '/glossary/user-defined-entry.md' },
+    ],
+  },
+];
+
+const sidebarForApi: DefaultTheme.SidebarItem[] = [
+  {
+    text: '接口',
+    items: [
       { text: '打包器 API', link: '/apis/bundler-api.md' },
       {
         text: '插件 API',
@@ -42,12 +80,19 @@ const sidebarForUserGuide: DefaultTheme.SidebarItem[] = [
       { text: '命令行接口', link: '/apis/cli.md' },
     ],
   },
+];
+
+const sidebarForPlugins: DefaultTheme.SidebarItem[] = [
   {
     text: '内置插件',
     items: [
       {
         text: '简介',
         link: '/builtin-plugins/',
+      },
+      {
+        text: 'builtin:bundle-analyzer',
+        link: '/builtin-plugins/bundle-analyzer.md',
       },
       {
         text: 'builtin:esm-external-require',
@@ -57,33 +102,6 @@ const sidebarForUserGuide: DefaultTheme.SidebarItem[] = [
         text: 'builtin:replace',
         link: '/builtin-plugins/replace.md',
       },
-    ],
-  },
-];
-
-const sidebarForInDepth: DefaultTheme.SidebarItem[] = [
-  {
-    text: '深入了解',
-    items: [
-      { text: '为什么需要打包器', link: '/in-depth/why-bundlers.md' },
-      { text: '模块类型', link: '/in-depth/module-types.md' },
-      { text: '顶层 Await', link: '/in-depth/tla-in-rolldown.md' },
-      { text: '自动代码拆分', link: '/in-depth/automatic-code-splitting.md' },
-      { text: '手动代码拆分', link: '/in-depth/manual-code-splitting.md' },
-      { text: '打包 CJS', link: '/in-depth/bundling-cjs.md' },
-      {
-        text: '非 ESM 输出格式',
-        link: '/in-depth/non-esm-output-formats.md',
-      },
-      { text: '死代码消除', link: '/in-depth/dead-code-elimination.md' },
-      { text: '延迟 Barrel 优化', link: '/in-depth/lazy-barrel-optimization.md' },
-      { text: '原生 MagicString', link: '/in-depth/native-magic-string.md' },
-      {
-        text: '为什么要有插件 Hook 过滤器',
-        link: '/in-depth/why-plugin-hook-filter.md',
-      },
-      { text: '外部模块', link: '/in-depth/external-modules.md' },
-      { text: '指令', link: '/in-depth/directives.md' },
     ],
   },
 ];
@@ -198,19 +216,6 @@ const sidebarForDevGuide: DefaultTheme.SidebarItem[] = [
   },
 ];
 
-const sidebarForGlossary: DefaultTheme.SidebarItem[] = [
-  {
-    text: '术语表',
-    items: [
-      { text: 'Barrel 模块', link: '/glossary/barrel-module.md' },
-      { text: '入口', link: '/glossary/entry.md' },
-      { text: '入口块', link: '/glossary/entry-chunk.md' },
-      { text: '入口名称', link: '/glossary/entry-name.md' },
-      { text: '用户定义入口', link: '/glossary/user-defined-entry.md' },
-    ],
-  },
-];
-
 const sidebarForResources: DefaultTheme.SidebarItem[] = [
   {
     text: '团队',
@@ -285,27 +290,21 @@ const config = defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     nav: [
       {
-        text: '文档',
-        activeMatch: '/(guide|in-depth|glossary|apis|builtin-plugins)',
-        items: [
-          {
-            text: '指南',
-            activeMatch: '/(guide|apis|builtin-plugins)',
-            link: '/guide/getting-started.md',
-          },
-          {
-            text: '深入了解',
-            activeMatch: '/in-depth',
-            link: '/in-depth/why-bundlers.md',
-          },
-          {
-            text: '术语表',
-            activeMatch: '/glossary',
-            link: '/glossary/',
-          },
-        ],
+        text: 'Guide',
+        activeMatch: '/(guide|in-depth|glossary)',
+        link: '/guide/getting-started.md',
       },
-      { text: '选项与 API', activeMatch: '/reference', link: '/reference' },
+      { text: 'Reference', activeMatch: '/reference', link: '/reference' },
+      {
+        text: 'Plugins',
+        activeMatch: '/builtin-plugins',
+        link: '/builtin-plugins/',
+      },
+      {
+        text: 'API',
+        activeMatch: '/apis',
+        link: '/apis/bundler-api.md',
+      },
       { text: 'REPL', link: 'https://repl.rolldown.rs/' },
       {
         text: '资源',
@@ -319,10 +318,8 @@ const config = defineConfig({
           {
             text: '参与贡献',
             activeMatch: '/(contribution-guide|development-guide)',
-
             link: '/contribution-guide/',
           },
-
           {
             text: 'Roadmap',
             link: 'https://github.com/rolldown/rolldown/discussions/153',
@@ -333,16 +330,16 @@ const config = defineConfig({
     ],
 
     sidebar: {
-      // --- Guide ---
-      '/guide/': sidebarForUserGuide,
-      '/apis/': sidebarForUserGuide,
-      '/builtin-plugins/': sidebarForUserGuide,
-      // --- In-Depth ---
-      '/in-depth/': sidebarForInDepth,
-      // --- Reference ---
+      // --- Guide (includes In-Depth and Glossary as collapsed sections) ---
+      '/guide/': sidebarForGuide,
+      '/in-depth/': sidebarForGuide,
+      '/glossary/': sidebarForGuide,
+      // --- Reference (options + typedoc dictionary) ---
       '/reference/': sidebarForReference,
-      // --- Glossary ---
-      '/glossary/': sidebarForGlossary,
+      // --- Plugins ---
+      '/builtin-plugins/': sidebarForPlugins,
+      // --- API ---
+      '/apis/': sidebarForApi,
       // --- Contribute ---
       '/contribution-guide/': sidebarForDevGuide,
       '/development-guide/': sidebarForDevGuide,
@@ -367,10 +364,11 @@ const config = defineConfig({
         {
           title: 'Rolldown',
           items: [
-            { text: '指南', link: '/guide/getting-started' },
-            { text: '选项与 API', link: '/reference' },
-            { text: '插件', link: '/builtin-plugins/' },
-            { text: '参与贡献', link: '/contribution-guide/' },
+            { text: 'Guide', link: '/guide/getting-started' },
+            { text: 'Reference', link: '/reference' },
+            { text: 'Plugins', link: '/builtin-plugins/' },
+            { text: 'API', link: '/apis/bundler-api' },
+            { text: 'Contribute', link: '/contribution-guide/' },
             { text: 'REPL', link: 'https://repl.rolldown.rs/' },
           ],
         },
