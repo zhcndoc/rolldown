@@ -1,29 +1,27 @@
-# Failed Cases
+# 失败案例
 ## [comment_preservation](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation/diff.md)
-  with statement is rejected due to https://github.com/rolldown/rolldown/issues/7009
+  由于 https://github.com/rolldown/rolldown/issues/7009，with 语句被拒绝
 ## [comment_preservation_preserve_jsx](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation_preserve_jsx/diff.md)
-  comments are not kept properly
+  注释没有被正确保留
 ## [comment_preservation_transform_jsx](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation_transform_jsx/diff.md)
-  comments are not kept properly
+  注释没有被正确保留
 ## [direct_eval_tainting_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/direct_eval_tainting_no_bundle/diff.md)
-  rejected due to https://github.com/rolldown/rolldown/issues/7009, also sub optimal: eval in `test4` param position don't need to be renamed
+  由于 https://github.com/rolldown/rolldown/issues/7009 被拒绝，而且次优：`test4` 参数位置中的 eval 不需要被重命名
 ## [export_forms_with_minify_identifiers_and_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/export_forms_with_minify_identifiers_and_no_bundle/diff.md)
-  sub optimal: should not generate duplicate export binding
+  次优：不应生成重复的导出绑定
 ## [external_es6_converted_to_common_js](../../../../../crates/rolldown/tests/esbuild/default/external_es6_converted_to_common_js/diff.md)
-  sub optimal: redundant `import` statements
+  次优：多余的 `import` 语句
 ## [false_require](../../../../../crates/rolldown/tests/esbuild/default/false_require/diff.md)
-  should rename `require` when it is appear in param position
+  当 `require` 出现在参数位置时，应该重命名它
 ## [jsx_dev_self_edge_cases](../../../../../crates/rolldown/tests/esbuild/default/jsx_dev_self_edge_cases/diff.md)
   https://github.com/oxc-project/oxc/issues/16654
-## [legal_comments_inline](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_inline/diff.md)
-  legal comments are not kept properly (https://github.com/rolldown/rolldown/issues/7387)
 ## [mangle_props_import_export](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_import_export/diff.md)
-  sub optimal: for `__require` diff, we don't have ModePassThrough
+  次优：对于 `__require` 的 diff，我们没有 ModePassThrough
 ## [no_warn_common_js_exports_in_esm_pass_through](../../../../../crates/rolldown/tests/esbuild/default/no_warn_common_js_exports_in_esm_pass_through/diff.md)
-  sub optimal: we don't have pass through mode, we just have same output as esbuild if
+  次优：我们没有直通模式，只是在这种情况下拥有与 esbuild 相同的输出
 ## [top_level_await_allowed_import_with_splitting](../../../../../crates/rolldown/tests/esbuild/default/top_level_await_allowed_import_with_splitting/diff.md)
-  sub optimal: empty chunks should be removed
-# Passed Cases
+  次优：应移除空的 chunk
+# 通过案例
 ## [ambiguous_reexport_msg](../../../../../crates/rolldown/tests/esbuild/default/ambiguous_reexport_msg)
 ## [argument_default_value_scope_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/argument_default_value_scope_no_bundle)
 ## [arguments_special_case_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/arguments_special_case_no_bundle)
@@ -111,6 +109,7 @@
 ## [keep_names_all_forms](../../../../../crates/rolldown/tests/esbuild/default/keep_names_all_forms)
 ## [keep_names_class_static_name](../../../../../crates/rolldown/tests/esbuild/default/keep_names_class_static_name)
 ## [keep_names_tree_shaking](../../../../../crates/rolldown/tests/esbuild/default/keep_names_tree_shaking)
+## [legal_comments_inline](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_inline)
 ## [legal_comments_merge_duplicates_issue4139](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_merge_duplicates_issue4139)
 ## [mangle_no_quoted_props](../../../../../crates/rolldown/tests/esbuild/default/mangle_no_quoted_props)
 ## [mangle_no_quoted_props_minify_syntax](../../../../../crates/rolldown/tests/esbuild/default/mangle_no_quoted_props_minify_syntax)
@@ -225,101 +224,101 @@
 ## [warn_common_js_exports_in_esm_bundle](../../../../../crates/rolldown/tests/esbuild/default/warn_common_js_exports_in_esm_bundle)
 ## [warn_common_js_exports_in_esm_convert](../../../../../crates/rolldown/tests/esbuild/default/warn_common_js_exports_in_esm_convert)
 ## [with_statement_tainting_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/with_statement_tainting_no_bundle)
-# Ignored Cases
+# 被忽略的案例
 ## [define_import_meta_es5](../../../../../crates/rolldown/tests/esbuild/default/define_import_meta_es5)
-  target: 'es5' is not supported
+  不支持 target: 'es5'
 ## [entry_names_chunk_names_ext_placeholder](../../../../../crates/rolldown/tests/esbuild/default/entry_names_chunk_names_ext_placeholder)
-  CSS bundling is not supported (https://github.com/rolldown/rolldown/issues/4271)
+  不支持 CSS bundling（https://github.com/rolldown/rolldown/issues/4271）
 ## [entry_names_no_slash_after_dir](../../../../../crates/rolldown/tests/esbuild/default/entry_names_no_slash_after_dir)
-  irrelevant: Rolldown does not have [dir] placeholder for `entryFileNames`
+  无关：Rolldown 没有 `entryFileNames` 的 [dir] 占位符
 ## [entry_names_non_portable_character](../../../../../crates/rolldown/tests/esbuild/default/entry_names_non_portable_character)
-  limitation of test infra, the test may hard to pass in CI
+  测试基础设施的限制，该测试在 CI 中可能很难通过
 ## [import_abs_path_as_dir](../../../../../crates/rolldown/tests/esbuild/default/import_abs_path_as_dir)
-  limitation of test infra, the test may hard to pass in CI
+  测试基础设施的限制，该测试在 CI 中可能很难通过
 ## [import_abs_path_as_file](../../../../../crates/rolldown/tests/esbuild/default/import_abs_path_as_file)
-  limitation of test infra, the test may hard to pass in CI
+  测试基础设施的限制，该测试在 CI 中可能很难通过
 ## [inject_duplicate](../../../../../crates/rolldown/tests/esbuild/default/inject_duplicate)
-  inject feature is aligned with `@rollup/plugin-inject` and doesn't support injecting source file directly
+  inject 功能与 `@rollup/plugin-inject` 保持一致，不支持直接注入源文件
 ## [inject_import_order](../../../../../crates/rolldown/tests/esbuild/default/inject_import_order)
-  inject feature is aligned with `@rollup/plugin-inject` and doesn't support injecting source file directly
+  inject 功能与 `@rollup/plugin-inject` 保持一致，不支持直接注入源文件
 ## [inject_import_ts](../../../../../crates/rolldown/tests/esbuild/default/inject_import_ts)
-  inject feature is aligned with `@rollup/plugin-inject` and doesn't support injecting source file directly
+  inject 功能与 `@rollup/plugin-inject` 保持一致，不支持直接注入源文件
 ## [inject_jsx](../../../../../crates/rolldown/tests/esbuild/default/inject_jsx)
-  due to multi pass transformer arch, this test could not be supported for now (to support this, we should `Define` first and then `Transform`).
+  由于多阶段转换器架构，目前不支持该测试（要支持它，我们应先 `Define`，然后再 `Transform`）。
 ## [inject_with_string_export_name_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_export_name_bundle)
-  Rolldown replaces the function it self in `inject files`; this behavior aligns with `@rollup/plugin-inject`
+  Rolldown 在 `inject files` 中替换了函数本身；这种行为与 `@rollup/plugin-inject` 一致
 ## [inject_with_string_export_name_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_export_name_no_bundle)
-  Rolldown replaces the function it self in `inject files`; this behavior aligns with `@rollup/plugin-inject`
+  Rolldown 在 `inject files` 中替换了函数本身；这种行为与 `@rollup/plugin-inject` 一致
 ## [jsx_import_meta_property](../../../../../crates/rolldown/tests/esbuild/default/jsx_import_meta_property)
-  due to multi pass transformer arch, `import.meta` injected by JSX transform cannot be replaced by the define plugin (define runs before JSX transform)
+  由于多阶段转换器架构，JSX 转换注入的 `import.meta` 不能被 define 插件替换（define 在 JSX 转换之前运行）
 ## [jsx_import_meta_value](../../../../../crates/rolldown/tests/esbuild/default/jsx_import_meta_value)
-  due to multi pass transformer arch, `import.meta` injected by JSX transform cannot be replaced by the define plugin (define runs before JSX transform)
+  由于多阶段转换器架构，JSX 转换注入的 `import.meta` 不能被 define 插件替换（define 在 JSX 转换之前运行）
 ## [legal_comments_modify_indent](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_modify_indent)
-  CSS bundling is not supported (https://github.com/rolldown/rolldown/issues/4271)
+  不支持 CSS bundling（https://github.com/rolldown/rolldown/issues/4271）
 ## [line_limit_minified](../../../../../crates/rolldown/tests/esbuild/default/line_limit_minified)
-  irrelevant: lineLimit option will not be supported
+  无关：不会支持 lineLimit 选项
 ## [line_limit_not_minified](../../../../../crates/rolldown/tests/esbuild/default/line_limit_not_minified)
-  irrelevant: lineLimit option will not be supported
+  无关：不会支持 lineLimit 选项
 ## [metafile_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/metafile_no_bundle)
-  CSS bundling is not supported (https://github.com/rolldown/rolldown/issues/4271)
+  不支持 CSS bundling（https://github.com/rolldown/rolldown/issues/4271）
 ## [package_alias](../../../../../crates/rolldown/tests/esbuild/default/package_alias)
-  resolve alias behavior difference
+  解析别名行为存在差异
 ## [package_alias_match_longest](../../../../../crates/rolldown/tests/esbuild/default/package_alias_match_longest)
-  resolve alias behavior difference
+  解析别名行为存在差异
 ## [quoted_property_mangle](../../../../../crates/rolldown/tests/esbuild/default/quoted_property_mangle)
-  covered by minifier
+  已被压缩器覆盖
 ## [warnings_inside_node_modules](../../../../../crates/rolldown/tests/esbuild/default/warnings_inside_node_modules)
-  resolve alias behavior difference
-# Ignored Cases (not supported)
+  解析别名行为存在差异
+# 被忽略的案例（不支持）
 ## [comment_preservation_import_assertions](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation_import_assertions)
-  import attributes is not supported
+  不支持 import attributes
 ## [conditional_require_resolve](../../../../../crates/rolldown/tests/esbuild/default/conditional_require_resolve)
-  converting conditional `require.resolve` is not supported
+  不支持转换条件性的 `require.resolve`
 ## [import_with_hash_parameter](../../../../../crates/rolldown/tests/esbuild/default/import_with_hash_parameter)
-  stripping hash parameter is not supported
+  不支持去除 hash 参数
 ## [import_with_query_parameter](../../../../../crates/rolldown/tests/esbuild/default/import_with_query_parameter)
-  stripping query parameter is not supported
+  不支持去除 query 参数
 ## [legal_comments_avoid_slash_tag_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_end_of_file)
-  escaping </style> in CSS is not supported
+  CSS 中不支持转义 </style>
 ## [legal_comments_avoid_slash_tag_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_external)
-  `legalComments: 'external'` is not supported. escaping </style> in CSS is not supported
+  不支持 `legalComments: 'external'`。CSS 中不支持转义 </style>
 ## [legal_comments_avoid_slash_tag_inline](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_inline)
-  escaping </style> in CSS is not supported
+  CSS 中不支持转义 </style>
 ## [legal_comments_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_end_of_file)
-  `legalComments: 'eof'` is not supported
+  不支持 `legalComments: 'eof'`
 ## [legal_comments_escape_slash_script_and_style_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_escape_slash_script_and_style_end_of_file)
-  `legalComments: 'eof'` is not supported. escaping </style> in CSS is not supported
+  不支持 `legalComments: 'eof'`。CSS 中不支持转义 </style>
 ## [legal_comments_escape_slash_script_and_style_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_escape_slash_script_and_style_external)
-  `legalComments: 'external'` is not supported. escaping </style> in CSS is not supported
+  不支持 `legalComments: 'external'`。CSS 中不支持转义 </style>
 ## [legal_comments_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_external)
-  `legalComments: 'external'` is not supported
+  不支持 `legalComments: 'external'`
 ## [legal_comments_linked](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_linked)
-  `legalComments: 'linked'` is not supported
+  不支持 `legalComments: 'linked'`
 ## [legal_comments_many_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_many_end_of_file)
-  `legalComments: 'eof'` is not supported
+  不支持 `legalComments: 'eof'`
 ## [legal_comments_many_linked](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_many_linked)
-  `legalComments: 'linked'` is not supported
+  不支持 `legalComments: 'linked'`
 ## [legal_comments_no_escape_slash_script_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_no_escape_slash_script_end_of_file)
-  `legalComments: 'eof'` is not supported
+  不支持 `legalComments: 'eof'`
 ## [legal_comments_no_escape_slash_style_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_no_escape_slash_style_end_of_file)
-  `legalComments: 'eof'` is not supported
+  不支持 `legalComments: 'eof'`
 ## [legal_comments_none](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_none)
-  `legalComments: 'none'` is not supported for CSS files
+  CSS 文件不支持 `legalComments: 'none'`
 ## [mangle_props_jsx_transform_namespace](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_transform_namespace)
-  mangle props is not supported by oxc minifier
+  oxc minifier 不支持属性混淆
 ## [mangle_props_type_script_features](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_type_script_features)
-  mangle props is not supported by oxc minifier
+  oxc minifier 不支持属性混淆
 ## [metafile_import_with_type_json](../../../../../crates/rolldown/tests/esbuild/default/metafile_import_with_type_json)
-  import attributes is not supported
+  不支持导入属性
 ## [metafile_various_cases](../../../../../crates/rolldown/tests/esbuild/default/metafile_various_cases)
-  copy loader is not supported
+  不支持 copy loader
 ## [metafile_very_long_external_paths](../../../../../crates/rolldown/tests/esbuild/default/metafile_very_long_external_paths)
-  copy loader is not supported
+  不支持 copy loader
 ## [minify_nested_labels_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/minify_nested_labels_no_bundle)
-  label mangling is not supported by oxc minifier
+  oxc minifier 不支持标签混淆
 ## [output_for_assert_type_json](../../../../../crates/rolldown/tests/esbuild/default/output_for_assert_type_json)
-  import attributes is not supported
+  不支持导入属性
 ## [require_and_dynamic_import_invalid_template](../../../../../crates/rolldown/tests/esbuild/default/require_and_dynamic_import_invalid_template)
-  glob is not supported
+  不支持 glob
 ## [require_shim_substitution](../../../../../crates/rolldown/tests/esbuild/default/require_shim_substitution)
-  require second argument is not supported
+  不支持 require 的第二个参数
