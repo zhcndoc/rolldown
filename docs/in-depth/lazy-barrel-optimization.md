@@ -317,7 +317,36 @@ export default {
 - 你的代码库有很多 barrel 模块（在组件库中很常见）
 - Barrel 模块重新导出了很多模块，但使用者通常只会用到其中少数几个
 
-## 局限性
+## 大型 barrel 模块
+
+Lazy barrel 会跳过对未使用的重新导出的加载、解析和转换，但 **resolve** 步骤仍然会对每个条目执行。解析器会为每个导入记录调用 `resolveId` 插件钩子，因此一个包含成千上万条重新导出的 barrel 即使实际上只使用了其中少数几个，也可能主导构建时间。
+
+一个典型示例是 `@mui/icons-material/esm/index.js`，其中包含超过 10,000 条重新导出条目。当加载这样的文件时，Rolldown 仍然会对每一条条目执行一次 resolve，即使 lazy barrel 确保后续只会加载并转换请求到的图标。
+
+当启用 `experimental.lazyBarrel` 且某个 barrel 模块包含超过 5,000 条重新导出时，Rolldown 会发出一条 info 级别的建议，代码为 `LARGE_BARREL_MODULES`：
+
+```
+advice[LARGE_BARREL_MODULES]: node_modules/@mui/icons-material/esm/index.js has 10611 re-exports. Eagerly resolving every entry can significantly slow down the build. Consider using `@rolldown/plugin-transform-imports` to rewrite imports at the source level so the barrel file is never loaded.
+```
+
+[`@rolldown/plugin-transform-imports`](https://github.com/rolldown/plugins/tree/main/packages/transform-imports) 通过在源代码层面重写导入，绕过了解析成本，从而使 barrel 文件根本不会被加载：
+
+```js
+// 之前
+import { Home, Search } from '@mui/icons-material';
+
+// 之后（由插件重写）
+import Home from '@mui/icons-material/esm/Home';
+import Search from '@mui/icons-material/esm/Search';
+```
+
+若要关闭该建议，将 `checks.largeBarrelModules` 设为 `false`，或在 CLI 中传入 `--no-checks.large-barrel-modules`。
+
+::: info 为什么这是插件而不是内置行为？
+在 Rolldown 内部延后 resolve 步骤会改变 `moduleParsed` 的触发时机，以及 `ModuleInfo` 何时被完全填充——这会明显偏离与 Rollup 兼容的插件语义。为了在 Rolldown 1.0 发布期间保持插件契约稳定，我们更倾向于在真正重要的场景里从源代码层面解决这个问题。除了图标包这类极端情况之外，典型 barrel（几十到一两百条重新导出）的 resolve 成本可以忽略不计。
+:::
+
+## 限制
 
 - 带有副作用的 barrel 模块无法优化
 - 未匹配的命名导入需要加载所有星号重新导出才能解析

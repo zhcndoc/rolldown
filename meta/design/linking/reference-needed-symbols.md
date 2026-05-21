@@ -33,7 +33,7 @@
 
 ### `Module::Normal` 导入项
 
-- **`Import`, `WrapKind::None`, 非 reexport** —— 不记录任何内容；两侧都是扁平 ESM，因此没有包装器可调用。
+- **`Import`, `WrapKind::None`, 非 reexport** — 不记录任何内容；两侧都是扁平 ESM 时没有包装器可调用。后续阶段仍然必须检查活动导入符号的规范所有者：一个未包装的 barrel 可能会从一个已包装的 ESM 模块转发绑定，而当该 barrel 不在同一个 chunk 中执行时，这个所有者在读取绑定之前仍然需要先调用它的 `init_*()`。
 
   ```js
   // foo.js: export const x = 1;
@@ -49,7 +49,7 @@
   //   → __reExport(index_exports, foo_exports);
   ```
 
-- **`Import`, `WrapKind::Cjs`, 非 reexport** —— 推入 `wrapper_ref`（`require_foo`）；若需要 interop，则推入 `__toESM`；声明并将命名空间引用重命名为 `import_<repr_name>`。
+- **`Import`, `WrapKind::Cjs`, 非 reexport** —— 推入 `wrapper_ref`（`require_foo`）；若需要互操作（interop），则推入 `__toESM`；声明并将命名空间引用重命名为 `import_<repr_name>`。
 
   ```js
   // foo.js (cjs): module.exports = { a: 1 };

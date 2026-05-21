@@ -1,4 +1,4 @@
-# Code Splitting
+# 代码拆分
 
 ## 总结
 
@@ -144,6 +144,8 @@ chunk 优化器会在安全时通过把公共 chunk 合并回入口 chunk 来减
 
 合并的权衡在于：入口 chunk 可能会包含并非所有使用该入口的消费者都需要的模块。这会增加少量不必要的代码加载，但能显著减少 chunk 数量和 HTTP 请求数。
 
+仅由动态入口共享的 chunk，优化器不会仅根据动态导入可达性来推断合并目标。同一个已加载入口发出的兄弟动态导入可以被独立请求，因此“入口能够到达两个 chunk”并不能证明其中任意一个动态 chunk 在另一个之前已经加载。在这种情况下，除非现有的静态导入合并目标检查证明存在安全目标，否则 Rolldown 会保留一个单独的公共 chunk。
+
 ### Facade 消除（`optimize_facade_entry_chunks`）
 
 当优化器把某个动态/发射出的入口的所有模块都拉入其他 chunk 后，它可能会变成一个空的 facade。优化器会识别这些情况，并且要么：
@@ -208,7 +210,7 @@ consumer_chunks = (非 Removed 且 depended_runtime_helper 非空的 chunk)
 
 ## 懒模块初始化顺序
 
-`ensure_lazy_module_initialization_order()` 在 chunk 创建之后作为 `ChunkGraph` 的后处理步骤运行。它修复了包装模块在懒求值时的一个正确性问题。
+`ensure_lazy_module_initialization_order()` 会在 chunk 创建后作为 `ChunkGraph` 的后处理步骤运行。它修复了包装模块在懒求值时的一个正确性问题。
 
 ### 问题
 
@@ -249,7 +251,7 @@ assert.equal(bar, 'foo');
 ```js
 // ❌ 错误输出：require_leaflet_toolbar() 在 require_leaflet() 之前运行
 //#region lib.js
-require_leaflet_toolbar(); // 💥 这里 global.L  هنوز是 undefined
+require_leaflet_toolbar(); // 💥 这里的 global.L 仍然是 undefined
 //#endregion
 //#region main.js
 var import_leaflet = require_leaflet(); // 太晚了——toolbar 已经失败

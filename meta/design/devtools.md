@@ -1,4 +1,4 @@
-# Devtools
+# 开发工具
 
 ## 概述
 
@@ -36,7 +36,7 @@ CLI 等价项：`--devtools.session-id <id>`。
 
 ### 关闭后读取契约
 
-只有在 `await bundle.close()` 完成之后，才能保证 `meta.json` 和 `logs.json` 已经完整且可读。内部上，事件会通过通道流向后台写线程，并通过 `BufWriter` 缓冲，因此在 `generate()`/`write()` 之后立即读取文件可能会得到空内容或被截断的内容。`bundle.close()` 会发送带有 ack 通道的 `CloseSession` 命令，并等待写线程的信号，从而建立消费者所依赖的 happens-before 边。
+只有在 `await bundle.close()` 完成之后，才能保证 `meta.json` 和 `logs.json` 已经完整且可读。内部上，事件会通过通道流向后台写线程，并通过 `BufWriter` 缓冲，因此在 `generate()`/`write()` 之后立即读取文件可能会得到空内容或被截断的内容。`bundle.close()` 会发送带有 ack 通道的 `CloseSession` 命令，并等待写线程的信号，从而建立消费者所依赖的先行发生边。
 
 ### 大字符串去重
 
@@ -80,6 +80,7 @@ CLI 等价项：`--devtools.session-id <id>`。
     </HookResolveIdCallSpan>
     {trace_action!(ModuleGraphReady { ... })}
     {trace_action!(ChunkGraphReady { ... })}
+    {trace_action!(PackageGraphReady { ... })}
     {trace_action!(BuildEnd { action: "BuildEnd" })}
   </BuildSpan>
 </SessionSpan>
@@ -113,9 +114,10 @@ CLI 等价项：`--devtools.session-id <id>`。
 **`Bundle`**（按构建）：
 
 1. `trace_action_session_meta()` — 发出包含 inputs、plugins、cwd、platform、format、output dir/file 的 `SessionMeta`
-2. `BuildStart` / `BuildEnd` — 在外层 `write()`/`generate()` 调用前后以及 `scan_modules()` 内部都会发出，因此消费者每次构建可能会看到嵌套的成对事件
-3. `trace_action_module_graph_ready()` — 在扫描阶段结束后发出，包含所有模块及其导入关系
-4. `trace_action_chunks_infos()` — 在 generate 阶段构建 chunk 图后发出
+2. `BuildStart` / `BuildEnd` — 分别在外层 `write()`/`generate()` 调用周围以及 `scan_modules()` 内部发出，因此消费者可能会在每次构建中看到嵌套的成对事件
+3. `trace_action_module_graph_ready()` — 在扫描阶段后发出，包含所有模块及其导入关系
+4. `trace_action_chunks_infos()` — 在 generate 阶段构建 chunk 图之后发出
+5. `trace_action_package_graph_ready()` — 在 chunk 实例化之后发出，包含从已解析的 package.json 文件中发现的包元数据
 
 **`PluginDriver`**（插件钩子）：
 
@@ -128,21 +130,24 @@ CLI 等价项：`--devtools.session-id <id>`。
 
 ## 动作目录
 
-| 动作                         | 发出时机                              | 关键字段                                                                                                    |
-| ---------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `SessionMeta`                | 构建开始时（写入 `meta.json`）        | inputs、plugins、cwd、platform、format、dir、file                                                           |
-| `BuildStart`                 | 扫描阶段之前 + 围绕 write/generate    | —                                                                                                           |
-| `HookResolveIdCallStart/End` | 每个插件每次 resolve 调用             | module_request、importer、plugin_name、plugin_id、trigger、call_id、resolved_id                             |
-| `HookLoadCallStart/End`      | 每个插件每次 load 调用                | module_id、plugin_name、plugin_id、call_id、content                                                         |
-| `HookTransformCallStart/End` | 每个插件每次 transform 调用           | module_id、content、plugin_name、plugin_id、call_id                                                         |
-| `ModuleGraphReady`           | 扫描 + 规范化之后                     | modules[]{id, is_external, imports[]{module_id, kind, module_request}, importers[]}                         |
-| `BuildEnd`                   | 扫描阶段之后 + 在 write/generate 之后 | —                                                                                                           |
-| `ChunkGraphReady`            | chunk 图构建完成后                    | chunks[]{chunk_id, name, reason, modules[], imports[], is_user_defined_entry, is_async_entry, entry_module} |
-| `HookRenderChunkStart/End`   | 每个插件每次 renderChunk 调用         | chunk_id、plugin_name、plugin_id、call_id、content                                                          |
-| `AssetsReady`                | 最终资源生成之后                      | assets[]{chunk_id, content, size, filename}                                                                 |
-| `StringRef`                  | 任何带有大字符串的动作之前            | id（blake3 hash）、content                                                                                  |
+| Action                       | 何时发出                                  | 关键字段                                                                                                                     |
+| ---------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `SessionMeta`                | 构建开始时（写入 `meta.json`）            | inputs, plugins, cwd, platform, format, dir, file                                                                            |
+| `BuildStart`                 | 扫描阶段之前 + 围绕 write/generate 调用   | —                                                                                                                            |
+| `HookResolveIdCallStart/End` | 每个插件的每次 resolve 调用               | module_request, importer, plugin_name, plugin_id, trigger, call_id, resolved_id                                              |
+| `HookLoadCallStart/End`      | 每个插件的每次 load 调用                  | module_id, plugin_name, plugin_id, call_id, content                                                                          |
+| `HookTransformCallStart/End` | 每个插件的每次 transform 调用             | module_id, content, plugin_name, plugin_id, call_id                                                                          |
+| `ModuleGraphReady`           | 扫描 + 规范化之后                         | modules[]{id, is_external, imports[]{module_id, kind, module_request}, importers[]}                                          |
+| `BuildEnd`                   | 扫描阶段之后 + write/generate 之后         | —                                                                                                                            |
+| `ChunkGraphReady`            | chunk 图构建之后                           | chunks[]{chunk_id, name, reason, modules[], imports[], is_user_defined_entry, is_async_entry, entry_module}                  |
+| `PackageGraphReady`          | chunk 实例化之后                           | packages[]{package_id, name, version, package_json_path, package_root, is_used, dependency_type, size, modules[], chunk_ids[]} |
+| `HookRenderChunkStart/End`   | 每个插件的每次 renderChunk 调用            | chunk_id, plugin_name, plugin_id, call_id, content                                                                           |
+| `AssetsReady`                | 最终资源生成之后                           | assets[]{chunk_id, content, size, filename}                                                                                  |
+| `StringRef`                  | 任何带有大字符串的动作之前                 | id (blake3 hash), content                                                                                                    |
 
 除 `StringRef` 之外，所有动作都会携带注入的 `session_id`、`build_id` 和 `timestamp` 字段。`StringRef` 条目只包含 `action`、`id` 和 `content`。
+
+`PackageGraphReady.packages` 包含从已解析模块 `package.json` 文件中发现的包。当该包至少有一个模块出现在生成的 chunk 中时，`is_used` 为 true；当该包的所有已解析模块都被 tree-shake 掉时，`is_used` 为 false。`dependency_type` 在包中的任意模块被构建 `cwd` 下且位于 `node_modules` 之外的源码模块导入时为 `direct`；否则为 `transitive`。这里使用的是 importer 图，而不会检查 `package.json` 的依赖字段。`size` 是该包在 tree-shaking/codegen 之后、chunk 级 `renderChunk`、压缩、banner 和最终资源输出之前，其渲染后模块代码字节数的总和。`modules` 包含该包生成的 chunk 模块 ID，`chunk_ids` 包含匹配的 `ChunkGraphReady` chunk ID；对于未使用的包，这两个数组都为空。包会按照包名、版本、包根目录和包 id 排序。Rolldown 不会发出重复标志；消费者可以通过对非空包名分组，并检查某个组是否包含多个版本或包根目录，来识别重复包。
 
 ## TypeScript 代码生成
 
@@ -173,7 +178,7 @@ import { parseToEvents, type Event, type StringRef } from '@rolldown/debug';
 
 const data = fs.readFileSync('node_modules/.rolldown/<sid>/logs.json', 'utf8');
 const events = parseToEvents(data.trim());
-// 事件：Array<StringRef | { timestamp, session_id, action: "BuildStart" | "ModuleGraphReady" | ... }>
+// events: Array<StringRef | { timestamp, session_id, action: "BuildStart" | "ModuleGraphReady" | "PackageGraphReady" | ... }>
 ```
 
 消费者（如 Vite 开发者工具）读取 JSON 行文件，将 `$ref:<hash>` 占位符解析为 `StringRef` 条目，并重建完整的构建时间线。
