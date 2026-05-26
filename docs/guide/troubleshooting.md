@@ -148,3 +148,48 @@ namespace.method();
 与上面描述的问题类似，当将代码输出为 CJS 时，Rolldown 也不一定会保留导出函数的 `this` 值。在这种情况下，本应为 `undefined` 的 `this` 可能会绑定到 `module.exports` 对象。
 
 :::
+
+## 避免依赖暂时性死区（TDZ）错误
+
+在 ECMAScript 中，`let`、`const` 和 `class` 声明会创建一个绑定，该绑定从其作用域开始时就存在，但在声明本身被求值之前一直处于未初始化状态。在这段窗口期内读取该绑定，即使通过 `typeof`，也会抛出 `ReferenceError`。这段窗口期被称为“暂时性死区（Temporal Dead Zone，TDZ）”。
+
+```js
+typeof x; // ReferenceError: Cannot access 'x' before initialization
+let x = 1;
+```
+
+然而，出于正确性和性能方面的多种原因，**Rolldown 不一定会保留 TDZ 语义**。依赖 TDZ 访问抛错的代码在打包后的输出中可能表现不同，因此应当避免。
+
+例如，Rolldown 总是会把模块顶层的 `class X {}` 重写为 `var X = class {}`，这样该绑定就可以与其他顶层声明一起提升。结果是在到达声明之前，该绑定会表现为 `undefined`，而不是抛错。将 [`output.topLevelVar`](/reference/OutputOptions.topLevelVar) 设置为 `true` 会把同样的重写扩展到顶层的 `let` 和 `const`。
+
+```js
+// 在 ESM 中，这里会抛出 ReferenceError。
+// 在 Rolldown 的打包输出中，`typeof X` 的结果会是 `"undefined"`。
+console.log(typeof X);
+class X {}
+```
+
+再举一个例子，Rolldown 可能会在使用处内联导出的 `const` 值，即使跨越了导入循环。当循环导致常量在声明执行之前被读取时，ESM 会抛出错误，但 Rolldown 会改为返回内联后的值。
+
+::: code-group
+
+```js [entry.js]
+import './constants.js';
+```
+
+```js [constants.js]
+export const foo = 123;
+export function bar() {
+  return foo;
+}
+import './cycle.js';
+```
+
+```js [cycle.js]
+import { bar } from './constants.js';
+// 在 ESM 中，`bar()` 会抛出 ReferenceError，因为 `foo` 处于 TDZ。
+// 在 Rolldown 的打包输出中，`bar()` 会返回 `123`。
+console.log(bar());
+```
+
+:::
