@@ -1,7 +1,5 @@
-#### In-depth
+#### 深入了解
 
-Rolldown uses Oxc under the hood for transformation.
+Rolldown 在底层使用 Oxc 进行转换。
 
-While Oxc does not support lowering the latest decorators proposal yet, Rolldown is able to bundle them.
-
-See [Oxc Transformer's document](https://oxc.rs/docs/guide/usage/transformer) for more details.
+虽然 Oxc 目前还不支持降级最新的装饰器提案，但 Rolldown 能够对它们进行打包。

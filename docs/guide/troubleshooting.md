@@ -193,3 +193,9 @@ console.log(bar());
 ```
 
 :::
+
+## 警告：“Sourcemap 很可能不正确”
+
+如果你为 bundle 生成了 sourcemap（[`sourcemap: true`](/reference/OutputOptions.sourcemap) 或 `sourcemap: 'inline'`），但同时使用了一个或多个在转换代码时未为该转换生成 sourcemap 的插件，就会看到这个警告。
+
+通常情况下，插件只有在配置了 `sourcemap: false` 时才会省略 sourcemap——所以你只需要把它改掉即可。如果该插件本身不生成 sourcemap，请考虑向插件作者提交 issue。

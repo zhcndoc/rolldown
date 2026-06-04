@@ -78,6 +78,7 @@ const sidebarForApi: DefaultTheme.SidebarItem[] = [
         ],
       },
       { text: '命令行接口', link: '/apis/cli.md' },
+      { text: 'Rust 磁盘包', link: '/apis/rust-crates.md' },
     ],
   },
 ];
