@@ -104,7 +104,9 @@ entry_index 2  →  plugin.js       →  bit 2  →  ChunkIdx(2)
 
 每一次被接受的缩减也必须保持重分组后的静态原子图无环。“已经加载”并不总是意味着“已经初始化”：如果一个被缩减的原子被移动到一个静态导入其某个消费者的 chunk 中，ES 模块循环可能会暴露未初始化的绑定，包括 CJS 包装函数。
 
-这里目前有意尚未建模顶层 `await` 的细化处理。现有的 chunk 优化器在任何包含模块是 TLA 或包含 TLA 依赖时，仍然会全局退出，因此等待动态导入的安全路径仍是未来工作。
+运行时可能会参与这种位缩减，但仅作为放置元数据。在手动和普通 chunk 材料化之前，它会被提取到一个独立的运行时 chunk 中，因此这个阶段不会把运行时代码分配给用户 chunk，也不需要特定于运行时的循环处理。
+
+顶层 await 的细化故意还没有在这里建模。现有的 chunk 优化器在任何包含模块是 TLA 或包含 TLA 依赖时仍会全局退出，因此等待中的动态导入安全路径仍是未来工作。
 
 ## 可达性传播
 
@@ -158,14 +160,11 @@ chunk 优化器会在安全时通过把公共 chunk 合并回入口 chunk 来减
 
 ### 运行时模块放置
 
-Facade 消除会在合并阶段已经放置好运行时模块之后，产生**新的运行时助手消费者**。消除一个动态导入 facade 时，会在目标 chunk 上运行两个彼此独立、由 `wrap_kind` 门控的分支，并且任一分支都会把该 chunk 加入 `runtime_dependent_chunks`：
+当启用代码拆分时，运行时模块会在手动和普通模块 chunking 之前被分配到一个专用的公共 chunk 中。该 chunk 使用普通 chunk 命名，并且不会注册到 `bits_to_chunk` 中，因此具有相同可达性位的其他模块无法被分组进去。手动 chunking 在递归依赖收集期间也会把运行时视为已经分配。于是，普通 chunking 和公共 chunk 合并阶段会在不携带运行时特定例外的情况下处理用户模块。
 
-- `WrapKind::Esm | WrapKind::None` —— `include_symbol(module.namespace_object_ref)` 会具体化模拟的 namespace，并显式地向目标 chunk 的 `depended_runtime_helper` 中插入 `RuntimeHelper::ExportAll`（发射出的 JS 符号：`__exportAll`）。
-- `WrapKind::Cjs | WrapKind::Esm` —— `include_symbol(wrapper_ref)` 会拉入 `require_xxx` 符号，该符号会通过已有的包含传播机制递归带入包装器依赖的任意 helper（例如 `RuntimeHelper::ToEsm`、`RuntimeHelper::CommonJsMin` 等，发射为 `__toESM`、`__commonJSMin`，……）。
+当禁用代码拆分时，Rolldown 不会提取独立的运行时 chunk。运行时保留在单一输出 chunk 中，这保留了 IIFE 和 UMD 等单文件格式。
 
-`WrapKind::Esm` 会命中这两个分支，所以 ESM facade 既可能向同一个 chunk 添加 `ExportAll`，也可能添加由包装器驱动的 helper。
-
-危险在于，运行时模块在合并阶段可能已经与某些宿主 chunk 中的其他模块**同位放置**（chunker 之所以把它放在那里，是因为宿主的 bitset 与运行时的 bitset 匹配）。如果新的 helper-import 边从某个 facade 消除消费者指回该宿主，而宿主又有任何到消费者的前向路径，那么依赖图就会闭合成环。有关标准复现案例请参见 [#8989](https://github.com/rolldown/rolldown/issues/8989)：
+这种“先独立放置”的策略是正确性的基线。运行时辅助函数的消费者会从包含运行时的那个 chunk 中导入诸如 `__exportAll` 之类的辅助符号。如果运行时与一个已经存在到其中某个消费者的前向静态路径的 chunk 共置，那么辅助导入可能会闭合一个静态循环。参见 [#8989](https://github.com/rolldown/rolldown/issues/8989) 的典型形状：
 
 ```
 chunk(node2) ──forward──> chunk(node3) ──forward──> chunk(node4)
@@ -173,43 +172,42 @@ chunk(node2) ──forward──> chunk(node3) ──forward──> chunk(node4)
      └──────── facade 消除后的 helper 边 ───────────────┘
 ```
 
-放置逻辑位于 `rehome_runtime_module`，它会在 `optimize_facade_entry_chunks` 发现 `runtime_dependent_chunks` 非空时被调用。它是一个由 chunk 间静态导入可达性驱动的**两步决策**：
-
-**步骤 1 — 剥离决策（仅判断环风险）**
-
-只有当宿主存在到某个非宿主的 facade 消除消费者的**静态前向路径**时，才把运行时从当前宿主 chunk 中剥离出来。这是形成回边环的先决条件：如果不存在这样的路径，那么无论把运行时放到哪里，新的 helper 导入都不可能闭合成环，因此最紧凑的布局就是保留在合并阶段已经放置的位置。可达性由 `chunk_reaches_via_static_import` 计算，它是一个只沿着仍然存活的目标 chunk 中 `ImportKind::Import` 边进行的 BFS。
-
-当存在环风险且宿主还有其他模块时，实现在宿主的 `modules` vec 中通过 `swap_remove` 移除 `runtime_module_idx`（顺序不重要——`sort_chunk_modules` 之后会重新建立顺序），并设置 `module_to_chunk[runtime_module_idx] = None`。如果运行时是宿主 chunk 中唯一的模块，它会留在那里——该 chunk 本身已经是叶子，不可能参与成环，而剥离它会留下一个空 chunk，后续期望 `chunk.modules[0]` 的代码会因此出错。
-
-**步骤 2 — 放置决策（支配者搜索）**
-
-当运行时尚未被放置（要么因为步骤 1 剥离了它，要么因为合并阶段根本没有放置它）时，计算完整的消费者集合：
+在 chunk 优化之后，`try_merge_runtime_chunk()` 可以在证明安全时把独立的运行时 chunk 折叠进一个现存的活跃 chunk。它从以下内容计算运行时消费者集合：
 
 ```
-consumer_chunks = (非 Removed 且 depended_runtime_helper 非空的 chunk)
-                ∪ runtime_dependent_chunks
-                ∪ ({original_host} 如果 original_host 未被标记为 Removed)
+consumer_chunks = (non-removed chunks with non-empty depended_runtime_helper)
+                ∪ chunks whose included statements reference runtime-owned symbols
+                ∪ chunks containing modules that depend on the runtime module
+                ∪ chunks containing wrapped modules or side-effectful runtime dependencies
+                ∪ facade-elimination consumers added during the current pass
 ```
 
-第一项会收集在链接阶段就已经需要 helper 的 chunk；第二项会收集刚刚由 facade 消除新宣布需要 helper 的 chunk；第三项则把原始宿主重新加回去——合并阶段把运行时放在那里，是因为它的 bitset 需要它，因此它是一个隐式消费者。“未 Removed” 门控是防御性的：`apply_common_chunk_merges` 在宿主被合并进其他 chunk 时已经会重定向 `module_to_chunk`，所以实际上 `original_host` 会解析到一个仍然存活的 chunk。去重通过 `FxHashSet` 自动完成。
+大多数运行时辅助依赖在链接阶段、即 chunking 之前就已经知道，因此一旦 chunk 存在，这个消费者集合通常就是完整的。Facade 消除是个例外：把一个 facade 折叠进其目标 chunk，可能会通过 `optimize_facade_entry_chunks` 中两个受 `wrap_kind` 约束的路径之一，新增一个在早期 chunking 阶段不存在的 helper 边：
 
-然后寻找一个**支配者**——即一个成员 C，使得所有其他消费者都能通过前向边静态到达 C。`find_consumer_dominator` 会用 `chunk_reaches_via_static_import` 检查每个候选者。若存在支配者，它就是消费者集合中的一个下游汇点：把运行时放在那里意味着每个其他消费者的 helper 导入都会沿着一条已有的前向边传播，因此不会新增回边，也就不会形成环。
+- **`WrapKind::Esm` / `WrapKind::None`** —— 动态 `import()` 位置仍然期望一个命名空间对象，因此被消除模块的模拟命名空间会被具体化（`include_symbol(namespace_object_ref)`），并且 `__exportAll`（`RuntimeHelper::ExportAll`）会插入到目标 chunk 的 `depended_runtime_helper` 中。
+- **`WrapKind::Cjs` / `WrapKind::Esm`** —— `require_xxx` 包装器（`wrapper_ref`）会被包含进去，这会通过正常的包含传播递归拉入包装器所需的辅助函数——通常是 `__toESM`（`RuntimeHelper::ToEsm`）和 `__commonJSMin`（`RuntimeHelper::CommonJsMin`）。
 
-- **找到支配者** → 运行时移动到该 chunk 中，不会创建额外 chunk。
-- **没有支配者**（消费者处于并行子图中，或形成更复杂的形状）→ 运行时被放入一个新建的 `rolldown-runtime.js` chunk 中，该 chunk 使用运行时的 bitset 创建。所有消费者都从它导入。这个 chunk 在结构上是叶子——不是因为新建就不会有出边，而是因为运行时模块本身不包含任何 `import` 语句，所以分配到该 chunk 的唯一模块没有可被跨 chunk 链接器转换为出边导入的依赖。因此不可能形成环。
+`WrapKind::Esm` facade 会同时命中这两条路径。
+
+只有当某个 chunk 带有非空的 `depended_runtime_helper`（或引用了运行时拥有的符号）时，它才会“消耗”运行时。因此，在一个链接时根本不需要任何辅助函数的构建中，之前没有任何 chunk 会消耗运行时——而上述某条路径可能会在早期 chunking 已经把运行时单独放置之后，首次创建一个消费者。为了保持这种放置决策的正确性，该阶段会恢复刚刚修改过的包含元数据，重新材料化独立运行时 chunk，并使用这些新增加的消费者（即上面消费者集合的最后一项）重新运行 `try_merge_runtime_chunk`。
+
+合并目标不能创建静态循环，也不能为了访问辅助函数而强迫无关的入口 chunk 执行。候选目标按保守且保持紧凑性的顺序尝试：唯一的运行时消费者、唯一带运行时位集的活跃 chunk、与运行时位集相同的活跃公共 chunk，然后是消费者集合主导者。手动 code splitting / 高级 chunk 组 chunk 只有在该 chunk 是唯一的运行时消费者时才可承载运行时；否则，它们的内容是用户指向的分组输出，吸收运行时会让无关 chunk 为了辅助函数而加载该组。安全性通过沿着仍存活的 chunk 的静态加载边进行检查来保证。不会跟随动态导入；静态导入和 `require()` 记录都会被考虑，因为二者都可能在生成输出中变成静态 chunk 导入。包含顶层 await，或依赖顶层 await 的 chunk，只有在它们是唯一运行时消费者时才可作为运行时宿主；否则，一个动态导入的 chunk 若为了辅助函数而静态导入其等待中的导入者，可能会产生未稳定的异步模块循环。
+
+- **找到安全目标** → 运行时移入该 chunk，空的独立运行时 chunk 被标记为已移除。
+- **未找到安全目标** → 保持独立运行时 chunk。仅解析到外部模块的运行时导入会被忽略，不参与 chunk 循环检查；否则，仍然存活的内部运行时导入会让运行时保持独立。
 
 **为什么是这种形状**
 
-仅依赖 `runtime_dependent_chunks.len()` 会低估情况——它忽略了链接阶段已经需要 helper 的 chunk 以及原始宿主。仅依赖消费者数量（把“单消费者”与“多消费者”情况分开）则会同时产生过度触发和触发不足：单个消费者仍然可能位于图的中间，并通过其他隐式消费者产生的回边形成环（见 [#8920](https://github.com/rolldown/rolldown/issues/8920) 的 fuzz 发现案例）；而多个消费者的集合可能天然存在一个下游汇点，可以零额外成本地承载运行时（见 [#8989](https://github.com/rolldown/rolldown/issues/8989)）。
-
-支配者搜索通过直接问正确的问题统一了这两种情况：“是否存在一个所有消费者都已经能前向到达的 chunk？”如果有，就复用它；如果没有，就添加一个叶子。
+过去运行时会先通过普通 bitset 分组放置，随后在检测到循环时再剥离出来。这让每个优化器都必须理解运行时宿主的边缘情况。先独立放置改变了默认策略：初始布局始终是无循环风险的，而唯一与运行时相关的优化，就是最后可选地合并进一个已经证明是支配者的目标中。
 
 **回归覆盖**
 
-- `crates/rolldown/tests/rolldown/issues/8989/` —— 原始环。四个入口中，`node3` 动态导入 `node4`，而 `node1` 以 namespace 方式导入 `node2`。合并阶段把运行时放进了 `entry2`（它已经能通过 `entry3` 前向到达 `node4`）。存在环风险 → 剥离。支配者搜索选择 `node4`（叶子，所有消费者都能到达它）。断言覆盖了叶子不变量、`entry2 → node4` 的方向，以及 `node4` 承载运行时这一点。
-- `crates/rolldown/tests/rolldown/issues/8920_2/` —— fuzz 发现的形状，之前的单消费者规则会静默地产生环。两个入口之间只有一个动态边；`node1` 是共享公共 chunk。合并阶段把运行时放在 `entry-2`，但 `entry-2` 没有静态出边——不存在环风险。运行时保留在 `entry-2`，它是 `{entry-2, node1}` 的支配者，因为 `node1 → entry-2` 已经是一条前向静态边。三个 chunk，没有发射 `rolldown-runtime.js`。
+- `crates/rolldown/tests/rolldown/issues/9401/` — `avoidRedundantChunkLoads` 不能把运行时移入用户入口并制造辅助函数循环。
+- `crates/rolldown/tests/rolldown/issues/8989/` — facade 消除会引入辅助函数消费者；运行时只能合并到下游支配者中。
+- `crates/rolldown/tests/rolldown/issues/8920_2/` — fuzz 发现的形状中，基于消费者数量的启发式会产生循环。
+- `crates/rolldown/tests/rolldown/issues/9597/` — 一个静态 + 动态导入循环，以前会把运行时 chunk 放进循环中，导致 `__exportAll is not a function`；先独立放置可将运行时排除在循环之外。
 
-两个 fixture 都在 `_test.mjs` 中断言结构不变量，因此任何回归（例如退回到“单消费者就放自己”的规则，或者在不存在环风险时过度剥离）都会立刻失败，而不是只表现为一个快照 diff。
+这些 fixture 在 `_test.mjs` 中断言结构不变量，因此运行时放置回归会立即失败，而不会只表现为快照漂移。
 
 ## 懒模块初始化顺序
 

@@ -101,6 +101,7 @@ mod chunk_ext;
 mod chunk_optimizer;
 mod code_splitting;
 mod compute_cross_chunk_links;
+mod compute_wrapped_esm_init_metadata;
 mod detect_ineffective_dynamic_imports;
 mod dynamic_already_loaded;
 mod finalize_modules;
@@ -139,7 +140,15 @@ impl<'a> GenerateStage<'a> {
     self.plugin_driver.render_start(self.options).await?;
     let mut chunk_graph = self.generate_chunks().await?;
 
-    if chunk_graph.chunk_table.len() > 1 {
+    // Count only live chunks. Chunks merged away during chunk optimization (e.g.
+    // the standalone runtime chunk folded back into its host) stay in
+    // `chunk_table` as tombstones but are skipped at render time, so they must
+    // not count toward the multi-chunk check that gates single-file output.
+    let live_chunk_count = chunk_graph
+      .chunk_table
+      .len()
+      .saturating_sub(chunk_graph.post_chunk_optimization_operations.len());
+    if live_chunk_count > 1 {
       validate_options_for_multi_chunk_output(self.options)?;
     }
 
@@ -190,6 +199,7 @@ impl<'a> GenerateStage<'a> {
     }
 
     let mut ast_table = std::mem::take(&mut self.ast_table);
+    self.compute_wrapped_esm_init_metadata(&ast_table, &chunk_graph);
     self.finalize_modules(&mut chunk_graph, &mut ast_table);
     self.detect_ineffective_dynamic_imports(&chunk_graph);
     self.render_chunk_to_assets(&chunk_graph, ast_table).await

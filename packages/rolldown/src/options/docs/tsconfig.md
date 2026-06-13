@@ -2,9 +2,9 @@
 
 ##### 自动发现模式 (`true`)
 
-当设置为 `true` 时，Rolldown 会启用自动发现模式（类似于 Vite）。对于每个模块，解析器和转换器都会查找最近的 `tsconfig.json`。
+当设置为 `true` 时，Rolldown 会启用自动发现模式。对于每个模块，resolver 和 transformer 都会从模块目录向上搜索，始于最近的 `tsconfig.json`。如果它包含 `references`，Rolldown 会检查每个被引用项目的 `files`/`include`/`exclude`，并使用第一个与文件匹配的项目。如果没有任何引用匹配，则会检查该 `tsconfig.json` 自身的 `files`/`include`/`exclude`。如果文件两者都不匹配，Rolldown 会继续向上查找下一个 `tsconfig.json` 并重复此过程。如果没有任何 `tsconfig.json` 与文件匹配，它会回退到找到的**最外层（最顶层）**那个，而不是最近的那个。
 
-如果 tsconfig 包含 `references`，Rolldown 会按照 TypeScript 的方式解析它们：包含该文件的被引用项目**优先于根配置**。每个被引用项目都会使用自己的 `allowJs`，因此 `.js`/`.jsx`/`.mjs`/`.cjs` 文件只会被启用它的项目包含。如果没有任何被引用项目包含该文件，Rolldown 会回退到根 tsconfig。
+如果 tsconfig 包含 `references`，Rolldown 会像 TypeScript 那样解析它们：包含该文件的被引用项目会**优先于根配置**，并且第一个匹配的引用获胜。每个被引用项目都使用其自己的 `allowJs`，因此 `.js`/`.jsx`/`.mjs`/`.cjs` 文件只会被启用它的项目包含。如果没有任何被引用项目包含该文件，Rolldown 会回退到根配置自身的 `files`/`include`/`exclude`。一个 solution-style 根配置（只有 `references`，并且像 Vite 脚手架那样显式将 `files`/`include` 设为空）本身没有文件模式，因此一旦其引用都不匹配，它就**不拥有**该文件，发现过程会按照上文所述继续在父目录中进行。
 
 ```js
 export default {

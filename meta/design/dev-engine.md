@@ -6,6 +6,38 @@
 
 ---
 
+## 设计原则
+
+有四项原则决定了开发引擎何时重建，以及错误如何流向绑定消费者。它们定义了 rolldown_dev 与其消费者（通常是 Vite）之间的契约，并约束了 §7、§13 和 §16 中的实现。
+
+### 1. 保守重建
+
+只有当包是 **过期的** 时才会发生重建——也就是自上次构建尝试以来输入发生了变化。页面访问和浏览器重连本身永远不会触发重建。特别是：如果上一次构建失败了，访问请求不会重试——在没有新输入的情况下，同样的错误会再次出现。
+
+实现位置：`BundleCoordinator::ensure_latest_bundle_output` 在 `Failed` / `FullBuildFailed` 时返回 `None`（§13b，§13e）。
+
+### 2. 每次构建都会发出错误
+
+rolldown_dev 会通过 `on_output` / `on_hmr_updates` 回调在每次构建时向绑定消费者暴露构建错误（§16b）。它从不在出错后静默重试，从不静默吞掉错误，也不会在请求之间缓存错误——rolldown_dev 在 HTTP 请求之间是无状态的。绑定消费者（Vite）负责保留最近一次错误，并在每次客户端重连时回放它，这样即使浏览器刷新后，错误遮罩也会再次出现。
+
+Vite 侧的实现（在 `fullBundleEnvironment.ts` 中）：单个 `lastBuildError: Error | null` 字段会缓存来自**任一**通道的最近错误——它会在 `onOutput`（完整构建错误）和 `onHmrUpdates`（HMR 错误）中被设置，并在**任一**通道成功构建后被清空为 `null`（一次成功的 `onOutput` _或_ 一次成功的 `onHmrUpdates`，因为干净计算出的 HMR 补丁会覆盖之前缓存的错误）。它会在每个新连接客户端的 **`vite:client:connect`** 事件上回放（包括刷新后的重连），因此浏览器刷新后错误遮罩会重新出现。这两个通道只在其 _实时_ 传递方式上不同：`onOutput` 错误还会被记录到终端（`logger.error`），这样即使没有浏览器也能看到构建失败，并且会通过 `hot.send` 广播给所有客户端；`onHmrUpdates` 错误则会单独发送给每个已连接客户端，不会记录到终端。
+
+### 3. 文件变更是唯一的恢复触发器
+
+在构建失败后，引擎会等待文件变更后再重建。Vite 配置编辑和用户代码编辑都是有效触发器。在 rolldown_dev 内部，除此之外没有任何东西算“恢复”——既不是页面刷新，也不是时间流逝，也不是手动关闭 UI：`ensure_latest_bundle_output` 在任何失败状态下都不做事（§13b），所以访问不会自行重建。
+
+**一个消费者侧例外——HMR 阶段失败后的页面刷新。** 当最后一次失败起源于 HMR 生成（`last_error_stage == Hmr`）时，消费者可以将页面刷新视为恢复触发器：在访问时它会调用 `triggerFullBuild`（§13e），强制执行一次完整重建，从而绕过可能有 bug 的 HMR 路径，而不是回放缓存的错误。这仍然只作用于消费者侧——rolldown_dev 本身不会改变行为；升级决定是消费者做出的，依据的是它从 `BundleState` 读取到的 `last_error_stage`（§12）。`Rebuild` 阶段或完整构建失败没有这种例外——只有文件变更才能恢复它们。（在仓库内的参考消费者中已接入：`packages/test-dev-server/src/environments/full-bundle-dev-environment.ts` 里的 `triggerBundleRegenerationIfStale`。）
+
+实现位置：`handle_file_changes`（§7）是失败后重建任务的唯一生成者。`triggerFullBuild`（§13e）是一个显式逃生口，用于监听器无法观察到的情况（例如缺失导入的解析；见未决问题）。
+
+推论：构建失败后发生的文件变更必须安排能够消除失败的工作。实际上这意味着要跟踪失败起源于哪里（HMR 计算还是增量重建），这样下一次任务就能覆盖出问题的阶段（§7）。
+
+### 4. 构建错误是可恢复的；panic 是 bug
+
+通过 `on_output` / `on_hmr_updates` 到达消费者的每个错误都被视为 **用户错误**——由源代码或插件行为导致，可通过编辑源码恢复。该模型假定 Rolldown 和 Vite 本身没有 bug。唯一不能通过文件变更循环恢复的状态是 panic，它表示 rolldown_dev 自身的某个不变量被破坏了（§16g）。
+
+---
+
 ## 1. 组件与分层
 
 开发引擎由四个协作部分构成，全部位于 `crates/rolldown_dev/src/`：
@@ -76,14 +108,14 @@ pub struct DevContext {
 ```rust
 pub enum CoordinatorMsg {
   WatchEvent(FsEventResult),                 // 原始文件监听器事件批次
-  BundleCompleted {                          // 一个 `BundlingTask` 已完成
-    has_encountered_error: bool,
+  BundleCompleted {                          // 一个 BundlingTask 已完成
+    error_stage: Option<ErrorStage>,         // 成功时为 None；见 §10
     has_generated_bundle_output: bool,
   },
   ScheduleBuildIfStale { reply: … },         // 请求协调器清空其队列
   GetState { reply: … },                     // 协调器状态快照
   EnsureLatestBundleOutput { reply: … },     // “我需要一个最新的完整打包产物”
-  TriggerFullBuild,                           // 无条件完整构建（发出即不管）
+  TriggerFullBuild,                          // 无条件完整构建（发出即不管）
   GetWatchedFiles { reply: … },              // 监听路径列表
   ModuleChanged { module_id: String },       // 以编程方式触发的模块变更
   Close,                                     // 关闭协调器
@@ -123,7 +155,7 @@ pub enum CoordinatorState {
   FullBuildInProgress,
   FullBuildFailed,
   InProgress,
-  Failed,
+  Failed { last_error_stage: ErrorStage },
 }
 ```
 
@@ -134,73 +166,72 @@ pub enum CoordinatorState {
 
 ### 状态含义
 
-| 状态                   | 含义                                                             |
-| ---------------------- | ---------------------------------------------------------------- |
-| `Initialized`          | 已构造，但 `run()` 尚未进入。瞬态状态。                          |
-| `FullBuildInProgress`  | 初始的 `TaskInput::FullBuild` 正在运行。                          |
-| `FullBuildFailed`      | 初始完整构建出错。此时完全没有可用输出。                           |
-| `Idle`                 | 没有构建在运行；最后一次构建（如果有）已成功。                    |
-| `InProgress`           | 正在运行增量任务（`Hmr` / `HmrRebuild` / `Rebuild`）。           |
-| `Failed`               | 上一次增量任务出错。                                             |
+| State                         | 含义                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `Initialized`                 | 已构造但尚未进入 `run()`。短暂状态。                                                        |
+| `FullBuildInProgress`         | 正在运行初始的 `TaskInput::FullBuild`。                                                     |
+| `FullBuildFailed`             | 初始完整构建出错。此时完全没有可用输出。                                                    |
+| `Idle`                        | 没有构建在运行；上一次构建（如果有）成功了。                                                |
+| `InProgress`                  | 正在运行一个增量任务（`Hmr` / `HmrRebuild` / `Rebuild`）。                                 |
+| `Failed { last_error_stage }` | 上一次增量任务出错；`last_error_stage` 记录是哪个阶段产生的错误（§7）。                     |
 
 ### 状态转移图
 
-```
-            ┌──────────────┐
-            │ Initialized  │  (构造函数: BundleCoordinator::new)
-            └──────┬───────┘
-                   │ run() 入口：push TaskInput::FullBuild,
-                   │ 设置 state=Idle，schedule_build_if_stale()
-                   ▼
-        ┌────────────────────┐
-        │        Idle        │ ◄──────────────────────────────┐
-        └─────────┬──────────┘                                │
-                  │ schedule_build_if_stale 弹出一个任务：    │
-                  │   FullBuild → FullBuildInProgress         │
-                  │   否则      → InProgress                  │
-        ┌─────────┴──────────┐                                │
-        ▼                    ▼                                │
-┌───────────────────┐  ┌───────────────────┐                  │
-│FullBuildInProgress│  │    InProgress     │                  │
-└─────────┬─────────┘  └─────────┬─────────┘                  │
-          │ BundleCompleted      │ BundleCompleted            │
-          │  err → FullBuildFailed│  err → Failed             │
-          │  ok  → Idle ─────────┼──ok──→ Idle ───────────────┤
-          ▼                      ▼  （然后总是调用            │
-┌───────────────────┐  ┌───────────────────┐    schedule_build_if_│
-│  FullBuildFailed  │  │      Failed       │    stale）           │
-└─────────┬─────────┘  └─────────┬─────────┘                  │
-          │ 下一次文件变更：     │ 下一次文件变更：           │
-          │  入队 FullBuild，    │  入队 Hmr/HmrRebuild，     │
-          │  调度 →              │  调度 →                    │
-          │  FullBuildInProgress │  InProgress ───────────────┘
-          ▼                      ▼
-       （循环）               （循环）
+边按照驱动它们的机制分组：**调度**（队列中的任务开始执行）、**完成**（`BundleCompleted`）、**文件变更恢复**，以及**重建触发器**（在没有文件变更时也会入队的工作：基于访问的 `EnsureLatestBundleOutput`、程序化的 `ModuleChanged`、手动的 `TriggerFullBuild`）。每个重建触发器都会先入队一个任务，然后调用 `schedule_build_if_stale`，这才是真正修改状态的位置（§8）——因此当构建已经在运行时，触发器只会把任务追加到队列中；等当前任务完成、队列清空时，转移才会发生。
+
+```mermaid
+stateDiagram-v2
+    state "Failed { stage }" as Failed
+
+    [*] --> Initialized : new()
+    Initialized --> Idle : run() startup<br/>queue FullBuild + schedule
+
+    %% scheduling: schedule_build_if_stale pops a queued task and starts it
+    Idle --> FullBuildInProgress : schedule pops FullBuild
+    Idle --> InProgress : schedule pops Rebuild / Hmr / HmrRebuild
+
+    %% completion: BundleCompleted
+    FullBuildInProgress --> Idle : completed ok
+    FullBuildInProgress --> FullBuildFailed : completed err
+    InProgress --> Idle : completed ok → schedule
+    InProgress --> Failed : completed err<br/>(records stage)
+
+    %% file-change recovery from a failed build
+    FullBuildFailed --> FullBuildInProgress : file change<br/>queue FullBuild
+    Failed --> InProgress : file change<br/>queue Hmr / HmrRebuild
+
+    %% rebuild triggers (no file change)
+    Idle --> InProgress : EnsureLatestBundleOutput when stale<br/>queue empty Rebuild
+    Idle --> InProgress : ModuleChanged<br/>queue Rebuild
+    Idle --> FullBuildInProgress : TriggerFullBuild<br/>clear queue + FullBuild
+    Failed --> FullBuildInProgress : TriggerFullBuild
+    FullBuildFailed --> FullBuildInProgress : TriggerFullBuild
 ```
 
 ### 每个转移发生的位置
 
-| 转移                                                               | 位置                                           |
-| ------------------------------------------------------------------ | ---------------------------------------------- |
-| `Initialized → Idle`                                               | `run()` 启动阶段，`bundle_coordinator.rs:84-87` |
-| `Idle/Failed/FullBuildFailed → FullBuildInProgress` / `InProgress` | `schedule_build_if_stale`，`:352-356`          |
-| `FullBuildInProgress → FullBuildFailed`                            | `handle_bundle_completed`，`:263`              |
-| `FullBuildInProgress → Idle`                                       | `handle_bundle_completed`，`:268`              |
-| `InProgress → Failed`                                              | `handle_bundle_completed`，`:288`              |
-| `InProgress → Idle`                                                | `handle_bundle_completed`，`:293`              |
+这些是 `set_initial_build_state` 的调用点——唯一的状态修改点，也是观察每次转移的便利位置。
 
-`set_initial_build_state` 是唯一的变更点——这是观察所有转移的一个便利位置。
+| 转移                                                           | 位置                                           |
+| -------------------------------------------------------------- | ---------------------------------------------- |
+| `Initialized → Idle`                                           | `run()` 启动，`bundle_coordinator.rs:84-87`    |
+| `Idle/Failed/FullBuildFailed → FullBuildInProgress` / `InProgress` | `schedule_build_if_stale`，`:378-380`          |
+| `FullBuildInProgress → FullBuildFailed`                        | `handle_bundle_completed`，`:286`              |
+| `FullBuildInProgress → Idle`                                   | `handle_bundle_completed`，`:291`              |
+| `InProgress → Failed { last_error_stage }`                     | `handle_bundle_completed`，`:311`              |
+| `InProgress → Idle`                                            | `handle_bundle_completed`，`:316`              |
 
-## 4. 协调器运行循环与启动
+### 什么会入队一次重建
 
-`BundleCoordinator::run` (`bundle_coordinator.rs:80-151`)：
+下面每一种都会入队一个 `TaskInput` 并调用 `schedule_build_if_stale`；真正的状态修改发生在上面的 `schedule_build_if_stale` 行。它们是构建被启动的不同方式——文件变更只是其中之一。
 
-1. 断言它从 `Initialized` 状态开始；否则记录错误并返回。
-2. 将 `TaskInput::FullBuild` 推入 `queued_tasks`，将状态设为 `Idle`，调用 `schedule_build_if_stale()` —— 这会触发初始构建（`Idle → FullBuildInProgress`）。
-3. 进入 `while let Some(msg) = self.rx.recv().await` 循环，按 §2 中的方式分发每个 `CoordinatorMsg`。
-4. 在 `Close` 时，等待任何正在运行的 `BundlingTask`（这样它就不会在尝试向已丢弃的 channel 发送 `BundleCompleted` 时 panic），然后跳出循环。
-
-`BundleCoordinator::new` 初始化：`state = Initialized`、`queued_tasks = []`、`has_stale_bundle_output = true`、`current_bundling_future = None`。
+| 触发器                                                     | 入队内容                       | 结果状态              | 位置                                                |
+| ---------------------------------------------------------- | ------------------------------ | --------------------- | --------------------------------------------------- |
+| 文件变更，稳态（`Idle` / `InProgress` / `Failed`）        | `Hmr` 或 `HmrRebuild`          | `InProgress`          | `handle_file_changes`，`:202`                       |
+| 文件变更，`FullBuildFailed`                                | `FullBuild`（清空暂存）        | `FullBuildInProgress` | `handle_file_changes`，`:248`                       |
+| 浏览器访问且已过期（`EnsureLatestBundleOutput`）            | 空文件的 `Rebuild`             | `InProgress`          | `ensure_latest_bundle_output`，`:401`（push `:419`） |
+| 程序化模块变更（`ModuleChanged`）                          | `Rebuild`                      | `InProgress`          | run 循环，`:128-145`                                |
+| 手动完整构建（`TriggerFullBuild`）                         | 清空队列，`FullBuild`          | `FullBuildInProgress` | `trigger_full_build`，`:457`                        |
 
 ---
 
@@ -266,22 +297,37 @@ state                                 → action
 ─────────────────────────────────────────────────────────────────
 FullBuildInProgress                   → 将文件暂存到
                                         queued_file_changes_waited_
-                                        for_full_build（不入队任务）
-Idle | InProgress | Failed            → 入队 Hmr（如果
-                                        rebuild_strategy == Always，则入队 HmrRebuild），
-                                        然后调用 schedule_build_if_stale()
-FullBuildFailed                       → 清空 queued_file_changes，
-                                        入队 TaskInput::FullBuild，
-                                        然后调用 schedule_build_if_stale()
-Initialized                           → 记录错误日志，忽略
+                                        for_full_build (no task queued)
+Idle | InProgress                     → queue Hmr (or HmrRebuild if
+                                        rebuild_strategy == Always),
+                                        then schedule_build_if_stale()
+Failed { last_error_stage: Hmr }      → queue Hmr (or HmrRebuild if
+                                        rebuild_strategy == Always),
+                                        then schedule_build_if_stale()
+Failed { last_error_stage: Rebuild }  → queue HmrRebuild
+                                        (unconditional — Rebuild-stage
+                                        failure must rebuild),
+                                        then schedule_build_if_stale()
+FullBuildFailed                       → clear queued_file_changes,
+                                        queue TaskInput::FullBuild,
+                                        then schedule_build_if_stale()
+Initialized                           → error log, ignored
 ```
 
 说明：
 
-- 在 `FullBuildInProgress` 期间，文件变更不会被转换为任务；它们会被暂存，并在完整构建成功时回放（`handle_bundle_completed` `:269-273` 会用已排空的集合再次调用 `handle_file_changes`）。
-- `Idle`、`InProgress` 和 `Failed` 在这里被**完全同等**对待——三者都会入队一个 `Hmr`/`HmrRebuild`。
-- `Hmr` 与 `HmrRebuild` 的选择（`Always` 还是非 `Always`）由 `rebuild_strategy` 选项决定（见 §9）。
-- `FullBuildFailed` 是唯一一个会将文件变更处理为队列 `FullBuild` 的状态。
+- 在 `FullBuildInProgress` 期间，文件变更不会被转换成任务；
+  它们会先暂存起来，并在完整构建成功后重新回放
+  （`handle_bundle_completed` 的 `:269-273` 会使用已排空的集合再次调用 `handle_file_changes`）。
+- `Idle` 和 `InProgress` 的行为完全相同——两者都会入队 `Hmr`
+  （在 `Always` 策略下则为 `HmrRebuild`）。
+- `Failed` 会根据 `last_error_stage` 分流。若是 `Hmr` 阶段失败，
+  通过重新执行同一个 Hmr 任务来恢复（`watch_change` 钩子和 HMR 计算会获得第二次机会）。
+  若是 `Rebuild` 阶段失败，说明 bundle 输出相对于源码已经过期，因此恢复任务必须包含重建——无论 `rebuild_strategy` 如何，都要使用 `HmrRebuild`。
+  这实现了设计原则 §3 的推论。
+- `Hmr` 与 `HmrRebuild` 的 `Always` / 非 `Always` 选择由 `rebuild_strategy`
+  选项决定（见 §9）。只有 `Idle`、`InProgress` 和 `Failed { Hmr }` 分支会遵守它；`Failed { Rebuild }` 会覆盖它。
+- `FullBuildFailed` 是唯一一个文件变更会队列化为 `FullBuild` 的状态。由于完整重建在设计上覆盖所有阶段，因此不需要阶段跟踪。
 
 ---
 
@@ -354,11 +400,35 @@ if rebuild_strategy.is_auto()
 
 ## 10. `BundlingTask` —— 执行一个工作单元
 
-`BundlingTask::run` (`bundling_task.rs:58-81`) 会调用 `run_inner`，然后向协调器发送 `BundleCompleted`，并附带两个布尔值：
+`BundlingTask::run` (`bundling_task.rs:58-81`) 调用 `run_inner`，然后
+向协调器发送 `BundleCompleted`，其中包含两个字段：
 
-- `has_encountered_error` —— `has_encountered_error` 标志位或 `run_inner`
-  返回 `Err`。
-- `has_generated_bundle_output` —— 等于 `has_rebuild_happen`，即任务是否实际执行了重建。
+- `error_stage: Option<ErrorStage>` — 成功时为 `None`；出错时，标识错误发生在哪个阶段。
+- `has_generated_bundle_output: bool` — 等于 `has_rebuild_happen`，
+  也就是任务是否 वास्तव上执行了重建。
+
+### 阶段分类
+
+`BundlingTask` 在 `run_inner`
+（`hmr_errored`、`rebuild_errored`）中跟踪两个彼此独立的标志，并通过优先级 **`Rebuild > Hmr`** 推导报告用的 `Option<ErrorStage>`：
+
+| `rebuild_errored` | `hmr_errored` | reported `error_stage` |
+| ----------------- | ------------- | ---------------------- |
+| `true`            | any           | `Some(Rebuild)`        |
+| `false`           | `true`        | `Some(Hmr)`            |
+| `false`           | `false`       | `None`                 |
+
+`Rebuild` 优先是因为自动升级路径（§9b）：一个 `Hmr` 任务可以在执行中途被重写为 `HmrRebuild`，然后在重建阶段失败。在这种情况下两个标志都会被置位；报告 `Rebuild` 是保守的——下一次文件变更会强制重建，而这正是确认修复所需的行为。
+
+置位位置：
+
+| `run_inner` 位置                          | 置位标志          |
+| ----------------------------------------- | ----------------- |
+| `plugin_driver.watch_change` 钩子失败     | `hmr_errored`     |
+| `generate_hmr_updates` 失败               | `hmr_errored`     |
+| `rebuild()`（`incremental_*`）失败         | `rebuild_errored` |
+
+`watch_change` 失败被归类为 `Hmr`，因为下一次 `Hmr` 任务会针对新的变更文件重新运行该钩子——这样足以重试，无需强制重建。
 
 `run_inner` (`bundling_task.rs:83-122`) 按顺序执行：
 
@@ -370,10 +440,10 @@ if rebuild_strategy.is_auto()
 ### `generate_hmr_updates` (`bundling_task.rs:124-186`)
 
 - 锁定 `Bundler`。
-- 从 `dev_context.clients` 为每个已连接客户端收集 `ClientHmrInput`。
+- 从 `dev_context.clients` 中为每个已连接客户端收集 `ClientHmrInput`。
 - 调用 `bundler.compute_hmr_update_for_file_changes(...)`。
-- 扫描得到的更新；如果有任何一个 `is_full_reload()`，则设置 `has_full_reload_update = true`。
-- 出错时，将 `self.has_encountered_error = true`。
+- 扫描生成的更新；如果任何一个 `is_full_reload()`，则设置 `has_full_reload_update = true`。
+- 出错时，设置 `self.hmr_errored = true`。
 - 如果配置了 `on_hmr_updates` 回调，则调用它。
 
 ### `rebuild` (`bundling_task.rs:189-223`)
@@ -387,8 +457,8 @@ if rebuild_strategy.is_auto()
     ScanMode::Partial(<changed file paths>)
   };
   ```
-- 如果 `skip_write` 为 false，则调用 `bundler.incremental_write(scan_mode)`；否则调用 `bundler.incremental_generate(scan_mode)`。
-- 出错时，将 `self.has_encountered_error = true`。
+- 如果 `skip_write` 为 `false`，则调用 `bundler.incremental_write(scan_mode)`；否则调用 `bundler.incremental_generate(scan_mode)`。
+- 出错时，设置 `self.rebuild_errored = true`。
 - 如果配置了 `on_output` 回调，则调用它。
 
 只有 `TaskInput::FullBuild` 会产生 `ScanMode::Full`。其他所有重建任务（`Rebuild`、`HmrRebuild`）都会产生 `ScanMode::Partial`。
@@ -402,8 +472,10 @@ if rebuild_strategy.is_auto()
 
 ```rust
 current_bundling_future = None;
-update_watch_paths();                       // 即使失败也一样
-if has_encountered_error {
+update_watch_paths();                       // 即使失败也会执行
+if error_stage.is_some() {
+  // FullBuildFailed 总是在下一次文件变更时通过 FullBuild 恢复，
+  // 所以这里会丢弃最初的阶段信息。
   state = FullBuildFailed;
   has_stale_bundle_output = true;
 } else {
@@ -414,7 +486,7 @@ if has_encountered_error {
     handle_file_changes(drained_changes);
   }
 }
-// 这里不调用 schedule_build_if_stale — 失败时我们等待外部触发；
+// 这里不调用 schedule_build_if_stale——失败时我们等待外部触发；
 // 成功时排队的变更已经处理完了。
 ```
 
@@ -422,18 +494,20 @@ if has_encountered_error {
 
 ```rust
 current_bundling_future = None;
-update_watch_paths();                       // 注册新拉入的文件
-if has_encountered_error {
-  state = Failed;
+update_watch_paths();                       // 注册刚刚拉入的新文件
+if let Some(stage) = error_stage {
+  state = Failed { last_error_stage: stage };
   has_stale_bundle_output = true;
 } else {
   has_stale_bundle_output = !has_generated_bundle_output;
   state = Idle;
 }
-schedule_build_if_stale();                  // 始终调用 — 清空队列
+schedule_build_if_stale();                  // 始终调用——清空队列
 ```
 
-关键信息：
+带入 `Failed` 的阶段就是 `BundleCompleted` 报告的阶段（§10 的优先级）。它会在下一次文件变更时由 §7 读取，用来在 `Hmr` 和 `HmrRebuild` 之间做选择。
+
+关键事实：
 
 - 任何出错的构建之后，`has_stale_bundle_output` 都会变成 `true`，以及
   成功但**没有**重新构建的任务之后（也就是仅 `Hmr` 任务：
@@ -463,6 +537,29 @@ schedule_build_if_stale();                  // 始终调用 — 清空队列
 `ensure_latest_bundle_output`（§13）会消费它，以决定在提供完整 bundle 之前
 是否需要进行惰性重新构建。它也会反映到 `CoordinatorStateSnapshot.has_stale_output`
 以及 `BundleState.has_stale_output` 中。
+
+### 伴随项：`last_build_errored`
+
+快照还会暴露 `last_build_errored: bool` — 当协调器处于任意错误状态时为 `true`（`FullBuildFailed` OR `Failed { .. }`）。
+在决定是否触发基于访问的再生成时，绑定层消费者应将其与
+`has_stale_output` 配对使用：一个 stale 且 errored 的 bundle **不应**在访问时被重新生成
+（设计原则 §1），因为引擎会对该请求不执行任何操作，而消费者中天真的“promise resolved ⇒ build fresh”
+理解会导致虚假的重载循环。它覆盖了初始构建失败
+（`FullBuildFailed`）和增量失败（`Failed { .. }`）——
+更窄的“仅初始构建”谓词已因冗余被移除。
+
+### 伴随项：`last_error_stage`
+
+快照还会暴露 `last_error_stage: Option<ErrorStage>` — 仅在 `Failed { last_error_stage }` 中为 `Some`，携带最近一次增量失败的阶段（§10）。在成功路径以及 `FullBuildFailed` 时它为 `None`（完整构建覆盖所有阶段，因此没有单一的起始阶段——请改用 `last_build_errored` 来检测该情况）。
+它会流经 `BundleState.last_error_stage` 和 `BindingBundleState.last_error_stage`（JS 侧的 `'Hmr' | 'Rebuild'` 字符串联合类型）。
+
+`Some(Hmr)` 允许对设计原则 §3（“文件变更是唯一的恢复触发器”）做一个有意的**例外**，其作用范围限定在消费者侧而非 rolldown_dev：因为 HMR 生成本身也可能有 bug，消费者在页面加载时如果 `last_build_errored && last_error_stage == Hmr`，可以先调用 `trigger_full_build`（§13e）再调用 `ensure_latest_bundle_output`，以强制执行一次绕过 HMR 路径的完整重建。FIFO 通道顺序保证 `FullBuild` 会在处理 ensure 消息之前被调度，因此访问仍然会等待新构建完成。rolldown_dev 本身仍保持保守——在所有 `Failed` / `FullBuildFailed` 状态下，`ensure_latest_bundle_output` 仍然不会执行任何操作（§13b）。`Rebuild` 阶段或完整构建失败则保持原样；只有文件变更才能恢复它们。
+
+这个消费者侧的逃生通道已接入仓库内的参考消费者：`FullBundleDevEnvironment.triggerBundleRegenerationIfStale`
+（`packages/test-dev-server/src/environments/full-bundle-dev-environment.ts`）
+会在访问时，当 `lastBuildErrored &&
+lastErrorStage === 'Hmr'` 时调用 `triggerFullBuild`。端到端测试由
+`hmr-full-bundle-mode` playground 的 `__tests__/hmr-error.spec.ts` 覆盖：一个语法错误会导致 HMR 生成失败，然后一次重载会触发完整构建——其可观察现象是，仅仅访问时就运行了一个新构建（它会在仍然损坏的源码上再次失败，最终落入 `FullBuildFailed`）。
 
 ---
 
@@ -499,14 +596,14 @@ loop {
 
 根据状态返回 `Option<EnsureLatestBundleOutputReturn>`：
 
-| State                                | Action                                   | `future`      | `is_ensure_latest_bundle_output_future` |
-| ------------------------------------- | ---------------------------------------- | ------------- | --------------------------------------- |
-| `Initialized`                        | warn, return `None`                      | —             | —                                       |
-| `Idle`, queue empty, **stale**       | queue an empty-files `Rebuild`, schedule | the new build | `true`                                  |
-| `Idle`, queue empty, **fresh**       | return `None`                            | —             | —                                       |
-| `Idle`, queue non-empty              | schedule the queued task                 | that build    | `false`                                 |
-| `FullBuildInProgress` / `InProgress` | return the running future                | running build | `false`                                 |
-| `Failed` / `FullBuildFailed`         | return `None`                            | —             | —                                       |
+| 状态                                 | 动作                                      | `future`      | `is_ensure_latest_bundle_output_future` |
+| ------------------------------------ | ----------------------------------------- | ------------- | --------------------------------------- |
+| `Initialized`                        | warn，返回 `None`                         | —             | —                                       |
+| `Idle`，队列为空，**过时**           | 排队一个空文件的 `Rebuild`，并调度它      | 新的构建      | `true`                                  |
+| `Idle`，队列为空，**新鲜**           | 返回 `None`                               | —             | —                                       |
+| `Idle`，队列非空                     | 调度队列中的任务                          | 该构建        | `false`                                 |
+| `FullBuildInProgress` / `InProgress` | 返回正在运行的 future                     | 正在运行的构建 | `false`                                 |
+| `Failed` / `FullBuildFailed`         | 返回 `None`                               | —             | —                                       |
 
 ### 13c. `is_ensure_latest_bundle_output_future` 标志
 
@@ -634,18 +731,18 @@ async fn with_cached_bundle<T>(
 
 除了 `ensure_latest_bundle_output` 之外，`DevEngine` 上的公开方法（`dev_engine.rs`）：
 
-| Method                                           | Purpose                                                                                        |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `new(config, options)`                           | 构建 `Bundler`，规范化选项，创建 watcher 和 coordinator                                  |
-| `run()`                                          | 启动 coordinator 任务，通过 `ensure_latest_bundle_output` 等待初始构建                 |
-| `trigger_full_build()`                           | 发送 `TriggerFullBuild`（即发即弃；可与 `ensure_latest_bundle_output` 组合以等待）      |
-| `wait_for_close()`                               | 等待 coordinator 的 join handle                                                          |
-| `wait_for_ongoing_bundle()`                      | `GetState`，等待任意正在运行的 future                                              |
-| `get_bundle_state()`                             | `GetState` → `BundleState { last_full_build_failed, has_stale_output }`                  |
-| `invalidate(caller, first_invalidated_by)`       | 锁定 bundler，为每个 client 调用 `compute_update_for_calling_invalidate`                |
-| `compile_lazy_entry(proxy_module_id, client_id)` | 编译一个懒入口；成功后发送 `ModuleChanged`                                             |
-| `close()`                                        | 发送 `Close`，运行 `closeBundle`，等待 coordinator 关闭                                  |
-| `is_closed()` / `bundler_options()`              | 访问器                                                                                      |
+| 方法                                           | 目的                                                                                         |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `new(config, options)`                           | 构建 `Bundler`，规范化选项，创建 watcher 和 coordinator                                      |
+| `run()`                                          | 启动 coordinator 任务，通过 `ensure_latest_bundle_output` 等待初始构建                       |
+| `trigger_full_build()`                           | 发送 `TriggerFullBuild`（即发即忘；可与 `ensure_latest_bundle_output` 组合等待）             |
+| `wait_for_close()`                               | 等待 coordinator 的 join handle                                                            |
+| `wait_for_ongoing_bundle()`                      | `GetState`，等待任何正在运行的 future                                                        |
+| `get_bundle_state()`                             | `GetState` → `BundleState { last_build_errored, has_stale_output }`                         |
+| `invalidate(caller, first_invalidated_by)`       | 锁定 bundler，按客户端调用 `compute_update_for_calling_invalidate`                          |
+| `compile_lazy_entry(proxy_module_id, client_id)` | 编译一个懒入口；成功后发送 `ModuleChanged`                                                  |
+| `close()`                                        | 发送 `Close`，运行 `closeBundle`，等待 coordinator 关闭                                      |
+| `is_closed()` / `bundler_options()`              | 访问器                                                                                       |
 
 `ModuleChanged` 的处理（`bundle_coordinator.rs:123-140`）：更新 watch
 路径，为变更的模块排队一个 `TaskInput::Rebuild`，将 `has_stale_bundle_output = true`，
@@ -728,7 +825,10 @@ dev engine 有三个错误受众。给它们命名很重要，因为它们需要
 | `generate_hmr_updates` | `on_hmr_updates` | 传递，然后可能继续   | 仅记录日志，可能停止 |
 | `rebuild`              | `on_output`      | 传递                 | 仅记录日志          |
 
-任一阶段失败都会设置 `self.has_encountered_error = true`，并通过 `BundleCompleted { has_encountered_error, ... }` 上报给 coordinator。coordinator 使用它切换到 `FullBuildFailed` / `Failed`（§11），不管是否注册了回调去接收错误本身。
+某个阶段中的失败会设置对应的分阶段标志（`watch_change` / `generate_hmr_updates` 用 `hmr_errored`，`rebuild` 用 `rebuild_errored`）。
+在任务结束时，这些会折叠为 `error_stage: Option<ErrorStage>`（优先级
+`Rebuild > Hmr`，§10），并通过 `BundleCompleted { error_stage, .. }` 上报给协调器。协调器据此转换到
+`FullBuildFailed` / `Failed { last_error_stage }`（§11），无论是否注册了接收错误本身的回调。
 
 `generate_hmr_updates` 返回 `bool` ——“后续阶段是否可以继续？”——保留了 `BuildResult` 之前的短路语义：只有当某个 HMR 错误没有可用回调来暴露它时，才会跳过 rebuild（与旧的 `?` 传播行为一致）。
 
@@ -770,11 +870,22 @@ dev engine 有三个错误受众。给它们命名很重要，因为它们需要
 
 ### 16f. 约定
 
-- **不要在 `BuildResult` 或任何消费者可达的 `Result` 上调用 `.expect()` / `.unwrap()`。** panic 会穿过 napi FFI 边界，可能使 Node 进程崩溃。应使用 `match` 并通过合适的通道路由。
-- **`create_error_if_closed()` 是入口守卫。** 每个触及 coordinator 的 `DevEngine` 方法都先运行它。默认情况下，得到的错误会暴露给绑定消费者（§16d）；采用“吞掉并返回 `Ok`”例外（§16d）的方法，也必须在每个 `.send(...)` 和 `.recv()` 位置处理调用过程中途的关闭竞争。
-- **插件错误对用户可见。** 永远不要静默丢弃它们；它们总会到达 `on_output` 或 `on_hmr_updates`。
-- **每个阶段都负责自己的传递。** 在 `BundlingTask` 内部，每个阶段函数处理自己的错误传递；`run_inner` 不是集中式错误处理器。
-- **`has_encountered_error` 是 coordinator 的信号，callbacks 是消费者的信号。** 每次错误都会同时设置这两者；一个驱动状态机，另一个通知用户。
+- **No `.expect()` / `.unwrap()` on `BuildResult` or any consumer-reachable
+  `Result`.** A panic crosses the napi FFI boundary and can crash the Node
+  process. `match` and route through the appropriate channel instead.
+- **`create_error_if_closed()` is the entry guard.** Every `DevEngine`
+  method that touches the coordinator runs it first. By default the
+  resulting error is surfaced to the binding consumer (§16d); methods that
+  take the "swallow as `Ok`" exception (§16d) must also handle the
+  mid-call closed-race at every `.send(...)` and `.recv()` site.
+- **Plugin errors are user-visible.** Never silently drop them; they always
+  reach `on_output` or `on_hmr_updates`.
+- **Each phase owns its delivery.** Inside `BundlingTask`, each phase
+  function handles its own error delivery; `run_inner` is not a centralized
+  error handler.
+- **`error_stage` is the coordinator signal, callbacks are the consumer
+  signal.** Both are produced on every error; the stage drives the state
+  machine, the callback notifies the user.
 
 ### 16g. 何时 panic
 
@@ -802,19 +913,20 @@ dev engine 中并非所有 `Result` 都应该被路由。有些 `.expect(...)` /
 
 ## 17. 速查——概念到文件映射
 
-| 概念                                         | 文件                                                            |
-| -------------------------------------------- | --------------------------------------------------------------- |
-| 公共 dev API，协调器启动                       | `crates/rolldown_dev/src/dev_engine.rs`                         |
-| 状态机、排队与调度                             | `crates/rolldown_dev/src/bundle_coordinator.rs`                 |
-| 一个构建工作单元                               | `crates/rolldown_dev/src/bundling_task.rs`                      |
-| 共享上下文                                     | `crates/rolldown_dev/src/dev_context.rs`                        |
-| `CoordinatorState` 枚举                        | `crates/rolldown_dev/src/types/coordinator_state.rs`            |
-| `TaskInput` 枚举，合并规则                     | `crates/rolldown_dev/src/types/task_input.rs`                   |
-| `CoordinatorMsg` 枚举                          | `crates/rolldown_dev/src/types/coordinator_msg.rs`              |
-| `RebuildStrategy` 枚举                         | `crates/rolldown_dev_common/src/types/rebuild_strategy.rs`      |
-| 增量入口，`with_cached_bundle`                 | `crates/rolldown/src/bundler/impl_bundler_incremental_build.rs` |
-| HMR 入口点                                     | `crates/rolldown/src/bundler/impl_bundler_hmr.rs`               |
-| `ScanStageCache`                               | `crates/rolldown/src/types/scan_stage_cache.rs`                 |
+| 概念                                           | 文件                                                            |
+| ---------------------------------------------- | --------------------------------------------------------------- |
+| 公共 dev API，协调器启动                        | `crates/rolldown_dev/src/dev_engine.rs`                         |
+| 状态机，排队，调度                               | `crates/rolldown_dev/src/bundle_coordinator.rs`                 |
+| 一份构建工作单元                                 | `crates/rolldown_dev/src/bundling_task.rs`                      |
+| 共享上下文                                       | `crates/rolldown_dev/src/dev_context.rs`                        |
+| `CoordinatorState` 枚举                         | `crates/rolldown_dev/src/types/coordinator_state.rs`            |
+| `TaskInput` 枚举，合并规则                        | `crates/rolldown_dev/src/types/task_input.rs`                   |
+| `CoordinatorMsg` 枚举                            | `crates/rolldown_dev/src/types/coordinator_msg.rs`              |
+| `ErrorStage` 枚举                                | `crates/rolldown_dev/src/types/error_stage.rs`                  |
+| `RebuildStrategy` 枚举                           | `crates/rolldown_dev_common/src/types/rebuild_strategy.rs`      |
+| 增量入口，`with_cached_bundle`                   | `crates/rolldown/src/bundler/impl_bundler_incremental_build.rs` |
+| HMR 入口                                         | `crates/rolldown/src/bundler/impl_bundler_hmr.rs`               |
+| `ScanStageCache`                                 | `crates/rolldown/src/types/scan_stage_cache.rs`                 |
 
 ---
 
@@ -826,17 +938,16 @@ dev engine 中并非所有 `Result` 都应该被路由。有些 `.expect(...)` /
 
 ## 相关内容
 
-- [bundler-data-lifecycle](./bundler-data-lifecycle.md) — `BundleMode`、
-  `Bundle` / `BundleFactory`，以及 dev
-  引擎增量构建所经历的 `ScanStageCache` 生命周期
-- [rust-bundler](./rust-bundler.md) — 核心 `Bundler` 结构体以及 dev
-  引擎驱动的构建生命周期
-- [watch-mode](./watch-mode.md) — `rolldown_watcher`，基于 actor 的
-  watch 架构；`rolldown_dev` 复用了相同的 actor 模式
-- [lazy-compilation](./lazy-compilation.md) — 懒加载入口编译，
-  通过 `DevEngine::compile_lazy_entry` 和 `ModuleChanged`
-  消息到达
-- [dev-server-browser-tests](./dev-server-browser-tests.md) — dev server 的浏览器
-  测试工具
+- [bundler-data-lifecycle](./bundler-data-lifecycle.md) — `BundleMode`,
+  `Bundle` / `BundleFactory`, 以及 dev 引擎增量构建所经历的 `ScanStageCache`
+  生命周期
+- [rust-bundler](./rust-bundler.md) — dev 引擎驱动的核心 `Bundler` 结构体和构建
+  生命周期
+- [watch-mode](./watch-mode.md) — `rolldown_watcher`，基于 actor 的监视架构；`rolldown_dev`
+  复用了相同的 actor 模式
+- [lazy-compilation](./lazy-compilation.md) — 懒加载入口编译，通过 `DevEngine::compile_lazy_entry`
+  和 `ModuleChanged` 消息触发
+- [dev-server-test-harness](./dev-server-test-harness.md) — dev server 的浏览器
+  测试框架
 - `crates/rolldown_dev/` — dev 引擎实现
 - `crates/rolldown_dev_common/` — `RebuildStrategy`、dev 选项

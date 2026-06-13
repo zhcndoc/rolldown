@@ -91,8 +91,8 @@ Scan 只利用当前可得的局部信息收集 span；link 使用这些记录�
 - **合成 span 彼此会冲突。** 当 finalizer 构造新的 AST 节点（辅助函数、成员表达式等）时，必须给它们一个不会意外匹配已记录条目的 span。约定是使用合成 `SPAN`（`0..0`）——见 `module_finalizers/mod.rs:1088-1090`，其中注释明确说明了这种规避方式：
 
   ```rust
-  // IMPORTANT: Use SPAN (0-0) for the new member expression to avoid being
-  // matched by resolved_member_expr_refs lookup which uses span as key
+  // 重要：为新的成员表达式使用 SPAN（0-0），以避免
+  // 被以 span 作为键的 resolved_member_expr_refs 查找命中
   let ns_id_ref = self.snippet.id_ref_expr(ns_name, SPAN);
   ```
 
@@ -114,5 +114,6 @@ Oxc 正在引入一个 `AstNodeId` —— 一种真正按每棵树分配的节�
 
 ## 相关
 
+- [ast-construction](./ast-construction.md) — rolldown 如何构建该契约所跟踪身份的节点；合成节点的 synthetic-`SPAN` / dummy-`NodeId` 规范与该文档共享
 - [bundler-data-lifecycle](./bundler-data-lifecycle.md)
 - [module-id](./module-id.md)
