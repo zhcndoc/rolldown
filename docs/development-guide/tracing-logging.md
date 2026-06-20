@@ -9,9 +9,11 @@ Rolldown 的代码库中有很多 [`tracing::debug!`]（或 `tracing::trace!`）
 ## 用法
 
 ```
-RD_LOG=debug [执行 rolldown]
-RD_LOG=debug RD_LOG_OUTPUT=chrome-json [执行 rolldown]
+RD_LOG=debug [运行 rolldown]
+RD_LOG=debug RD_LOG_OUTPUT=chrome-json [运行 rolldown]
 ```
+
+`RD_LOG_OUTPUT=chrome-json` 需要在构建时启用 `chrome-tracing` cargo feature；该 feature 在 profile 构建（`pnpm build-binding:profile`）中已启用，但在 release 构建中已禁用，以保持发布的二进制文件更小。若未启用，rolldown 会回退到可读的 stdout 输出，并打印一条警告。
 
 ## 添加日志
 

@@ -416,7 +416,7 @@ const config = defineConfig({
 
   vite: {
     optimizeDeps: {
-      exclude: ['@docsearch/css'],
+      exclude: ['@docsearch/css', 'vitepress-plugin-feedback-tracker'],
     },
     plugins: [
       groupIconVitePlugin({

@@ -196,6 +196,98 @@ just test-node-rolldown -t test-name
 
 :::
 
+## Dev server tests
+
+[`@rolldown/test-dev-server`](https://github.com/rolldown/rolldown/tree/main/packages/test-dev-server) 是一个小型的 Vite 风格开发服务器，用于验证 rolldown 的 **开发引擎**——HMR、延迟编译和错误恢复。它的测试位于 `packages/test-dev-server/tests`，分为两个套件：
+
+| 套件         | 平台      | 驱动的内容                                                                                  |
+| ------------ | --------- | ------------------------------------------------------------------------------------------- |
+| **browser**  | `browser` | 一个真实的 Chromium 页面，连接到一个**进程内**开发服务器。大多数开发引擎测试都在这里。 |
+| **fixtures** | `node`    | 开发服务器构建到**磁盘**，并将构建产物作为 `node` 子进程运行。 |
+
+架构以及测试支架背后的原因记录在 [开发服务器测试支架设计文档](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中——在修改测试支架本身之前请先阅读。
+
+### 浏览器 playground
+
+大多数开发引擎回归测试都作为 **浏览器 playground** 进行测试，而不是单元测试。playground 是一个很小的应用，由进程内开发服务器提供给一个真实的 Chromium 页面，位于：
+
+```text
+playground/<name>/
+```
+
+每个 playground 通常包含：
+
+```text
+dev.config.mjs            # rolldown 开发配置（浏览器平台，不设置 dev.port）
+index.html                # 在 / 提供
+main.js                   # 入口；相对输入路径从此目录解析
+package.json              # 工作区成员（复制现有的一个）
+__tests__/<name>.spec.ts  # 规范（保留在源代码中，绝不会被复制）
+```
+
+测试支架会根据规范文件的路径发现 playground，将其复制到 `playground-temp/<name>/`，在由操作系统分配的端口上启动一个进程内开发服务器，打开 Chromium 页面并导航到该页面——因此**添加测试只需要一个文件夹加一个规范文件，不需要编辑任何中央注册表**。
+
+规范文件从 `~utils` 别名导入辅助函数；在运行时，测试支架已经启动服务器并导航了 `page`：
+
+```ts
+import { describe, expect, test } from 'vitest';
+import { editFile, page, waitForBuildStable } from '~utils';
+
+describe('<name>', () => {
+  test('应用一次 HMR 更新', async () => {
+    editFile('main.js', (code) => code.replace('hello', 'world'));
+    await expect.poll(() => page.textContent('h1')).toBe('world');
+  });
+});
+```
+
+:::warning 与服务器的异步工作同步——绝不要 sleep
+使用 `expect.poll` 轮询 DOM，在后续编辑前 `await waitForBuildStable()`，或者使用 `untilBrowserLogAfter` 等待浏览器日志。固定的 `sleep` 既不稳定又慢。
+:::
+
+#### 构建和运行
+
+在修改 Rust 或 dev-server 的 `src/` 之后，重新构建一次——测试导入的是编译后的 `dist/`，而不是 TypeScript 源码：
+
+```sh
+just build-rolldown
+pnpm --filter @rolldown/test-dev-server build
+```
+
+然后，在 `packages/test-dev-server/tests/` 中运行：
+
+```sh
+# 单个 playground
+pnpm exec vitest run --config=vitest.config.e2e.mts playground/<name>
+
+# 整个 browser 套件
+pnpm test:browser
+```
+
+#### 一个规范文件 vs. 多个规范文件
+
+**同一个 playground 中的多个规范文件会并发运行**（文件级并行），每个都会基于共享的 `playground-temp/<name>/` 副本 fork 出自己的开发服务器。只有在场景彼此**独立**时这才是安全的——每个规范文件只导航自己的 DOM，并且只编辑自己的文件（这就是 `lazy-compilation` 的四个规范如何共存的原因）。当多个场景共享同一个 bundle/入口，以至于一个场景的编辑会重建另一个规范文件的页面时，就应该把它们放在**单个规范文件**中（这就是 `hmr-full-bundle-mode` 的场景为何是一个规范文件）。
+
+同一个规范文件中的测试共享一个 `page` 并按顺序运行，因此不要让它们相互干扰。保持**编辑只向前推进**——或者恢复它们所做的更改，因为后面的测试不能依赖前一个测试的编辑已经被回滚。并且在任何 reload 之后都要**重新获取元素句柄**（`page.locator(...)` / 重新 `page.$`）；reload 会使旧句柄失效。
+
+最好为每个场景提供**自己独立的 DOM 节点**，这样一个测试的编辑就不会干扰另一个测试的断言——`hmr-full-bundle-mode` 将 `.app`、`.hmr`、`.hmr-error` 和 `.rebuild-error` 分开，每个场景一个。
+
+#### 冷启动 playground
+
+有些延迟编译 bug 只有在新服务器的**第一次**请求中才能复现。添加 `__tests__/serve.ts`，这样测试支架会启动服务器但不会导航，从而让规范文件自己发起第一次请求：
+
+```ts
+import type { DevServerHandle, ServeContext } from '~utils';
+
+export async function serve(ctx: ServeContext): Promise<DevServerHandle> {
+  return ctx.createServer();
+}
+```
+
+### Node fixtures
+
+对于 **node** 平台，使用 `fixtures/<name>/` 加上 `fixtures.test.ts`（通过 `pnpm test:fixtures` 运行）——开发服务器构建到磁盘，并将构建产物作为 `node` 子进程运行。当浏览器 playground 已经可以覆盖行为时，不要在那里添加普通的 HMR / lazy / overlay 回归测试。
+
 ## Rollup 行为对齐测试
 
 我们也通过将 Rollup 自身的测试运行在 Rolldown 上，来实现与 Rollup 的行为对齐。

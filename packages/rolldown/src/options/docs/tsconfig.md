@@ -2,9 +2,11 @@
 
 ##### 自动发现模式 (`true`)
 
-当设置为 `true` 时，Rolldown 会启用自动发现模式。对于每个模块，resolver 和 transformer 都会从模块目录向上搜索，始于最近的 `tsconfig.json`。如果它包含 `references`，Rolldown 会检查每个被引用项目的 `files`/`include`/`exclude`，并使用第一个与文件匹配的项目。如果没有任何引用匹配，则会检查该 `tsconfig.json` 自身的 `files`/`include`/`exclude`。如果文件两者都不匹配，Rolldown 会继续向上查找下一个 `tsconfig.json` 并重复此过程。如果没有任何 `tsconfig.json` 与文件匹配，它会回退到找到的**最外层（最顶层）**那个，而不是最近的那个。
+当设置为 `true` 时，Rolldown 会启用自动发现模式。对于每个模块，解析器和转换器都会从模块所在目录**向上**搜索，从最近的 `tsconfig.json` 开始。如果它包含 `references`，Rolldown 会检查每个被引用项目的 `files`/`include`/`exclude`，并使用第一个与该文件匹配的项目。如果没有任何引用匹配，则会检查 `tsconfig.json` 自身的 `files`/`include`/`exclude`。如果该文件两者都不匹配，Rolldown 会继续向上查找下一个 `tsconfig.json` 并重复上述过程。如果没有任何 `tsconfig.json` 与该文件匹配，则不会应用任何配置（没有 `paths`/`baseUrl`），这与 TypeScript 的行为相同。
 
-如果 tsconfig 包含 `references`，Rolldown 会像 TypeScript 那样解析它们：包含该文件的被引用项目会**优先于根配置**，并且第一个匹配的引用获胜。每个被引用项目都使用其自己的 `allowJs`，因此 `.js`/`.jsx`/`.mjs`/`.cjs` 文件只会被启用它的项目包含。如果没有任何被引用项目包含该文件，Rolldown 会回退到根配置自身的 `files`/`include`/`exclude`。一个 solution-style 根配置（只有 `references`，并且像 Vite 脚手架那样显式将 `files`/`include` 设为空）本身没有文件模式，因此一旦其引用都不匹配，它就**不拥有**该文件，发现过程会按照上文所述继续在父目录中进行。
+`include` 的 glob 是否能匹配某个文件，取决于其扩展名：默认情况下，只匹配 TypeScript 文件（`.ts`/`.tsx`/`.mts`/`.cts`），以及在启用 `allowJs` 时匹配 `.js`/`.jsx`/`.mjs`/`.cjs`。如果 glob 指定了显式扩展名（例如 `src/**/*.vue`），则会按该扩展名原样匹配，因此非 TS 文件也可以使用项目的 `paths`/`baseUrl`。（`files` 列出的是精确路径，因此无论扩展名或 `allowJs` 如何，都会匹配）
+
+如果 tsconfig 中包含 `references`，Rolldown 会按照 TypeScript 的方式解析它们：包含该文件的被引用项目**优先于根项目**，并且第一个匹配的引用获胜。每个被引用项目都会使用其自己的 `compilerOptions`（例如 `allowJs`）进行匹配。如果没有任何被引用项目包含该文件，Rolldown 会回退到根项目自身的 `files`/`include`/`exclude`。一种 solution-style 的根配置（仅包含 `references`，并显式设置为空的 `files`/`include`，就像 Vite 脚手架生成的那样）本身不包含任何文件模式，因此一旦其引用都未匹配，它就**不拥有**该文件，随后会按照上面的描述继续在父目录中发现。
 
 ```js
 export default {
@@ -51,10 +53,11 @@ Rolldown 会遵守 tsconfig 中的 `references` 以及 `include`/`exclude` 模�
 
 - `jsx`：JSX 转换模式
 - `experimentalDecorators`：启用装饰器支持
-- `emitDecoratorMetadata`：生成装饰器元数据
+- `emitDecoratorMetadata`：输出装饰器元数据
+- `strictNullChecks`（回退到 `strict`）：控制在启用 `emitDecoratorMetadata` 时，是否从可空联合类型的 `design:type` 装饰器元数据中省略 `null`/`undefined`。当两者都未设置时，默认启用，与 TypeScript 6.0+ 保持一致（此时 `strict` 默认开启）
 - `verbatimModuleSyntax`：保留模块语法
 - `useDefineForClassFields`：类字段语义
-- 以及其他 TypeScript 特定选项
+- 以及其他 TypeScript 专用选项
 
 ##### 示例
 

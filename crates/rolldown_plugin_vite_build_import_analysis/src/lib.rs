@@ -171,8 +171,10 @@ impl Plugin for ViteBuildImportAnalysisPlugin {
             )
             .parse();
             if parser_ret.panicked
-              && let Some(err) =
-                parser_ret.errors.iter().find(|e| e.severity == oxc::diagnostics::Severity::Error)
+              && let Some(err) = parser_ret
+                .diagnostics
+                .iter()
+                .find(|e| e.severity == oxc::diagnostics::Severity::Error)
             {
               return Err(anyhow::anyhow!(format!(
                 "Failed to parse code in '{}': {:?}",
@@ -228,8 +230,10 @@ impl Plugin for ViteBuildImportAnalysisPlugin {
           )
           .parse();
           if parser_ret.panicked
-            && let Some(err) =
-              parser_ret.errors.iter().find(|e| e.severity == oxc::diagnostics::Severity::Error)
+            && let Some(err) = parser_ret
+              .diagnostics
+              .iter()
+              .find(|e| e.severity == oxc::diagnostics::Severity::Error)
           {
             return Err(anyhow::anyhow!(format!(
               "Failed to parse code in '{}': {:?}",
@@ -261,7 +265,7 @@ impl Plugin for ViteBuildImportAnalysisPlugin {
               s: &mut s,
               ctx,
               deps: &mut deps,
-              owner_filename: chunk.filename.to_string(),
+              owner_filename: chunk.filename.as_str(),
               analyzed: FxHashSet::default(),
               has_removed_pure_css_chunks: &mut has_removed_pure_css_chunks,
               expr_range: import.start..import.end,
