@@ -12,10 +12,11 @@
 
 在使用 AI 工具（包括 ChatGPT、Claude、Copilot 等 LLM）为 Rolldown 贡献时：
 
-- **请披露 AI 的使用情况**，以减少维护者疲劳
-- **你对你提交的所有 AI 生成问题或 PR 负责**
-- **低质量或未经审查的 AI 内容将被立即关闭**
-- **提交重复低质量（“slop”）PR 的贡献者将被无警告封禁。** 如果你承诺按照此政策为 Rolldown 贡献，封禁可能会解除。你可以通过我们的 [Discord](https://chat.rolldown.rs/) 申请解除封禁。
+- **请披露 AI 的使用**，以减少维护者负担
+- **请先开启一个 issue 进行讨论**，然后再提交 pull request
+- **你要对**你提交的所有 AI 生成 issue 或 PR 负责
+- **低质量或未经审核的 AI 内容会被立即关闭**
+- **重复提交低质量（“slop”）PR 的贡献者将被直接封禁，恕不另行通知。** 如果你承诺按照此政策为 Rolldown 贡献，封禁可能会被解除。你可以通过我们的 [Discord](https://chat.rolldown.rs/) 申请解封。
 
 我们鼓励使用 AI 工具协助开发，但所有贡献在提交前都必须经过贡献者的充分审查和测试。AI 生成的代码应被理解、验证并调整，以满足 Rolldown 的标准。
 
@@ -31,7 +32,7 @@
 
 ## 提交 pull request
 
-我们接受所有 bug、修复、改进和新功能的 pull request。在提交 pull request 之前，请确保你的构建在本地使用上述开发流程能够通过。
+我们接受针对所有 bug、修复、改进和新功能的 pull request。对于任何超出简单修复范围的内容，请先开启一个 issue 进行讨论。在提交 pull request 之前，请确保你已使用上述开发工作流在本地通过构建。
 
 关于项目开发环境的搭建，请参见 [项目设置](../development-guide/setup-the-project.md)。
 
