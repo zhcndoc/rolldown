@@ -10,9 +10,9 @@ Rolldown 通过侧表在编译器各个 pass 之间传递每个 AST 节点的元
 
 Rolldown 的打包流水线有三个会与 AST 交互的阶段：
 
-- **Scan** - `ScanStage::scan` 会解析每个模块，运行 Rolldown 的预扫描 AST 调整，然后重建语义/作用域信息。这个最终重建步骤会为每个节点——包括调整过程中创建的节点——分配 `NodeId`，因此后续通过 `AstScanner` 的只读遍历会在填充 `EcmaView` 侧表时看到稳定的 id。
-- **Link** - `LinkStage::link` 执行跨模块工作，例如符号绑定、导出解析、tree shaking 和跨模块优化。它仍然不会修改 AST，但可以基于 scan 阶段的记录派生出额外的侧表。
-- **Generate / Finalize** - `ScopeHoistingFinalizer` 由 `GenerateStage::generate` 驱动，是主要在原地修改 AST 的阶段。它会访问感兴趣的节点，调用 `node_id()`，并查询侧表以决定要重写什么。
+- **扫描** - `ScanStage::scan` 会解析每个模块，运行 Rolldown 的预扫描 AST 调整，然后重建语义/作用域信息。这个最终重建步骤会为每个节点——包括调整过程中创建的节点——分配 `NodeId`，因此后续通过 `AstScanner` 的只读遍历会在填充 `EcmaView` 侧表时看到稳定的 id。
+- **链接** - `LinkStage::link` 执行跨模块工作，例如符号绑定、导出解析、tree shaking 和跨模块优化。它仍然不会修改 AST，但可以基于 scan 阶段的记录派生出额外的侧表。
+- **生成 / 收尾** - `ScopeHoistingFinalizer` 由 `GenerateStage::generate` 驱动，是主要在原地修改 AST 的阶段。它会访问感兴趣的节点，调用 `node_id()`，并查询侧表以决定要重写什么。
 
 在这些 pass 之间，Rolldown 不会持有 AST 节点的直接引用。生命周期和并行的跨模块工作使这变得不现实。因此，一个模块 AST 内节点持久的身份就是它的 `NodeId`。
 
@@ -35,7 +35,7 @@ Rolldown 的打包流水线有三个会与 AST 交互的阶段：
 有两条路径会对扫描得到的 AST 的 _克隆_ 进行最终处理；该克隆由 `EcmaAst::clone_with_another_arena` 复制到新的分配器中，它们通过不同机制满足“同一个语义分析后的 AST”这一保证：
 
 - **缓存路径 — 保留 id。** 增量构建缓存（`NormalizedScanStageOutput::make_copy`、`ScanStageCache::create_output`）会把它的克隆交给 link 阶段和 `ScopeHoistingFinalizer`，它们复用 scan 阶段的作用域信息，并且不会重新运行语义分析。克隆本身必须携带 scan 阶段的 id——这就是为什么 `clone_with_another_arena` 使用 oxc 的 `clone_in_with_semantic_ids`，而不是普通的 `clone_in`；后者会把每个 id 重置为 `NodeId::DUMMY`，从而悄无声息地破坏所有查找。
-- **HMR 路径 — 确定性重新推导。** `crates/rolldown/src/hmr/hmr_stage.rs` 中的 HMR renderer 会先克隆，然后立即在克隆上运行 `EcmaAst::make_semantic`，这会重新标记每个 `NodeId`；克隆保留的 id 会在任何查找之前被覆盖。查找仍然有效，是因为 `SemanticBuilder` 仅按遍历顺序为节点编号，所以对同一树形结构的未修改克隆会重新推导出与 scan 阶段完全相同的 id。两个不变式保证了这一点：在 `make_semantic` 运行之前不能修改克隆，并且 oxc 的编号必须仍然是树形结构的纯函数（截至 oxc 0.135，这一点成立——`with_cfg` / `with_enum_eval` 等 builder 选项不会影响编号）。破坏任一条件都会悄无声息地改变 id：索引查找（`module.imports[&…]`）会 panic，`.get()` 查找则会静默跳过重写。
+- **HMR 路径 — 确定性重新推导。** `crates/rolldown/src/hmr/hmr_stage.rs` 中的 HMR 渲染器会先克隆，然后立即在克隆上运行 `EcmaAst::make_semantic`，这会重新标记每个 `NodeId`；克隆保留的 id 会在任何查找之前被覆盖。查找仍然有效，是因为 `SemanticBuilder` 仅按遍历顺序为节点编号，所以对同一树形结构的未修改克隆会重新推导出与 scan 阶段完全相同的 id。两个不变式保证了这一点：在 `make_semantic` 运行之前不能修改克隆，并且 oxc 的编号必须仍然是树形结构的纯函数（截至 oxc 0.135，这一点成立——`with_cfg` / `with_enum_eval` 等 builder 选项不会影响编号）。破坏任一条件都会悄无声息地改变 id：索引查找（`module.imports[&…]`）会 panic，`.get()` 查找则会静默跳过重写。
 
 ## 当前以 NodeId 为键的表
 
@@ -66,21 +66,11 @@ Rolldown 的打包流水线有三个会与 AST 交互的阶段：
 
 不要再添加仅以 `Span` 为键的跨 pass 节点侧表。如果后续 pass 需要识别同一个 AST 节点，应优先使用 `NodeId`；如果一张表可能包含来自多个模块的记录，则应包含 `ModuleIdx`。
 
-## Address 的使用
-
-Oxc `Address` 仍然适用于单次活跃 AST 遍历中的临时状态，此时生产者和消费者都在遍历返回之前运行，并且没有数据作为跨 pass 元数据存活。当前的示例是：
-
-- `PreProcessor` 在 `crates/rolldown/src/utils/tweak_ast_for_scanning.rs` 中的 `statement_stack` / `statement_replace_map`。
-
-`PreProcessor` 明确 _不能_ 使用 `NodeId`：它运行在最终语义重建之前（`crates/rolldown/src/utils/pre_process_ecma_ast.rs` 中的 `recreate_scoping` 之前），因此它创建或移动的节点此时还没有分配 node id。`Address` 是当时唯一稳定的逐节点身份，并且它是安全的，因为该表不会超过这次遍历的生命周期。
-
-不要把 `Address` 存入模块元数据、入口元数据，或任何生命周期超过其产生遍历的 link 阶段表中。在语义分析后的 scanner 中，即使是同一遍历内的节点身份检查，只要比较的节点已经有语义 id，也应优先使用 `NodeId`。
-
-## 预扫描时的 Span 处理
+## 预扫描 Span 处理
 
 `PreProcessor` 不再为了身份而重写 span。自从迁移到 `NodeId` 之后，成对 span 的唯一性不再支撑任何身份表，因此普通的重复 span 会保持原样，而预扫描重写过程中创建的节点可以保留保留的合成 span（`SPAN`，`0..0`）。
 
-后续 pass 不得使用 `span.is_unspanned()` 来判断一个 scanner 可见节点是否有跨 pass 记录。例如，最终处理一个 `require()` 调用现在依赖 `EcmaView::imports.get(call_expr.node_id())`：预扫描创建的调用具有语义 `NodeId`，因此可以命中；而 finalizer 创建的调用会保留 `NodeId::DUMMY`，因此命不中。
+后续遍历不得使用 `span.is_unspanned()` 来判断一个 scanner 可见节点是否有跨遍历记录。例如，最终处理一个 `require()` 调用现在依赖 `EcmaView::imports.get(call_expr.node_id())`：预扫描创建的调用具有语义 `NodeId`，因此可以命中；而 finalizer 创建的调用会保留 `NodeId::DUMMY`，因此命不中。
 
 实践规则很简单：把 `Span` 当作位置，把 `NodeId` 当作同一 AST 节点身份，把 `(ModuleIdx, NodeId)` 当作跨模块节点身份。
 

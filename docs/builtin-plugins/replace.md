@@ -37,7 +37,12 @@ export default defineConfig({
 - **类型:** `[string, string]`
 - **默认值:** `["\\b", "\\b(?!\\.)"]`
 
-自定义字符串的匹配方式。默认值会确保单词边界，并防止替换属性访问（例如，不会在 `process.env` 中替换 `process`）。
+自定义每个键的匹配方式。只有当一个键被这两个模式包围时，才会匹配：
+
+- `delimiters[0]` (**左侧**)：键前面必须紧挨着的内容。
+- `delimiters[1]` (**右侧**)：键后面必须紧挨着的内容。
+
+两者都是正则表达式。默认的 `["\\b", "\\b(?!\\.)"]` 只会在单词边界匹配键，并跳过属性访问，因此 `process` 在 `process.env` 中会保持不变。
 
 ### `preventAssignment`
 
@@ -73,7 +78,7 @@ replacePlugin({ 'process.env.NODE_ENV': JSON.stringify('production') }, { object
 - **类型:** `boolean`
 - **默认值:** `false`
 
-为替换生成 source map。
+为替换生成源映射。
 
 ## 重要说明
 

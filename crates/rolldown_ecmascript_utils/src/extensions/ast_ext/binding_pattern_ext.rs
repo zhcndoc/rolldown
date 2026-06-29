@@ -96,18 +96,10 @@ impl<'ast> BindingPatternExt<'ast> for BindingPattern<'ast> {
           )));
         });
         if let Some(rest) = obj_pat.rest.take() {
-          let BindingPattern::BindingIdentifier(ref id) = rest.argument else {
-            unreachable!("The rest element should be `BindingIdentifier`")
-          };
-          properties.push(ObjectPropertyKind::ObjectProperty(ast_factory.alloc_object_property(
-            SPAN,
-            PropertyKind::Init,
-            ast_factory.property_key_static_identifier(SPAN, id.name),
-            ast_factory.expression_identifier(SPAN, id.name),
-            false,
-            true,
-            false,
-          )));
+          properties.push(ObjectPropertyKind::SpreadProperty(
+            ast_factory
+              .alloc_spread_element(SPAN, rest.unbox().argument.into_expression(ast_factory)),
+          ));
         }
         Expression::ObjectExpression(ast_factory.alloc_object_expression(SPAN, properties))
       }
@@ -121,11 +113,9 @@ impl<'ast> BindingPatternExt<'ast> for BindingPattern<'ast> {
           ));
         });
         if let Some(rest) = arg_pat.rest.take() {
-          let BindingPattern::BindingIdentifier(ref id) = rest.argument else {
-            unreachable!("The rest element should be `BindingIdentifier`")
-          };
-          elements.push(ArrayExpressionElement::Identifier(
-            ast_factory.alloc_identifier_reference(SPAN, id.name),
+          elements.push(ArrayExpressionElement::SpreadElement(
+            ast_factory
+              .alloc_spread_element(SPAN, rest.unbox().argument.into_expression(ast_factory)),
           ));
         }
         Expression::ArrayExpression(ast_factory.alloc_array_expression(SPAN, elements))
@@ -134,5 +124,68 @@ impl<'ast> BindingPatternExt<'ast> for BindingPattern<'ast> {
         assign_pat.left.take_in(ast_factory.allocator).into_expression(ast_factory)
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use oxc::{
+    allocator::{Allocator, CloneIn},
+    ast::ast::{ArrayExpressionElement, Expression, ObjectPropertyKind, Statement},
+    parser::Parser,
+    span::SourceType,
+  };
+
+  use crate::{AstFactory, BindingPatternExt as _};
+
+  /// Round-trips the first declarator's binding pattern back to an expression via
+  /// `into_expression`. `source` must be a single `const <pattern> = x;` statement.
+  fn pattern_into_expression<'a>(allocator: &'a Allocator, source: &'a str) -> Expression<'a> {
+    let program = Parser::new(allocator, source, SourceType::default()).parse().program;
+    let Some(Statement::VariableDeclaration(decl)) = program.body.first() else {
+      unreachable!("expected a variable declaration")
+    };
+    let pattern = decl.declarations[0].id.clone_in(allocator);
+    pattern.into_expression(&AstFactory::new(allocator))
+  }
+
+  #[test]
+  fn object_rest_round_trips_to_spread_property() {
+    let allocator = Allocator::default();
+    let Expression::ObjectExpression(obj) =
+      pattern_into_expression(&allocator, "const { a, ...rest } = x;")
+    else {
+      unreachable!("expected an object expression")
+    };
+    // `{ a, ...rest }` must round-trip with a spread, not a `rest` shorthand property.
+    assert!(matches!(obj.properties.last(), Some(ObjectPropertyKind::SpreadProperty(_))));
+  }
+
+  #[test]
+  fn array_rest_round_trips_to_spread_element() {
+    let allocator = Allocator::default();
+    let Expression::ArrayExpression(arr) =
+      pattern_into_expression(&allocator, "const [a, ...rest] = x;")
+    else {
+      unreachable!("expected an array expression")
+    };
+    // `[a, ...rest]` must round-trip with a spread, not a plain element.
+    assert!(matches!(arr.elements.last(), Some(ArrayExpressionElement::SpreadElement(_))));
+  }
+
+  #[test]
+  fn array_nested_rest_round_trips_to_spread() {
+    let allocator = Allocator::default();
+    let Expression::ArrayExpression(arr) =
+      pattern_into_expression(&allocator, "const [a, ...[b, c]] = x;")
+    else {
+      unreachable!("expected an array expression")
+    };
+    // A nested rest pattern (`...[b, c]`) is legal JS; it must round-trip as a spread of
+    // the rebuilt inner pattern rather than panicking on the non-identifier argument.
+    let Some(ArrayExpressionElement::SpreadElement(spread)) = arr.elements.last() else {
+      unreachable!("expected a spread element")
+    };
+    assert!(matches!(spread.argument, Expression::ArrayExpression(_)));
   }
 }

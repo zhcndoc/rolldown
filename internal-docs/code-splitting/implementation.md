@@ -158,6 +158,8 @@ chunk 优化器会在安全时通过把公共 chunk 合并回入口 chunk 来减
 - 将该 facade 合并到其目标 chunk
 - 在 `post_chunk_optimization_operations` 中把它标记为 `Removed`
 
+A **user-defined** entry can likewise become an empty facade when manual code splitting (a `codeSplitting` group, possibly via `entriesAware` subgroup merging) places its module into a common chunk. Folding that common chunk back into the entry chunk is only safe when the chunk does not also hold **another user-defined entry's module**. Otherwise the sibling entry would be forced to import this entry chunk just to reach its own module, and loading it would eagerly run this entry's top-level `init_*` — leaking its side effects into the sibling (visible under `strictExecutionOrder`). In that case the facade is kept so each entry imports the shared (wrapped) chunk and runs only its own `init_*`. See [#9463](https://github.com/rolldown/rolldown/issues/9463).
+
 ### 运行时模块放置
 
 当启用代码拆分时，运行时模块会在手动和普通模块 chunking 之前被分配到一个专用的公共 chunk 中。该 chunk 使用普通 chunk 命名，并且不会注册到 `bits_to_chunk` 中，因此具有相同可达性位的其他模块无法被分组进去。手动 chunking 在递归依赖收集期间也会把运行时视为已经分配。于是，普通 chunking 和公共 chunk 合并阶段会在不携带运行时特定例外的情况下处理用户模块。
@@ -324,7 +326,7 @@ pub insert_map: FxHashMap<ModuleIdx, Vec<(ModuleIdx, ImportRecordIdx)>>,
 pub remove_map: FxHashMap<ModuleIdx, Vec<ImportRecordIdx>>,
 ```
 
-## ChunkGraph
+## 块图
 
 ```rust
 pub struct ChunkGraph {
