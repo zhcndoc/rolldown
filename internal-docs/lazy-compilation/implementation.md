@@ -1,278 +1,345 @@
-# Lazy Compilation — Implementation
+# 懒编译 — 实现
 
-> Goals, scope, and key design decisions live in [design.md](./design.md).
+> 目标、范围和关键设计决策见 [design.md](./design.md)。
 
-## Data Lifecycle
+## 数据生命周期
 
-### Overview
+### 概览
 
-Lazy compilation involves data at two scopes:
+懒编译涉及两个作用域下的数据：
 
-1. **Session Scope** - Shared by all browser tabs, lives for the entire dev server lifetime
-2. **Client Scope** - Per browser tab, identified by `clientId`
+1. **会话作用域** - 由所有浏览器标签页共享，贯穿整个开发服务器生命周期
+2. **客户端作用域** - 每个浏览器标签页各自拥有，通过 `clientId` 标识
 
-### Session Scope
+### 会话作用域
 
-Data shared across all connected browser tabs:
+所有已连接浏览器标签页共享的数据：
 
-| Data              | Description                                                     |
-| ----------------- | --------------------------------------------------------------- |
-| Module Graph      | All resolved and compiled modules                               |
-| `lazy_entries`    | Set of proxy module IDs discovered during resolution            |
-| `fetched_entries` | Set of proxy modules that have been fetched via `/lazy` request |
-| Build Output      | Bundled JS files on disk/memory                                 |
-| Watched Files     | Files monitored for changes                                     |
+| 数据              | 描述                                                             |
+| ----------------- | ---------------------------------------------------------------- |
+| Module Graph      | 所有已解析并编译的模块                                           |
+| `lazy_entries`    | 在解析过程中发现的代理模块 ID 集合                                  |
+| `fetched_entries` | 通过 `/@vite/lazy` 请求获取过的代理模块集合                        |
+| Build Output      | 磁盘/内存中的打包 JS 文件                                         |
+| Watched Files     | 受监控以检测变更的文件                                             |
 
-**Key behavior**: Once a lazy module is fetched by any client, all subsequent clients receive the fetched template (which imports the real module directly). The build output is refreshed after lazy compilation, so future page loads get the fetched template without needing a `/lazy` request.
+**关键行为**：一旦某个懒模块被任意客户端获取，后续所有客户端都会收到已获取的模板（该模板会直接导入真实模块）。在懒编译之后，构建输出会被刷新，因此未来的页面加载会直接拿到已获取的模板，而无需再发起 `/lazy` 请求。
 
-### Client Scope
+### 客户端作用域
 
-Data specific to each browser tab:
+每个浏览器标签页特有的数据：
 
-| Data               | Description                                                                   |
-| ------------------ | ----------------------------------------------------------------------------- |
-| `clientId`         | Unique identifier for the browser tab                                         |
-| `executed_modules` | Modules the browser has actually executed (used for HMR boundary computation) |
+| 数据               | 描述                                                                                          |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `clientId`         | 浏览器标签页的唯一标识符                                                                        |
+| `executed_modules` | 浏览器实际已经执行过的模块（用于 HMR 边界计算和懒补丁裁剪）                                     |
 
-### Fetched vs Executed
+会话生命周期：
 
-These are distinct concepts at different scopes:
+- 客户端会话在 `SharedClients` 中的形式是 `clientId → ClientSession { executed_modules }`，位于 `DevEngine` 上
+- 在该 `clientId` 的第一条 `hmr:module-registered` 消息到来时**隐式**创建（dev server → `registerModules` → napi `register_modules`）；当客户端的 websocket 断开时通过 `removeClient` 移除
+- `executed_modules` 是一个**只增不减**的 **stable ids** 集合——它包含像 `src/foo.js?rolldown-lazy=1` 这样的代理 id，因为懒 chunk 会以其 stable id 重新注册该代理
+- 在运行时侧，`registerModule` 会喂给一个去抖批处理器，将多个 id 合并成一条 `hmr:module-registered` 消息；messenger 会在 websocket 打开前排队消息
+- 特殊客户端 id `"rolldown-tests"` 被视为已经执行了全部内容（Rust 层测试绕过了按客户端的门控；只有浏览器 E2E playground 会走 `executed_modules` 路径）
 
-- **Fetched** (session-level): The browser sent a `/lazy` request for this proxy module. The server has compiled the actual module and its dependencies. All clients now receive the fetched template.
+### 已获取 vs 已执行
 
-- **Executed** (client-level): The browser has actually run the module's code. Used for HMR to determine which modules need updates for a specific client.
+这两个概念属于不同作用域，且彼此不同：
 
-A module can be fetched but not executed by a particular client (e.g., Client A fetched it, Client B hasn't navigated to that route yet).
+- **已获取**（会话级）：浏览器为这个代理模块发送了 `/lazy` 请求。服务器已编译真实模块及其依赖。此后所有客户端都会收到已获取的模板。
 
-### Build Output Refresh
+- **已执行**（客户端级）：浏览器实际运行了该模块的代码。用于为特定客户端裁剪懒补丁，并控制 HMR 传播。
 
-After successful lazy compilation:
+一个模块可以被某个客户端获取，但不一定被该客户端执行（例如：客户端 A 获取了它，而客户端 B 还没有导航到那个路由）。
 
-1. `DevEngine` notifies the coordinator via `ModuleChanged` message
-2. Coordinator queues a `Rebuild` task and marks output as stale
-3. Rebuild updates build output with fetched template
-4. Future page loads get fetched template directly (no `/lazy` request needed)
+当一个已获取的懒模块之后被编辑时，各客户端的结果如下（参见“编辑一个已获取的懒模块”）：
 
-### Known Limitations
+- 已执行过它的客户端 → 一个真实的 `Patch`，如果没有 HMR 边界接受该变更，则为 `FullReload`
+- 从未执行过它的客户端 → 一个实际上为空的 `Patch`，其代码仅为 `__rolldown_runtime__.applyUpdates([]);`（**不是** `Noop`——`Noop` 只会在变更文件根本不映射到任何图中的模块时产生，例如一个未获取的懒文件）
 
-#### Race Condition in Shared Module Deduplication
+### 构建输出刷新
 
-When multiple lazy entries share common dependencies, the server filters out modules the client has already executed using `executed_modules` (populated via `hmr:module-registered` messages from the browser).
+在懒编译成功后：
+
+1. `DevEngine` 通过 `ModuleChanged` 通知协调器（携带**原始代理 id**，包含 `?rolldown-lazy=1`）
+2. 协调器首先调用 `update_watch_paths()`——在懒编译期间发现的监视文件，否则会在重建任务开始时被丢弃；这一步正是让后续对懒模块的编辑能够触发重建的原因
+3. 协调器以代理 id 作为变更文件排队一个 `Rebuild` 任务，并将输出标记为过期
+4. 重建会把构建输出中的 stub 替换为已获取的模板；未来的页面加载会直接得到它（无需 `/lazy` 请求）
+
+原始代理 id 被刻意**不做归一化**：在局部重建期间，它会解析回自身（resolver 会保留 query），字符串匹配会命中增量缓存中代理模块的 key，并强制代理的 `load` 钩子重新执行——此时它会返回已获取的模板。如果将其归一化为真实模块 id，就会使错误的模块失效，并让缓存中的 stub 代理保持原样。
+
+成功的后台重建对已连接客户端是**静默**的：输出会原地替换，不会发送 websocket 消息（运行中的页面会继续使用它从 `/lazy` 获得的代码）。只有在 `FullReload` 已经处于待处理状态，或者服务器正在从先前广播过的构建错误中恢复时，才会触发重新加载。`Rebuild` 任务从不生成 HMR 更新，并且只与其他 `Rebuild` 合并，因此 `?rolldown-lazy=1` 这个伪路径绝不会泄漏到 HMR 更新计算中——不过插件会通过 `watch_change` 钩子观察到它一次。
+
+## 已知限制
+
+### 共享模块去重
+
+当多个懒加载入口共享公共依赖时，有两层协作机制来防止重复执行：
 
 ```
 Entry
-├── import('./lazy-a')  ← lazy boundary
+├── import('./lazy-a')  ← 懒加载边界
 │   └── shared.js (sync dep)
-└── import('./lazy-b')  ← lazy boundary
+└── import('./lazy-b')  ← 懒加载边界
     └── shared.js (sync dep)
 ```
 
-**Normal flow (works correctly):**
+1. **服务端剪枝**：在收集某个懒加载补丁的同步依赖时，服务端会跳过那些其稳定 id 已经存在于请求客户端 `executed_modules` 中的模块（该列表通过 `hmr:module-registered` 填充）
+2. **运行时去重标志**：懒加载 chunk 渲染时会设置 `dedup_module_initializer: true`，这会给每个模块包装器追加一个真值第三参数 —— `__rolldown_runtime__.createEsmInitializer(stableId, factory, 1)` / `createCjsInitializer(...)` —— 如果 id 已经注册，运行时就会跳过该工厂函数
 
-1. Browser requests `/@vite/lazy?id=lazy-a` → Server returns patch with `lazy-a` + `shared.js`
-2. Browser executes patch → `shared.js` runs, sends `hmr:module-registered`
-3. Server updates `executed_modules` with `shared.js`
-4. Browser requests `/@vite/lazy?id=lazy-b` → Server filters out `shared.js`
-5. Server returns patch with `lazy-b` only → No duplicate execution ✓
+服务端侧仍然存在竞态窗口（两个 `/lazy` 请求在极短时间内连续到达，且第一个补丁的 `hmr:module-registered` 还未到达时，会生成重叠的 chunk——`hmr_stage.rs` 中的 TODO），但运行时去重标志使其无害：`shared.js` 会同时出现在两个 chunk 中，但只会执行一次。
 
-**Race condition (edge case):**
+**HMR 补丁刻意省略去重标志**（`dedup_module_initializer: false`）：补丁的目的就是重新执行模块体并发布新的导出，因此去重会悄悄丢失更新。代码注释将该标志标记为在运行时提供 dispose/re-execute API 之前的权宜之计。
 
-If the browser sends two `/@vite/lazy` requests in rapid succession (before the `hmr:module-registered` message from the first patch arrives), the server may not know about executed modules yet:
+### 链接阶段合成的导出（JSON、text、base64、dataurl）
 
-1. Browser requests `/@vite/lazy?id=lazy-a`
-2. Browser immediately requests `/@vite/lazy?id=lazy-b` (before `lazy-a` patch executes)
-3. Server returns both patches with `shared.js` included
-4. Browser executes both → `shared.js` runs twice ✗
+那些在链接时合成导出的模块在**懒加载 chunk 内部是坏掉的**（以及 HMR 补丁中也是如此）：JSON/text/base64/dataurl 模块会被扫描为一个裸表达式语句，`ExportsKind::None`，而 `export default` 仅由链接阶段的 `generate_lazy_export` 生成——但懒加载/HMR 渲染路径从不会执行这一步（它们渲染的是原始的扫描期 AST 克隆）。懒加载 chunk 会将它们注册为 `registerModule(id, {})`，因此导入者在**首次懒加载时会看到空导出**；而在后台重新构建 + 刷新页面之后，完整构建会应用该转换，同样的导入就能正常工作。目前还没有 playground fixture 覆盖这一点。
 
-**Potential future enhancement:** Add a runtime guard in generated init functions to check if a module is already registered before executing:
+### CSS
 
-```javascript
-function init_shared_0() {
-  // Guard: skip if already initialized
-  if (__rolldown_runtime__.modules['shared.js']) {
-    return;
-  }
-  // ... module code
-}
-```
+rolldown 中的 CSS 打包已被移除（#4271），而懒加载边界是在不加载目标模块的情况下创建的——因此 `import('./style.css')` 构建时不会报错，真正的硬错误（`Bundling CSS is no longer supported`）会**延迟到第一次 `/lazy` 请求时才出现**：HTTP 500，且可在消费者的 `await import()` 处捕获拒绝。
 
-This would provide defense-in-depth against the race condition.
+### 资源
 
-## Implementation Details
+Rolldown core 没有内建的资源处理：默认 `module_types` 映射之外的扩展名会被当作 UTF-8 读取并按 JS 解析，因此在懒加载子树中静态导入的二进制文件会在请求时导致懒加载编译失败。只有当插件在其 `load` 钩子里将资源转换为 JS 时，懒加载子树中的资源导入才可工作（dev server 移植过来的 `vite:asset` 插件就是这样做的——见“已发出的资源”）。
 
-### Module ID Format
+### Sourcemap
 
-**IMPORTANT**: All runtime module lookups use **stable IDs** (`stable_id`), which are relative paths from the cwd (e.g., `src/module.js`).
+只有 `sourcemap: 'inline'` 对懒加载 chunk 有效。`/lazy` 载荷在整个链路中都是一个普通 `String`（`HmrStage` → `DevEngine` → napi → middleware），没有单独 map 文件的字段：当使用 `'file'`/`true` 时，代码会增加一条 `//# sourceMappingURL=lazy_compile_{n}.js.map` 注释，但 map 资源会在服务端被丢弃（于是这条注释悬空）；`'hidden'` 则会静默丢弃 map。相比之下，HMR 补丁会通过 `HmrPatch { sourcemap, sourcemap_filename }` 携带其 map，且 dev server 会从内存文件存储中同时提供补丁和 map——因此相同的 `sourcemap: 'file'` 配置对 HMR 编辑有效，却会在懒加载 chunk 上静默失效。该路径目前没有测试覆盖。
 
-This ensures consistency between:
+## 实现细节
 
-- Proxy module's `loadExports("src/module.js")` call
-- Compiled module's `registerModule("src/module.js", ...)` call
-- `createModuleHotContext("src/module.js")` call
-- `import.meta.hot.accept("src/dep.js", ...)` specifiers
-- `applyUpdates([["src/boundary.js", "src/acceptedVia.js"]])` boundaries
+### 模块 ID 格式
 
-The lazy compilation plugin computes the stable ID in-place using the `cwd` obtained from the `build_start` hook.
+**重要**：所有运行时模块查找都使用**稳定 ID**（`stable_id`），即相对于当前工作目录（cwd）的相对路径（例如 `src/module.js`），通过在 `build_start` 钩子中捕获 cwd 后调用 `ModuleId::new(id).stabilize(cwd)` 计算得到。
 
-Note: The proxy module's `/@vite/lazy?id=...` request still uses the absolute path (with `?rolldown-lazy=1`), and the fetched template's `import($MODULE_ID)` also uses the absolute path for module resolution.
+这确保了以下内容之间的一致性：
 
-### Fetched State Tracking
+- stub 的 `delete __rolldown_runtime__.modules[stableProxyId]` / `loadExports(stableProxyId)` 调用
+- 编译后的模块包装器：`createEsmInitializer("src/module.js", ...)`（在包装器主体内部，`registerModule` / `createModuleHotContext` 通过 `__rolldown_module_id__` 参数接收该 id）
+- `import.meta.hot.accept("src/dep.js", ...)` 导入说明符
+- `applyUpdates([["src/boundary.js", "src/acceptedVia.js"]])` 边界
 
-The `LazyCompilationPlugin` maintains two sets in `LazyCompilationContext`:
+绝对路径只会保留在两个地方：`/@vite/lazy?id=` 查询值（代理 id）以及获取到的模板中的 `import($MODULE_ID)`（用于解析）。
 
-- `lazy_entries` - All proxy module IDs created during resolution
-- `fetched_entries` - Proxy module IDs that have been fetched (requested at runtime via `/lazy`)
+模板使用**四个占位符**进行渲染，每个占位符都会替换为 serde_json 引号包裹的 JS 字符串字面量（因此模板中包含裸的 `$PLACEHOLDER` 标记，并且 Windows 反斜杠路径会被正确转义，#9102）：
 
-When `resolve_id` is called for a dynamic import:
+| 占位符                   | 值                                | 用于                                       |
+| ------------------------ | ----------------------------------- | ------------------------------------------ |
+| `$PROXY_MODULE_ID`       | 绝对路径 + `?rolldown-lazy=1`      | stub — `/@vite/lazy?id=` 请求              |
+| `$STABLE_PROXY_MODULE_ID` | 稳定 id + `?rolldown-lazy=1`       | stub — 模块映射删除 + `loadExports`       |
+| `$MODULE_ID`             | 绝对路径（去掉查询参数）            | fetched — `import($MODULE_ID)`            |
+| `$STABLE_MODULE_ID`      | 稳定 id                             | fetched — `loadExports($STABLE_MODULE_ID)` |
 
-1. If importer is a **fetched proxy** → return `None` (skip proxy creation, resolve to actual module)
-2. Otherwise → create proxy module ID and add to `lazy_entries`
+`render_proxy_template` 最后替换 `$MODULE_ID`，因为其他三个占位符名称都包含 `MODULE_ID` 作为子串。
 
-When `load` is called for a proxy module:
+### 已获取状态跟踪
 
-1. If in `fetched_entries` → return fetched template
-2. Otherwise → return stub template
+`LazyCompilationPlugin` 在 `LazyCompilationContext` 中维护两个集合（通过 `plugin.context()` 与 `DevEngine` 共享）：
 
-### Build Output Refresh
+- `lazy_entries` - 在解析期间创建的所有代理模块 ID
+- `fetched_entries` - 已被获取的代理模块 ID（在运行时通过 `/lazy` 请求）
 
-After successful lazy compilation, the dev engine notifies the coordinator:
+当对动态导入调用 `resolve_id` 时：
+
+1. 如果导入者是**已获取代理**（`?rolldown-lazy=1` + 位于 `fetched_entries` 中）→ 返回 `None`（跳过代理创建，解析到实际模块）
+2. 否则 → 通过 `ctx.resolve` 解析说明符（`skip_self: true`，透传 `args.custom`），并追加 `?rolldown-lazy=1`。该追加是**幂等**的（#9439）：`ctx.resolve` 可能重新进入其他插件的 resolve 钩子（例如别名插件），因此如果解析后的 id 已经以该标记结尾，则会复用它——如果后缀重复，会使代理 id 与 stub 模板中的运行时失效键不同步（回归 vitejs/vite#22454，由别名导入规范固定）
+
+当对代理模块调用 `load` 时：
+
+1. 只会服务 `lazy_entries` 中存在的 id —— 其他任何 `?rolldown-lazy=1` id 都会落到 `Ok(None)`
+2. 如果在 `fetched_entries` 中 → 返回 fetched 模板；否则 → 返回 stub 模板
+
+**安全门禁 — 拒绝未知模块（#9969）**：传递给 `compileEntry` / `compile_lazy_entry` 的 id 仅被视为构建缓存中的查找键，绝不会作为文件系统路径解析。若 id 不存在于先前构建中，则会在 `HmrStage::compile_lazy_entry` 中以 `Lazy entry module not found in cache` 被拒绝——因此恶意的 `/@vite/lazy` 请求无法打包任意文件（类似 Vite 的 `server.fs.strict`；由 `packages/rolldown/tests/dev/dev-lazy-compile.test.ts` 固定）。注意顺序：`DevEngine::compile_lazy_entry` 会在验证之前无条件调用 `mark_as_fetched`，因此未知 id 仍会进入 `fetched_entries`（无害，但调试时要知道这一点）。
+
+### 懒加载 Chunk 渲染
+
+`Bundler::compile_lazy_entry(module_id, client_id, executed_modules, next_patch_id)` → `HmrStage::compile_lazy_entry`（此层未使用 `client_id` 参数——按客户端定制完全依赖 `executed_modules`）：
+
+1. 在模块缓存中查找该代理（#9969 门禁），然后运行 `ScanMode::Partial([proxy's resolved id])`
+2. `collect_sync_dependencies_for_client` 遍历代理的静态依赖以及代理自身的动态导入，**在**任何稳定 id 位于该客户端 `executed_modules` 中的模块处**停止**；外部模块会被丢弃，其余部分按 id 排序
+3. 每个模块都会被 `HmrAstFinalizer` 渲染为初始化器包装器：
+
+   ```js
+   var init_foo = __rolldown_runtime__.createEsmInitializer(
+     'src/foo.js',
+     function (__rolldown_module_id__) {
+       try {
+         // registerModule/createModuleHotContext 使用 __rolldown_module_id__;
+         // ESM exports 发布为：
+         // var __rolldown_exports__ = __rolldown_runtime__.__exportAll({ ... })
+       } finally {
+       }
+     },
+     1,
+   ); // 末尾的 `1` = 去重标志，仅用于懒加载 chunk
+   ```
+
+   （CJS 模块使用 `createCjsInitializer`，参数为 `__rolldown_exports__` / `__rolldown_module__`。）
+
+4. 渲染后的模块中的动态导入会被重写：
+   - 被导入模块 id 包含 `?rolldown-lazy=1`（嵌套懒代理）→ ``import(`/@vite/lazy?id=${encodeURIComponent(absProxyId)}&clientId=${__rolldown_runtime__.clientId}`).then(() => __rolldown_runtime__.loadExports("<stableProxyId>"))`` —— 部分 bundle 没有单独打包的代理 chunk，因此代理顶层的 `'rolldown:exports'` 导出会在 init 包装器中丢失；通过 `loadExports` 读回可保留 `__unwrap_lazy_compilation_entry` 所期望的表面（由嵌套动态导入规范固定）
+   - 普通 `import()` → `Promise.resolve().then(() => __rolldown_runtime__.loadExports("<stableId>"))`，如果被导入模块位于同一 patch 中，则前面会加上该模块的 `init_x()` 调用
+5. chunk 以代理入口的 `init_xxx()` 调用结束（这会用真实初始化器重新注册代理 id——也就是 stub 第 3 步所等待的内容）
+6. 结果会以合成名称 `lazy_compile_{n}.js` 进行后处理（`n` 来自 dev engine 的 `next_invalidate_patch_id` 计数器，与 `hmr.invalidate` patch 共享——**不是**协调器的 `hmr_patch_{n}.js` 计数器），并作为普通 JS 字符串返回
+
+### 发出的资源（#9815）
+
+懒编译（与 HMR patch 一样）从不运行 generate 阶段，因此在编译期间发出的资源没有 `onOutput` 路径。相反，在成功时，`DevEngine::compile_lazy_entry` 会将 `file_emitter.add_additional_files` 排空到一个 `BundleOutput` 中，并在返回代码**之前**触发 `onAdditionalAssets` dev 回调——这样消费者就可以在浏览器请求这些资源之前注册/提供它们（test-dev-server 会把它们放入 `memoryFiles` 中）；这修复了 vitejs/vite#22596，并由发出资源规范固定。
+
+对消费者的设计约束：资源 URL 必须在 `load` 阶段**尽早**解析（`emitFile` + `getFileName`，就像 dev server 的 Vite 风格资源插件那样）——`renderChunk` 时的占位符方案会泄漏，因为懒渲染路径根本不会运行 `renderChunk`。
+
+### 构建输出刷新
+
+在成功完成懒编译后，dev engine 的成功分支按顺序做两件事：
 
 ```rust
 // In DevEngine::compile_lazy_entry
 if result.is_ok() {
+  // 1. 交付编译期间发出的资源（在代码返回之前）
+  if let Some(on_additional_assets) = ... { ... }
+  // 2. 排队后台重建
   self.notify_module_changed(proxy_module_id);
 }
 ```
 
-The coordinator handles `ModuleChanged`:
+协调器处理 `ModuleChanged`：
 
-1. Queue a `TaskInput::Rebuild` with the module as changed
-2. Set `has_stale_bundle_output = true`
-3. Schedule build if stale
+1. 先调用 `update_watch_paths()`（关于原因，见“数据生命周期 → 构建输出刷新”）
+2. 使用原始代理 id 作为变更文件，排队一个 `TaskInput::Rebuild`
+3. 设置 `has_stale_bundle_output = true`
+4. 如果输出过期则安排构建（仅当协调器处于 Idle/Failed 时立即运行；否则等待队列）
 
-This ensures future page loads get the fetched template directly (no `/lazy` request needed).
-Note: the current implementation notifies with the proxy module ID (includes `?rolldown-lazy=1`), so the rebuild path should resolve or normalize it to a real module ID.
+在**失败**时，这两个步骤都不会执行：失败的懒编译不会排队重建，stub 模板会保留在构建输出中（但代理仍会被标记为已获取）。如果后台重建本身失败，消费者会缓存该错误，向每个客户端广播错误覆盖层，并取消任何待处理的整页刷新，因此页面永远不会在损坏的 bundle 上重新加载（#9903）；协调器会进入带有过期输出的 `Failed { Rebuild }` 状态，并在下一次文件变更或页面访问时恢复。
 
-### Caching Strategy
+### 错误处理
 
-- AST and compilation results are cached internally - that's sufficient for now
-- **Known limitation (POC)**: Two different entries importing the same module may cause it to execute twice
-- This is acceptable for the initial implementation
+错误契约（不再是“POC — Err 或 panic 都行”）：
 
-### Error Handling
-
-- Compilation errors: Return `Err` or panic - fine for POC
-- No graceful error recovery needed initially
+- **未知模块 id** → `HmrStage::compile_lazy_entry` 中返回 `Err("Lazy entry module not found in cache. module_id=...")`；napi 绑定会将其暴露为一个以 `Failed to compile lazy entry: ...` 为前缀的拒绝 promise；dev-server 中间件返回 HTTP 500（缺少 `id`/`clientId` 参数时会落到 `next()`；成功时设置 `Content-Type: application/javascript`）
+- **初始化错误可被捕获（#9981）**：懒模块初始化时抛出的错误会拒绝重新注册的代理的 `'rolldown:exports'` promise，因此会拒绝 stub 的 `lazyExports`，进而拒绝消费者的 `await import(...)` —— `try/catch` 可正常工作，若没有处理器则只会触发一次 `unhandledrejection`。该行为在**冷路径**（首次 `/lazy` 编译）和**热路径**（重建 + 刷新后已获取代理）都由 lazy-init-error 规范固定（#9975 添加了原始失败规范；#9981 对其进行了重写并拆分）
+- **运行时 `loadExports` 未命中** 不会抛出错误——它只会警告并返回 `{}`
+- 唯一剩余的 panic：在任何 bundle 尚未构建前调用 `compile_lazy_entry`
 
 ### ClientId
 
-- Used to track multiple browser tabs/clients
-- Each browser tab gets a unique `clientId`
-- Dev server uses this to route compiled modules to the correct client
+- 由 HMR 运行时在初始化时通过 `crypto.randomUUID()` 生成（在任何懒导入运行之前），追加到 websocket URL（`?clientId=...` —— dev server 会以代码 1008 关闭缺少 clientId 的 socket），并通过 `__rolldown_runtime__.clientId` 插值到每个 `/@vite/lazy` 请求中
+- 它在懒编译中的唯一作用是**按客户端裁剪 patch**：引擎会查找该客户端的 `executed_modules`，从而让返回的 chunk 省略该客户端已经运行过的模块。不存在任何“路由”——编译后的代码会在 HTTP 响应中同步返回
+- 未知的 `clientId` 会静默退化为空的已执行集合（会返回完整的依赖闭包）
 
-## End-to-End Flow
+### 编辑已获取的懒模块
+
+在 `/lazy` 之后，真实模块及其同步依赖会成为普通的被监听图模块（得益于 `update_watch_paths()` 步骤），一次编辑会通过标准的 watch → 按客户端 HMR 路径流转：
+
+- 已获取代理会作为普通的**非接受型**导入者参与（`hmr_info.deps` 只来自 `import.meta.hot.accept`，绝不会来自动态导入）。因此，编辑一个未自接受的懒模块会沿着 代理 → 动态导入者 → `NoBoundary` → `FullReload` 传播给所有执行过它的客户端；dev 任务会自动升级为 `HmrRebuild`，而 dev server 会将刷新延迟到重建输出到达之后（如果重建出错则取消刷新，#9903）。这一点由共享模块规范中的 watch/自动重载测试固定
+- 如果懒模块自接受（`import.meta.hot.accept()`），执行过的客户端则会得到一个正常的按客户端 `Patch`
+- 从未执行过该模块的客户端会得到实际上为空的 `applyUpdates([])` patch（见“已获取 vs 已执行”）
+
+## 端到端流程
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 1. INITIAL BUILD                                                        │
+│ 1. 初始构建                                                             │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  - Entry + sync dependencies compiled normally                          │
-│  - Dynamic imports (import()) → replaced with proxy modules             │
-│  - Proxy module ID: /abs/path/module.js?rolldown-lazy=1                 │
-│  - Proxy contains STUB template (fetches via /lazy endpoint)            │
-│  - Proxy exports 'rolldown:exports' promise                             │
+│  - 入口 + 同步依赖正常编译                                              │
+│  - 动态导入（import()）→ 替换为代理模块                                 │
+│  - 代理模块 ID: /abs/path/module.js?rolldown-lazy=1                    │
+│  - 代理包含 STUB 模板（通过 /@vite/lazy 端点获取）                     │
+│  - 代理导出 'rolldown:exports' promise                                  │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 2. BROWSER LOADS INITIAL BUNDLE                                         │
+│ 2. 浏览器加载初始 bundle                                               │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  - Runtime initializes                                                  │
-│  - Proxy module registers: registerModule("/abs/.../mod.js?rolldown-lazy=1")
-│  - Stub template is ready to fetch on demand                            │
+│  - 运行时初始化；clientId = crypto.randomUUID()                         │
+│  - 代理以其稳定 ID 注册：                                                │
+│      registerModule("src/module.js?rolldown-lazy=1", { exports })      │
+│  - Stub 模板已准备好按需拉取                                             │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 3. USER CODE HITS: import('./lazy-module')                              │
+│ 3. 用户代码触发：import('./lazy-module')                               │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  - Proxy module executes (stub template)                                │
-│  - Fetches: /@vite/lazy?id=/abs/path/lazy-module.js?rolldown-lazy=1&clientId=xxx
-│  - Browser waits on the promise                                         │
+│  - 代理模块执行（stub 模板）                                            │
+│  - 删除自身的运行时注册（这样 chunk 才能重新注册）                      │
+│  - 获取：/@vite/lazy?id=/abs/path/lazy-module.js?rolldown-lazy=1&clientId=xxx
+│  - 浏览器等待该 promise                                                │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 4. DEV SERVER RECEIVES /lazy REQUEST                                    │
+│ 4. 开发服务器接收 /lazy 请求                                           │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  - Receives proxyModuleId = "/abs/path/lazy-module.js?rolldown-lazy=1"  │
-│  - Calls DevEngine.compile_lazy_entry(proxyModuleId, clientId)          │
-│  - DevEngine marks proxy as FETCHED in LazyCompilationContext           │
+│  - 调用 DevEngine.compileEntry(proxyModuleId, clientId)                │
+│  - 引擎查找该客户端的 executed_modules                                  │
+│  - 在 LazyCompilationContext 中将代理标记为 FETCHED                    │
+│  - 拒绝不在模块缓存中的 id（安全校验，#9969）                           │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 5. PARTIAL SCAN FROM PROXY MODULE                                       │
+│ 5. 部分扫描 + 渲染                                                       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  - ScanMode::Partial([proxyModuleId])                                   │
-│  - Plugin's load hook sees proxy is fetched → returns FETCHED template  │
-│  - Fetched template: import("/abs/path/lazy-module.js")                 │
-│  - Plugin's resolve_id sees importer is fetched proxy → returns None    │
-│  - Dynamic import resolves to ACTUAL module (no new proxy)              │
-│  - Actual module + sync dependencies are compiled                       │
+│  - 插件的 load 钩子看到代理已被拉取 → 返回 FETCHED 模板                 │
+│  - 已拉取模板：import("/abs/path/lazy-module.js")                       │
+│  - resolve_id 看到 importer 是已拉取的代理 → 返回 None                 │
+│  - 实际模块 + 同步依赖被编译 —— 减去该客户端                            │
+│    已经执行过的模块                                                     │
+│  - 模块渲染为 createEsm/CjsInitializer(stableId, fn, 1)                │
+│    （去重标志）；chunk 以代理入口的 init 调用结束                       │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 6. RETURN COMPILED JS TO BROWSER                                        │
+│ 6. 将编译后的 JS 返回给浏览器                                          │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  - Response contains:                                                   │
-│    - Proxy module (with fetched template)                               │
-│    - Actual module (/abs/path/lazy-module.js)                           │
-│    - All sync dependencies of actual module                             │
-│  - Browser loads the code as an ES module                               │
-│  - registerModule() called for each module                              │
-│  - loadExports() finds actual module → returns real exports             │
-│  - Original import() promise resolves                                   │
+│  - 编译期间生成的资源已通过                                              │
+│    onAdditionalAssets（#9815）提前交付                                  │
+│  - 响应是单个 JS 字符串（仅代码——没有 sourcemap 通道）                 │
+│  - 浏览器将其作为 ES 模块加载；初始化器注册每个模块                     │
+│  - 入口 init 调用使用真实初始化器重新注册代理 id                        │
+│  - Stub 解析：loadExports(stableProxyId)['rolldown:exports']           │
+│  - 原始 import() promise 解析（或可捕获地拒绝，#9981）                  │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ 7. BUILD OUTPUT REFRESH (Background)                                    │
+│ 7. 构建输出刷新（后台）                                                 │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  - DevEngine sends CoordinatorMsg::ModuleChanged { proxyModuleId }      │
-│  - Coordinator queues TaskInput::Rebuild                                │
-│  - has_stale_bundle_output = true                                       │
-│  - Rebuild updates build output with fetched template                   │
-│  - Future page loads get fetched template directly (no /lazy needed)    │
+│  - DevEngine 发送 CoordinatorMsg::ModuleChanged { proxyModuleId }      │
+│  - Coordinator：update_watch_paths() → 排队 Rebuild → 标记 stale       │
+│  - Rebuild 使用已拉取模板更新构建输出                                   │
+│  - 对已连接客户端静默；未来的页面加载将跳过 /lazy                      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Lessons Learned
+## 经验总结
 
-### Issue 1: Module ID Consistency is Critical
+### 问题 1：模块 ID 一致性至关重要
 
-**Problem**: The proxy module, compiled module, and HMR runtime must use the same ID format for module lookups to work.
+**问题**：代理模块、编译后的模块以及 HMR 运行时必须使用相同的 ID 格式，模块查找才能生效。
 
-**Solution**: Use **stable IDs** (`stable_id`, relative paths from cwd) consistently in the runtime:
+**解决方案**：在运行时始终使用 **稳定 ID**（`stable_id`，即相对于 cwd 的路径）：
 
-- `registerModule(stableId, exports)`
+- `createEsmInitializer(stableId, factory[, dedup])` / `createCjsInitializer(...)` —— 在包装器内部，`registerModule(__rolldown_module_id__, { exports })` 和 `createModuleHotContext(__rolldown_module_id__)` 通过包装器参数接收 id（主 bundle 路径仍然输出稳定 id 的字符串字面量）
 - `loadExports(stableId)`
-- `createModuleHotContext(stableId)`
 - `import.meta.hot.accept(stableId, callback)`
 - `applyUpdates([[boundaryStableId, acceptedViaStableId]])`
 
-The lazy compilation plugin computes the stable ID in its `load` hook using the `cwd` obtained from the `build_start` hook.
+懒编译插件会在其 `load` 钩子中，使用从 `build_start` 钩子获取的 `cwd` 计算稳定 ID。
 
-### Issue 2: Proxy Content Must Change After Fetch
+### 问题 2：获取后代理内容必须变化
 
-**Problem**: The initial lazy load worked correctly, but on page refresh:
+**问题**：首次懒加载工作正常，但页面刷新后：
 
-- Build output still contained the stub template
-- Stub tried to fetch `/lazy` again
-- But the actual module was never included in the returned code
+- 构建输出仍然包含 stub 模板
+- stub  კვლავ会尝试重新请求 `/lazy`
+- 但实际模块从未包含在返回的代码中
 
-**Root cause**: The proxy module content never changed after being fetched. The plugin always returned the same stub template.
+**根本原因**：代理模块内容在被获取后从未改变。插件始终返回同一个 stub 模板。
 
-**Solution**: Implement two-state proxy modules:
+**解决方案**：实现双状态代理模块：
 
-1. Add `fetched_entries` set to `LazyCompilationContext`
-2. Mark proxy as fetched before compilation: `lazy_ctx.mark_as_fetched(&proxy_module_id)`
-3. In `load` hook, check state and return appropriate template:
+1. 向 `LazyCompilationContext` 添加 `fetched_entries` 集合
+2. 在编译前将代理标记为已获取：`lazy_ctx.mark_as_fetched(&proxy_module_id)`
+3. 在 `load` 钩子中检查状态并返回对应模板：
    ```rust
    let template = if self.fetched_entries.contains(args.id) {
      include_str!("./proxy-module-template-fetched.js")
@@ -281,131 +348,171 @@ The lazy compilation plugin computes the stable ID in its `load` hook using the 
    };
    ```
 
-### Issue 3: Fetched Proxy Must Not Create Self-Referencing Proxy
+### 问题 3：已获取的代理不能创建自引用代理
 
-**Problem**: After marking proxy as fetched, the fetched template's `import($MODULE_ID)` was being intercepted by `resolve_id` hook, which created ANOTHER proxy for the same module - causing infinite recursion.
+**问题**：在将代理标记为已获取后，已获取模板中的 `import($MODULE_ID)` 会被 `resolve_id` 钩子拦截，从而为同一个模块创建另一个代理，导致无限递归。
 
-**Solution**: In `resolve_id`, skip proxy creation when the importer is a fetched proxy:
+**解决方案**：在 `resolve_id` 中，当导入者是已获取代理时，跳过代理创建：
 
 ```rust
 if let Some(importer) = args.importer {
   if importer.contains("?rolldown-lazy=1") && self.fetched_entries.contains(importer) {
-    return Ok(None);  // Let normal resolution happen
+    return Ok(None);  // 让正常解析继续
   }
 }
 ```
 
-This allows the fetched template's dynamic import to resolve to the actual module.
+这样已获取模板中的动态导入就能解析到实际模块。
 
-### Issue 4: Build Output Must Update After Lazy Compilation
+### 问题 4：懒编译后构建输出必须更新
 
-**Problem**: After the first lazy load, the build output on disk still had the stub template. Page refresh would show the stub again, requiring another `/lazy` request.
+**问题**：第一次懒加载后，磁盘上的构建输出仍然是 stub 模板。页面刷新时又会显示 stub，需要再次请求 `/lazy`。
 
-**Solution**: Notify the coordinator to trigger a rebuild after successful lazy compilation (ideally with a real module ID):
+**解决方案**：在懒编译成功后通知协调器触发重建：
 
 ```rust
 // In DevEngine::compile_lazy_entry
 if result.is_ok() {
+  //（资源先通过 on_additional_assets 送达——见“发出的资源”）
   self.notify_module_changed(proxy_module_id);
 }
-
-// notify_module_changed sends:
-CoordinatorMsg::ModuleChanged { module_id }
-
-// Coordinator handles it:
-self.queued_tasks.push_back(TaskInput::Rebuild { changed_files });
-self.has_stale_bundle_output = true;
 ```
 
-### Issue 5: Non-Identifier Export Names Need Computed Property Syntax
+该通知故意携带原始代理 id（包含 `?rolldown-lazy=1`）——这是正确的增量缓存失效键，因为内容发生变化的模块是 _代理_（stub → 已获取模板），而不是真实模块。见“构建输出刷新”。
 
-**Problem**: The HMR finalizer was generating invalid JavaScript:
+### 问题 5：非标识符导出名需要使用计算属性语法
+
+**问题**：HMR 收尾器生成了无效的 JavaScript：
 
 ```js
-// INVALID - colon in identifier
-var exports = __rolldown_runtime__.__export({ rolldown:exports: () => lazyExports });
+// 无效 - 标识符中包含冒号
+var __rolldown_exports__ = __rolldown_runtime__.__exportAll({ rolldown:exports: () => lazyExports });
 ```
 
-**Solution**: Use `is_validate_identifier_name()` to detect non-identifier export names and use computed property syntax:
+**解决方案**：使用 `is_validate_identifier_name()` 检测非标识符导出名，并使用计算属性语法：
 
 ```rust
 let computed = !is_validate_identifier_name(exported.as_str());
-self.snippet.object_property_kind_object_property(exported, expr, computed)
+self.ast_factory.make_lazy_export_property(exported, expr, computed)
 ```
 
-This generates valid JavaScript:
+这会生成有效的 JavaScript：
 
 ```js
-// VALID - computed property
-var exports = __rolldown_runtime__.__export({
+// 有效 - 计算属性
+var __rolldown_exports__ = __rolldown_runtime__.__exportAll({
   ['rolldown:exports']: () => lazyExports,
 });
 ```
 
-### Issue 6: Multiple Code Paths Need Updating
+### 问题 6：需要更新多个代码路径
 
-**Problem**: There were TWO implementations of `rewrite_hot_accept_call_deps`:
+**问题**：`rewrite_hot_accept_call_deps` 有两个实现：
 
-1. `HmrAstFinalizer` (for HMR patches)
-2. `ScopeHoistingFinalizer` (for regular builds with dev mode)
+1. `HmrAstFinalizer`（用于 HMR 补丁）
+2. `ScopeHoistingFinalizer`（用于 dev 模式下的常规构建）
 
-Only updating one left the other using `stable_id`.
+只更新其中一个会导致另一个仍然使用 `stable_id`。
 
-**Solution**: Always search for all implementations when changing behavior. Use `grep` to find all occurrences.
+**解决方案**：修改行为时，务必搜索所有实现。使用 `grep` 找出所有出现位置。
 
-### Issue 7: Proxy vs Actual Module IDs
+### 问题 7：代理 ID 与真实模块 ID 不同
 
-The lazy compilation plugin creates two distinct module IDs:
+懒编译插件会创建两个不同的模块 ID：
 
-- **Proxy module**: `/abs/path/module.js?rolldown-lazy=1` (loaded initially, contains stub/fetched code)
-- **Actual module**: `/abs/path/module.js` (compiled on-demand, contains real code)
+- **代理模块**：`/abs/path/module.js?rolldown-lazy=1`（初始加载，包含 stub/已获取代码；运行时以其稳定 id `src/module.js?rolldown-lazy=1` 注册）
+- **实际模块**：`/abs/path/module.js`（按需编译，包含真实代码；以 `src/module.js` 注册）
 
-The flow is:
+流程如下：
 
-1. Initial build creates proxy at `module.js?rolldown-lazy=1` with stub template
-2. User triggers lazy load → `/@vite/lazy?id=...?rolldown-lazy=1`
-3. DevEngine marks proxy as fetched
-4. Partial scan from proxy → plugin returns fetched template
-5. Fetched template imports actual module → triggers compilation
-6. Both proxy (fetched) and actual module are in the output
-7. `loadExports("/abs/path/module.js")` finds and returns the exports
+1. 初始构建使用 stub 模板创建 `module.js?rolldown-lazy=1` 代理
+2. 用户触发懒加载 → `/@vite/lazy?id=...?rolldown-lazy=1`
+3. DevEngine 将代理标记为已获取
+4. 从代理执行部分扫描 → 插件返回已获取模板
+5. 已获取模板导入实际模块 → 触发编译
+6. 懒块重新以真实初始化器注册代理 id，stub 通过 `loadExports("src/module.js?rolldown-lazy=1")['rolldown:exports']` 解析
+7. 后台重建后，输出中同时包含代理（已获取）和实际模块
 
-## Implementation Notes
+### 问题 8：代理 ID 的创建必须是幂等的（#9439）
 
-### Naming Convention for Injected Helpers
+**问题**：在存在别名插件时，`ctx.resolve` 重新进入懒插件的 `resolve_id`，导致 `?rolldown-lazy=1` 被追加了两次。重复后缀使代理 id 与 stub 模板中的 `delete modules[$STABLE_PROXY_MODULE_ID]` 失效键不同步，因此真实模块的导出从未注册（`mod.foo` 变成 `undefined`——回归 vitejs/vite#22454）。
 
-The lazy compilation plugin injects helper functions with double-underscore prefix (e.g., `__unwrap_lazy_compilation_entry`). This is a standard convention for internal/reserved identifiers in JavaScript bundlers and should not conflict with user code.
+**解决方案**：在追加标记前，检查解析后的 id 是否已经以 `?rolldown-lazy=1` 结尾，如果是则复用它。由别名导入规范固定。
 
-### Directive Prologue Handling
+### 问题 9：已获取模板必须从注册表读取导出（#9132）
 
-The injected helper function is inserted **after** any directive prologues (e.g., `"use strict"`) to preserve their semantics. The plugin counts leading string literal expression statements and inserts the helper after them.
+**问题**：最初，已获取模板返回的是动态导入的命名空间对象。当共享懒模块进入公共 chunk 时，chunk 级重命名会压缩导出名，命名空间查找会得到 `undefined`。
 
-## Files Changed (Reference)
+**解决方案**：`await import($MODULE_ID)` 仅用于副作用，然后 `return __rolldown_runtime__.loadExports($STABLE_MODULE_ID)` —— 运行时注册表会保留原始导出名。由共享模块规范固定。
 
-For future debugging, these files handle lazy compilation:
+### 问题 10：初始化错误必须拒绝消费者的 Promise（#9981）
 
-### Core Plugin
+**问题**：当懒编译模块初始化时抛出错误，该错误会作为未处理的 rejection 泄漏，而不是在消费者的 `await import(...)` 处暴露。
 
-1. **`crates/rolldown_plugin_lazy_compilation/src/lazy_compilation_plugin.rs`** - Plugin with `resolve_id`, `load`, and `transform_ast` hooks, `LazyCompilationContext` with fetched state tracking
-2. **`crates/rolldown_plugin_lazy_compilation/src/runtime_injector.rs`** - AST visitor for transforming dynamic imports and helper function generation
-3. **`crates/rolldown_plugin_lazy_compilation/src/proxy-module-template.js`** - Stub template (not fetched)
-4. **`crates/rolldown_plugin_lazy_compilation/src/proxy-module-template-fetched.js`** - Fetched template
+**解决方案**：stub 模板等待的是**重新注册后的代理自身的 `'rolldown:exports'` Promise**（`return await loadExports($STABLE_PROXY_MODULE_ID)['rolldown:exports']`），而不是直接返回命名空间——因此链路中任意一处的 rejection 都会拒绝 `lazyExports` 和消费者的导入 Promise。由两个 lazy-init-error 规范（冷路径和热路径）固定。
 
-### Dev Engine
+## 实现说明
 
-5. **`crates/rolldown_dev/src/dev_engine.rs`** - `compile_lazy_entry()`, `notify_module_changed()`
-6. **`crates/rolldown_dev/src/types/coordinator_msg.rs`** - `ModuleChanged` message variant
-7. **`crates/rolldown_dev/src/bundle_coordinator.rs`** - Handles `ModuleChanged`, triggers rebuild
+### 注入辅助函数的命名约定
 
-### HMR/Build
+懒编译插件注入的辅助函数使用双下划线前缀（例如，`__unwrap_lazy_compilation_entry`）。这是 JavaScript 打包器中内部/保留标识符的标准约定，不应与用户代码冲突。
 
-8. **`crates/rolldown/src/hmr/hmr_stage.rs`** - `compile_lazy_entry()` partial scan logic
-9. **`crates/rolldown/src/hmr/hmr_ast_finalizer.rs`** - Export generation with computed property support
-10. **`crates/rolldown/src/hmr/utils.rs`** - `create_register_module_stmt()`, `create_module_hot_context_initializer_stmt()`
+### 指令前导语句处理
 
-## References
+注入的辅助函数会被插入到任何指令前导语句（例如，`"use strict"`）**之后**，以保持其语义。该插件会统计前置的字符串字面量表达式语句，并在它们之后插入辅助函数。只有当模块中至少有一个动态导入实际上被包装时，才会注入该辅助函数。
 
-- [design.md](./design.md) — goals, scope, and key design decisions
-- Current implementation: `crates/rolldown_plugin_lazy_compilation/`
-- Dev engine: `crates/rolldown_dev/`
-- Example: `examples/lazy-compilation/`
+## 测试覆盖范围
+
+E2E playground：`packages/test-dev-server/tests/playground/lazy-compilation/`（一个 dev server 配置，`experimental.devMode.lazy: true` + 一个别名插件）：
+
+| 规范                        | 关联问题                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| `basic`                     | 懒加载模块会以两个独立的 JS 请求到达（代理 chunk + 真实 chunk）        |
+| `aliased-import`            | 在别名重入情况下保持幂等的代理 id 创建（vite#22454）                 |
+| `emitted-asset`             | 懒编译期间发出的资源在首次加载时可被正常提供（vite#22596）        |
+| `lazy-init-error`           | 可通过 try/catch 捕获初始化错误——冷路径和热路径（#9975/#9981）          |
+| `lazy-init-error-unhandled` | 在没有处理器的情况下，恰好触发一次 `unhandledrejection`——冷路径和热路径          |
+| `nested-dynamic-import`     | 懒 chunk 内部嵌套的懒 `import()` 会在第一次点击时解析                |
+| `shared-module`             | 共享 chunk 中的导出名保留（#9132）+ fetch 后的 watch/自动重载 |
+
+多个规范使用 `retry: 0`，因为这些 bug 只会在新启动的服务器上首次交互时复现。单元测试：`packages/rolldown/tests/dev/dev-lazy-compile.test.ts` 固定了未知 id 拒绝（#9969）。
+
+## 已更改的文件（参考）
+
+为便于后续调试，这些文件负责懒编译：
+
+### 核心插件
+
+1. **`crates/rolldown_plugin_lazy_compilation/src/lazy_compilation_plugin.rs`** - 包含 `resolve_id`、`load` 和 `transform_ast` 钩子的插件；具有已获取状态跟踪的 `LazyCompilationContext`；`render_proxy_template`
+2. **`crates/rolldown_plugin_lazy_compilation/src/runtime_injector.rs`** - 用于包装动态导入并生成 `__unwrap_lazy_compilation_entry` 的 AST 访问器
+3. **`crates/rolldown_plugin_lazy_compilation/src/proxy-module-template.js`** - 代理模板骨架（未获取）
+4. **`crates/rolldown_plugin_lazy_compilation/src/proxy-module-template-fetched.js`** - 已获取的模板
+5. **`crates/rolldown/src/utils/apply_inner_plugins.rs`** - 在 `experimental.dev_mode.lazy == true` 时注册该插件
+
+### 开发引擎
+
+6. **`crates/rolldown_dev/src/dev_engine.rs`** - `compile_lazy_entry()`（已执行模块查找、标记为已获取、资源交付、`notify_module_changed()`），客户端会话
+7. **`crates/rolldown_dev/src/types/coordinator_msg.rs`** - `ModuleChanged` 消息变体
+8. **`crates/rolldown_dev/src/bundle_coordinator.rs`** - 处理 `ModuleChanged`（`update_watch_paths` + 重建）、状态机
+9. **`crates/rolldown_binding/src/binding_dev_engine.rs`** - napi 接口（`compile_entry`、`register_modules`、`remove_client`）
+
+### HMR/构建
+
+10. **`crates/rolldown/src/hmr/hmr_stage.rs`** - `compile_lazy_entry()`：缓存门控、部分扫描、按客户端的依赖收集、chunk 渲染
+11. **`crates/rolldown/src/hmr/hmr_ast_finalizer.rs`** + **`impl_traverse_for_hmr_ast_finalizer.rs`** - 初始化器包装器、去重标志、动态导入重写（包括 `/@vite/lazy` 重写）、计算属性导出
+12. **`crates/rolldown/src/hmr/utils.rs`** - register-module / hot-context 语句构建器（`__rolldown_module_id__` 参数）
+13. **`crates/rolldown/src/bundler/impl_bundler_hmr.rs`** - `Bundler::compile_lazy_entry` 入口点
+14. **`crates/rolldown_plugin_hmr/src/runtime/runtime-extra-dev-common.js`** - 浏览器运行时：`createEsm/CjsInitializer`（去重门控）、`registerModule`、`loadExports`、模块已注册批处理
+
+### 参考开发服务器（Vite 全量打包模式，vendored 于 `packages/test-dev-server/vite`）
+
+15. **`packages/vite/src/node/server/middlewares/triggerLazyBundling.ts`** - `/@vite/lazy` 中间件（出错时返回 500，成功时返回 `application/javascript`）
+16. **`packages/vite/src/node/server/bundledDev.ts`** - `triggerLazyBundling`（`devEngine.compileEntry`）、`onAdditionalAssets` 存储、重建/重载处理
+17. **`packages/vite/src/node/plugins/asset.ts`** - bundled-dev 分支在 `load` 时会提前解析资源导入
+
+## 参考资料
+
+- [design.md](./design.md) — 目标、范围和关键设计决策
+- 当前实现：`crates/rolldown_plugin_lazy_compilation/`
+- 开发引擎：`crates/rolldown_dev/`（另见 `internal-docs/dev-engine/`）
+- 示例：`examples/lazy-compilation/`

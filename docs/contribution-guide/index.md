@@ -4,9 +4,9 @@
 
 ## 开发开放
 
-所有开发都直接在 [GitHub](https://github.com/rolldown/rolldown) 上进行。核心团队成员和外部贡献者（通过 fork）都会提交 pull request，并经过相同的审核流程。
+All development happens directly on [GitHub](https://github.com/rolldown/rolldown). Core team members and external contributors (via forks) all submit pull requests and go through the same review process.
 
-除了 GitHub 之外，我们还使用一个 [Discord 服务器](https://chat.rolldown.rs) 进行实时讨论。
+In addition to GitHub, we also use a [Discord server](https://chat.rolldown.rs) for real-time discussion.
 
 ## AI 使用政策
 
@@ -36,11 +36,8 @@
 
 关于项目开发环境的搭建，请参见 [项目设置](../development-guide/setup-the-project.md)。
 
-:::info
-
-在提交 pull request 之前，请先阅读 [礼仪](https://developer.mozilla.org/en-US/docs/MDN/Community/Open_source_etiquette) 章节。
-
-:::
+> [!NOTE]
+> 请在提交 pull request 之前阅读 [礼仪](https://developer.mozilla.org/en-US/docs/MDN/Community/Open_source_etiquette) 章节。
 
 ### 直接提交 pull request
 
@@ -67,7 +64,7 @@
 
 ### 草稿 pull request
 
-如果你的 pull request 仍在进行中，请将其以 [draft](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) 形式打开，并且只有在你真心希望团队审查时，才将其标记为 **Ready for review**。将 PR 转为 “Ready for review” 会通知审阅者和代码所有者，因此请等到你的改动完成且本地构建通过后再进行。这有助于让维护者的收件箱专注于真正需要关注的 PR。
+如果你的 pull request 仍在进行中，请将其以 [草稿](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) 形式打开，并且只有在你真心希望团队审查时，才将其标记为 **Ready for review**。将 PR 转为 “Ready for review” 会通知审阅者和代码所有者，因此请等到你的改动完成且本地构建通过后再进行。这有助于让维护者的收件箱专注于真正需要关注的 PR。
 
 ### 分支组织
 

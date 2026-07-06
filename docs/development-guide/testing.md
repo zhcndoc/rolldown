@@ -12,7 +12,7 @@
 
 1. 当添加带选项的新功能时，如果可能，请始终确保在 JavaScript 侧添加相关测试。
 
-这里有一些关于如何选择测试技术的细节 [details](#how-to-choose-test-technique)
+这里有一些关于如何选择测试技术的细节 [细节](#how-to-choose-test-technique)
 :::
 
 - `just test` 用于运行所有测试。
@@ -196,16 +196,16 @@ just test-node-rolldown -t test-name
 
 :::
 
-## Dev server tests
+## 开发服务器测试
 
-[`@rolldown/test-dev-server`](https://github.com/rolldown/rolldown/tree/main/packages/test-dev-server) 是一个小型的 Vite 风格开发服务器，用于验证 rolldown 的 **开发引擎**——HMR、延迟编译和错误恢复。它的测试位于 `packages/test-dev-server/tests`，分为两个套件：
+[`@rolldown/test-dev-server`](https://github.com/rolldown/rolldown/tree/main/packages/test-dev-server) 是 rolldown **开发引擎** 的测试支架——HMR、延迟编译和错误恢复。它的测试位于 `packages/test-dev-server/tests`，分为两个套件：
 
-| 套件         | 平台      | 驱动的内容                                                                                  |
-| ------------ | --------- | ------------------------------------------------------------------------------------------- |
-| **browser**  | `browser` | 一个真实的 Chromium 页面，连接到一个**进程内**开发服务器。大多数开发引擎测试都在这里。 |
-| **fixtures** | `node`    | 开发服务器构建到**磁盘**，并将构建产物作为 `node` 子进程运行。 |
+| 套件         | 平台      | 驱动对象                                                                                                    |
+| ------------ | --------- | ----------------------------------------------------------------------------------------------------------- |
+| **browser**  | `browser` | 运行在进程内 Vite full-bundle-mode 开发服务器之上的真实 Chromium 页面。大多数开发引擎测试都在这里。 |
+| **fixtures** | `node`    | 一个自定义开发服务器构建到**磁盘**，并将构建产物作为 `node` 子进程运行。                  |
 
-架构以及测试支架背后的原因记录在 [开发服务器测试支架设计文档](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中——在修改测试支架本身之前请先阅读。
+浏览器套件运行在 Vite 自身之上（`experimental.bundledDev`），由 `packages/test-dev-server/vite` 中 vendored 的 Vite 子模块提供服务，并且其 `rolldown` 依赖链接到工作区的 `packages/rolldown`——因此这些测试通过真实的 Vite 集成来验证本地 rolldown 绑定。支架背后的架构和设计原因记录在 [Dev Server Test Harness 设计文档](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中——在修改支架本身之前请先阅读它。
 
 ### 浏览器 playground
 
@@ -218,14 +218,16 @@ playground/<name>/
 每个 playground 通常包含：
 
 ```text
-dev.config.mjs            # rolldown 开发配置（浏览器平台，不设置 dev.port）
-index.html                # 在 / 提供
-main.js                   # 入口；相对输入路径从此目录解析
-package.json              # 工作区成员（复制现有的一个）
-__tests__/<name>.spec.ts  # 规范（保留在源代码中，绝不会被复制）
+dev.config.mjs            # rolldown dev 配置（browser 平台，无 dev.port）
+index.html                # 在 / 提供；其模块脚本标签是构建入口
+main.js                   # 入口，从 index.html 引用
+package.json              # 工作区成员（复制一个已有的）
+__tests__/<name>.spec.ts  # 规范文件（保留在源码中，永不复制）
 ```
 
-测试支架会根据规范文件的路径发现 playground，将其复制到 `playground-temp/<name>/`，在由操作系统分配的端口上启动一个进程内开发服务器，打开 Chromium 页面并导航到该页面——因此**添加测试只需要一个文件夹加一个规范文件，不需要编辑任何中央注册表**。
+Vite 从 `index.html` 的 `<script type="module">` 标签中发现入口（`dev.config.mjs` 中的 `input` 字段只适用于 node 平台），并且在浏览器运行中始终启用延迟编译——full bundle 模式会强制 `devMode.lazy: true`。
+
+支架会根据规范文件的路径找到 playground，将其复制到 `playground-temp/<name>/`，在操作系统分配的端口上启动进程内开发服务器，打开一个 Chromium 页面并导航到它——因此**新增一个测试就是一个文件夹加一个规范文件，不需要编辑中央注册表**。
 
 规范文件从 `~utils` 别名导入辅助函数；在运行时，测试支架已经启动服务器并导航了 `page`：
 
@@ -245,7 +247,15 @@ describe('<name>', () => {
 使用 `expect.poll` 轮询 DOM，在后续编辑前 `await waitForBuildStable()`，或者使用 `untilBrowserLogAfter` 等待浏览器日志。固定的 `sleep` 既不稳定又慢。
 :::
 
-#### 构建和运行
+#### 断言 Vite 的信号
+
+服务器和客户端都是 Vite 的，因此规范应当对 Vite 自身的信号进行断言：
+
+- **错误覆盖层**：Vite 的 `<vite-error-overlay>` 自定义元素渲染在一个 **shadow root** 中，因此对宿主元素调用 `locator(...).textContent()` 会返回空——请使用 `~utils` 中的 `errorOverlay()` 和 `errorOverlayText()` 辅助函数。
+- **服务器日志**（收集到 `serverLogs` 中）：`✘ Build error: …`、`hmr update …`、`hmr invalidate …`、`page reload`。
+- **浏览器日志**（收集到 `browserLogs` 中）：`[vite] connected.`、`[vite] hot updated: …`。
+
+#### 构建与运行
 
 在修改 Rust 或 dev-server 的 `src/` 之后，重新构建一次——测试导入的是编译后的 `dist/`，而不是 TypeScript 源码：
 
@@ -254,7 +264,13 @@ just build-rolldown
 pnpm --filter @rolldown/test-dev-server build
 ```
 
-然后，在 `packages/test-dev-server/tests/` 中运行：
+浏览器套件还需要先设置好一次 Vite 子模块（init + install + build + 将工作区的 rolldown 链接进去）。在升级子模块之后，或在其中运行过 install 之后（install 会重置 rolldown 链接）请重新执行：
+
+```sh
+just setup-test-dev-server-vite
+```
+
+然后，从 `packages/test-dev-server/tests/` 目录下运行：
 
 ```sh
 # 单个 playground
@@ -324,8 +340,8 @@ just test-node-rollup --grep "function"
 #### 优先使用 Rust
 
 1. 测试由 rolldown core 发出的 warning 或 error。
-   - [error](https://github.com/rolldown/rolldown/blob/568197a06444809bf44642d88509313ee2735594/crates/rolldown/tests/rolldown/errors/assign_to_import/artifacts.snap?plain=1#L2-L54)
-   - [warning](https://github.com/rolldown/rolldown/blob/568197a06444809bf44642d88509313ee2735594/crates/rolldown/tests/rolldown/warnings/eval/artifacts.snap?plain=1#L1-L28)
+   - [错误](https://github.com/rolldown/rolldown/blob/568197a06444809bf44642d88509313ee2735594/crates/rolldown/tests/rolldown/errors/assign_to_import/artifacts.snap?plain=1#L2-L54)
+   - [警告](https://github.com/rolldown/rolldown/blob/568197a06444809bf44642d88509313ee2735594/crates/rolldown/tests/rolldown/warnings/eval/artifacts.snap?plain=1#L1-L28)
 2. 矩阵测试，假设你想测试一组不同的 [format](https://github.com/rolldown/rolldown/blob/568197a06444809bf44642d88509313ee2735594/crates/rolldown/tests/rolldown/topics/bundler_esm_cjs_tests/4/_config.json?plain=1#L1-L21)，使用 `configVariants` 你只需一个测试就能做到。
 3. 与链接算法相关的测试（tree shaking、chunk splitting）。这些测试可能需要大量调试，在 Rust 侧添加测试可以减少编码-调试-编码循环的时间。
 

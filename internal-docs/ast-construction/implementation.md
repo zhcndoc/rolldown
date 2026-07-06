@@ -4,7 +4,7 @@
 
 Rolldown 在许多地方合成 oxc AST 节点——模块收尾器、扫描器的预处理、HMR，以及插件。历史上，它通过几种相互竞争的惯用法来完成这件事（手工维护的 `AstSnippet` 门面、原始的 `oxc::ast::AstBuilder`、带有构造语义的扩展 trait，以及 `..Foo::dummy(alloc)` 结构更新字面量）。此后 oxc 已将 `AstBuilder` 设为唯一被认可的构造路径（每个带 `NodeId` 的节点都标记了 `#[non_exhaustive]`，oxc 0.135 / [oxc#23046](https://github.com/oxc-project/oxc/pull/23046)），这直接删除了结构字面量这一惯用法。
 
-今后，rolldown 将把**所有**构造都通过一个由 rolldown 拥有的新类型 **`AstFactory`** 进行路由；它封装 oxc 的 `AstBuilder`（并通过 `Deref` 将通用节点构造器透出），同时将 rolldown 自身反复出现的构造以固有 `make_*` 方法的形式加入。把所有东西都收束到一个 rolldown 类型里——而不是在每个位置直接调用 oxc 的 `AstBuilder`——也正是让 rolldown 能在单一位置吸收未来 oxc 构造 API 变化的原因。本文记录这一决定及其理由，以便未来工作（以及即将到来的 oxc `AstBuilder` 重设计，[oxc#23043](https://github.com/oxc-project/oxc/issues/23043)）有一个基线。
+接下来，rolldown 将 **所有** 构造都路由到一个由 rolldown 拥有的单一新类型 **`AstFactory`** 中；它封装了 oxc 的 `AstBuilder`（实现 `GetAstBuilder` / `GetAllocator`，因此可以传递给 oxc 按类型生成的节点构造器），并将 rolldown 自己那些反复出现的构造以固有的 `make_*` 方法形式加入其中。把一切都通过一个 rolldown 类型进行转发——而不是在每个位置直接调用 oxc 的 `AstBuilder`——使得 rolldown 能够在单一入口点吸收 oxc `AstBuilder` 的重设计（[oxc#23043](https://github.com/oxc-project/oxc/issues/23043)，oxc 0.138）。本文记录了这一决定及其原因。
 
 ## 先前状态
 
@@ -28,25 +28,25 @@ Rolldown 在许多地方合成 oxc AST 节点——模块收尾器、扫描器�
 
 - **从源字符串解析。** 并非所有 AST 都是构建出来的——有些是以 JS 源代码形式编写，再通过 `EcmaCompiler::parse`（`crates/rolldown_ecmascript/src/ecma_compiler.rs`）解析，后者会把源字符串解析成带有自己 allocator 的独立 `EcmaAst`。在输出侧，这基本上只有运行时模块（`crates/rolldown/src/module_loader/runtime_module_task.rs:226`）。插件和 scanner 子分析器中约 35 个直接的 oxc `Parser::new` 位置是在解析**输入**源代码以进行分析或转换——这与构建 rolldown 自己的 AST 是不同的活动。
 
-Two facts constrain every choice and are documented in [ast-mutation](../ast-mutation/implementation.md): synthesized nodes must carry the reserved synthetic span (`SPAN`, `0..0`) — the cross-pass side tables are `NodeId`-keyed now, so the span no longer prevents false matches, but `span.is_unspanned()` checks (such as the global-`require` rewrite guard in `crates/rolldown/src/module_finalizers/mod.rs`) still use it to tell synthesized nodes from scanned ones — and rolldown does not re-run semantic after finalize, so synthesized nodes keep a dummy `NodeId` for life; that dummy id is what keeps them from matching scan-time records.
+这两点约束了所有选择，并已在 [ast-mutation](../ast-mutation/implementation.md) 中记录：合成节点必须携带保留的合成 span（`SPAN`，`0..0`）——现在跨 pass 的 side tables 以 `NodeId` 为键，因此 span 不再阻止误匹配，但 `span.is_unspanned()` 检查（例如 `crates/rolldown/src/module_finalizers/mod.rs` 中的全局 `require` 重写保护）仍然用它来区分合成节点和扫描得到的节点——而且 rolldown 在 finalize 之后不会重新运行 semantic，因此合成节点会终身保留一个 dummy `NodeId`；正是这个 dummy id 让它们不会匹配扫描期记录。
 
 ## 约定
 
 所有东西都通过一个句柄 `ast_factory: AstFactory<'a>`——rolldown 对 `oxc::ast::AstBuilder` 的新类型封装——来完成。按你要构建的内容选择工具：
 
-### 通用节点 → `ast_factory` 句柄（通过 `Deref` 使用 oxc 的 builder）
+### Generic nodes → oxc's per-type constructors, passing the `ast_factory` handle
 
-`AstFactory` 会解引用到被包装的 builder，因此每个 oxc 构造器都可以直接在 `ast_factory` 上调用。那些薄的 `AstSnippet` 重命名会收敛为这些 oxc 调用：
+自 oxc#23043（oxc 0.138）起，构造逻辑位于 AST 类型本身的按类型关联函数上，这些函数将 builder/allocator 作为**最后**一个参数：`Expression::new_call_expression(.., gen)`, `StaticMemberExpression::boxed(.., gen)`, `oxc::allocator::Vec::new_in(gen)`, `oxc::ast::ast::Str::from_str_in(s, gen)`。`AstFactory` 实现了 oxc 的 `GetAstBuilder` 和 `GetAllocator`，所以 `ast_factory` 句柄**就是**你要传入的生成器：
 
 ```rust
-// 之前：一个 AstSnippet 包装方法
-let member = self.snippet.builder.alloc_static_member_expression(SPAN, object, property, false);
-
-// 之后：同一个 oxc 构造器，在 `ast_factory` 句柄上调用（通过 Deref 解析）
+// 之前（0.138 之前）：通过 Deref 访问 builder 上的方法
 let member = ast_factory.alloc_static_member_expression(SPAN, object, property, false);
+
+// 之后：按类型的构造函数，句柄作为最后一个参数传入
+let member = StaticMemberExpression::boxed(SPAN, object, property, false, &ast_factory);
 ```
 
-当作用域里已经有一个句柄时，不要临时构造 `AstFactory` / `AstBuilder`；当 builder 已经提供了 `ast_factory.vec*` / `ast_factory.alloc_*` 时，也不要去直接使用原始的 `oxc::allocator::Vec` / `Box`。oxc 的构造器是位置参数式的；如果一段内容很冗长，请在前面加注释说明它生成的 JS，这也是 oxc 自己的建议。
+在持有该句柄的 `&self` 方法中，直接传 `self`（它实现了这些 traits）；如果是值句柄，则传 `&ast_factory` / `&self.ast_factory`。命名映射是机械式的：`alloc_X` → `X::boxed`，普通值构造器 `x` → `X::new`，枚举构造器 → `Enum::new_<variant>`（例如 `expression_call` 构造的是 `Expression::CallExpression`，所以它是 `Expression::new_call_expression`）。当句柄已经在作用域中时，不要临时构造一个 `AstFactory` / `AstBuilder`。oxc 的构造函数是按位置传参的；对于冗长的代码块，建议先写一条注释说明它生成的 JS，正如 oxc 自己建议的那样。
 
 ### Rolldown 特定模式 → `AstFactory` 上的固有 `make_*` 方法
 
@@ -56,9 +56,13 @@ let member = ast_factory.alloc_static_member_expression(SPAN, object, property, 
 #[derive(Clone, Copy)]
 pub struct AstFactory<'a>(oxc::ast::AstBuilder<'a>);
 
-impl<'a> Deref for AstFactory<'a> {          // 通用 oxc 构造器，无需样板代码
-  type Target = oxc::ast::AstBuilder<'a>;
-  fn deref(&self) -> &Self::Target { &self.0 }
+// generic oxc constructors reach the handle through these traits
+impl<'a> GetAllocator<'a> for AstFactory<'a> {
+  fn allocator(&self) -> &'a Allocator { self.0.allocator() }
+}
+impl<'a> GetAstBuilder<'a> for AstFactory<'a> {
+  type Builder = AstBuilder<'a>;
+  fn builder(&self) -> &AstBuilder<'a> { &self.0 }
 }
 
 impl<'a> AstFactory<'a> {                     // rolldown 自己的模式
@@ -69,8 +73,8 @@ impl<'a> AstFactory<'a> {                     // rolldown 自己的模式
 
 这些方法：
 
-- 以 **`make_`** 为前缀，并以 **操作** 命名（`make_to_esm_wrapper`），而不是用一个裸 AST 节点命名；
-- 采用与 oxc builder 相同的签名风格：位置参数，`make_<x>` 返回一个值，而 `make_alloc_<x>` 返回一个 boxed 节点。调用者提供的 `span` 会像 oxc 一样放在最前面，但大多数 `make_*` 模式会在内部合成保留的 `SPAN`，因此不接收 span。它们使用 **`&self`**，并通过 `Deref` 访问被包装的 builder（`self.foo()`，绝不用 `self.0.foo()`）。`&self` 让**调用点**不依赖于 `Copy`——句柄是借用的，不会被移动，因此在一次 `make_*` 调用后继续复用它总是能编译通过。方法的**主体**仍然依赖当下的 `Copy` builder（`Deref` 得到 `&AstBuilder`，而 oxc 的按值构造器会把它再拷贝出来）；当 oxc#23043 落地时——按类型的构造器将把 generator 以引用方式传入，`AstFactory` 实现 `AstGenerator`，并移除 `Deref`——这些主体会迁移到那个 API 上，而 `&self` 的调用点保持不变。
+- 以前缀 **`make_`** 开头，并以**操作**命名（`make_to_esm_wrapper`），绝不以单个 AST 节点命名；
+- 遵循 oxc 的 builder 签名风格：位置参数，`make_<x>` 返回一个值，`make_alloc_<x>` 返回一个 boxed 节点。调用者提供的 `span` 按照 oxc 的惯例放在最前面，但大多数 `make_*` 模式会在内部使用保留的 `SPAN` 来合成节点，并且不接受 span。它们接收 **`&self`**，并将 `self` 作为生成器传给 oxc 的按类型构造函数（`self` 实现了 `GetAstBuilder` / `GetAllocator`）。`&self` 让**调用点**不依赖 `Copy` —— 句柄只是借用，从不移动，所以在一次 `make_*` 调用后继续复用它总是可以编译通过的。
 
 只有当某个方法编码的是一种多步骤的 rolldown 约定，并且如果直接手写会默认出错时，才值得放在这里——不仅仅是为了缩短一次 oxc 调用。
 
@@ -88,28 +92,28 @@ impl<'a> AstFactory<'a> {                     // rolldown 自己的模式
 
 这个前缀不是装饰性的——它有两个作用：
 
-- **每个调用点都能自我标识。** 一个裸节点名（`ast_factory.call_expression(..)`）是通过 `Deref` 进入 oxc 的 builder；而一个 `make_*` 名称（`ast_factory.make_to_esm_wrapper(..)`）则是 `AstFactory` 上的 rolldown 方法。Rust 在调用点不会把二者区分标出来，因此这种区别只能靠命名传达：oxc 方法按其生成的节点命名（名词），rolldown 的方法按其执行的操作命名（动词）。
-- **它能防止意外遮蔽。** `AstFactory` 上的固有方法会优先于通过 `Deref` 访问到的 oxc 方法。把 rolldown 方法命名成一个裸节点名（例如 `call_expression`）会在无声中覆盖 oxc 的同名方法——有时这正是为了吸收上游变化而刻意为之，但若是意外发生，它就是一个陷阱。`make_` 前缀把 rolldown 的新增方法放在自己的命名空间里，因此任何覆盖都必须是有意的。
+- **每个调用点都能自我标识。** 一个通用节点是一个 oxc 的逐类型构造函数（`Expression::new_call_expression(.., &ast_factory)`）；一个 `make_*` 名称（`ast_factory.make_to_esm_wrapper(..)`）则是 `AstFactory` 上的 rolldown 方法。二者的区别通过命名体现：oxc 的构造函数以它们生成的节点命名（名词），rolldown 的则以它们执行的操作命名（动词）。
+- **它让 rolldown 的新增内容保持在自己的命名空间中。** `make_` 前缀意味着 `AstFactory` 的固有方法永远不会与 oxc 构造函数名冲突，读者也始终能知道某个构造是通用的 oxc 节点，还是 rolldown 的约定。
 
 这里的句柄写作 `ast_factory`，而不是一个裸的 `ast`：这样读起来明确表示它是 `AstFactory` 的一个实例，也不会在视觉上与某些文件导入的 oxc `ast` 模块混淆。
 
 ## 前向兼容：oxc 构造 API 的单一咽喉点
 
-之所以现在就要这么做——与任何特定的 oxc 变化无关——更深层的原因是：把所有构造都通过一个由 rolldown 拥有的新类型（`AstFactory`，封装 oxc 的 `AstBuilder`）进行路由，会把这个类型变成围绕 oxc 构造 API 的一个**隔离边界**。oxc 的构造面仍在持续变化：0.135 引入了 `#[non_exhaustive]`（oxc#23046，本身也是一系列 AST 宏重组的一部分），而 oxc#23043 将彻底重设计 `AstBuilder`。无论 oxc 接下来怎么变，爆炸半径都被限制在这一层，而不会散落到数百个调用点上。（这隔离的是 _构造 API_——方法名、签名、builder 类型——而不是 oxc 的 AST 节点类型本身；这些类型在 rolldown 中无处不在，无法被完全封装掉。）
+这样做的更深层原因——不依赖于任何特定的 oxc 变更——在于：将所有构造都通过一个由 rolldown 拥有的新类型（`AstFactory`，封装 oxc 的 `AstBuilder`）来进行，会把这个类型变成围绕 oxc 构造 API 的一个**隔离边界**。oxc 的构造表面已经多次变动：`#[non_exhaustive]` 在 0.135 中落地（oxc#23046，本身也是一系列 AST 宏重组的一部分），而 oxc#23043 在 0.138 中彻底重设计了 `AstBuilder`。无论 oxc 接下来做什么，影响范围都被限制在这一层，而不是扩散到数百个调用点上。（这里隔离的是 _构造 API_——方法名、签名、构建器类型——而不是 oxc 的 AST 节点类型本身；这些节点类型在 rolldown 中无处不在，无法通过包装完全屏蔽。）
 
 具体来说：
 
-- **oxc#23043 可以低成本接入。** 它会把构造从 `builder.alloc_foo(span, …)` 改为按类型构造器，generator 放在最后（`Foo::boxed(span, …, gen)`），通过 `AstGenerator` trait 实现，并自动分配 `NodeId`——明确提到了 rolldown [#9609](https://github.com/rolldown/rolldown/pull/9609)。既然已经有一个 rolldown 新类型贯穿全局，那么接入它就是一次局部修改：`AstFactory` 实现 `AstGenerator`，按类型的 `Foo::new(.., ast)` 构造器可以直接在其上工作，而今天的 `AstBuilder` 上的 `Deref` 只需移除即可——调用点不用改。
-- **即使移除 `AstBuilder` 也能保持局部化。** 如果 oxc 未来真的删除或重塑 builder，rolldown 就在这一单点重新承载构造——`AstFactory` 不再解引用到 oxc 的 builder，而是自己提供这套表面（或者实现 `AstGenerator`）——而所有通过 `AstFactory` 类型化的调用点都不会受影响。统一化正是这件事可行的原因：如果构造分散在四种惯用法和数百个直接绑定到 oxc 类型的站点上，你就不可能在一个点吸收上游变化。
+- **oxc#23043 的适配成本很低（oxc 0.138）。** 它将构造方式从 `builder.alloc_foo(span, …)` 改为每种类型各自的构造函数，并把生成器放在最后一个参数位置（`Foo::boxed(span, …, gen)`），同时自动分配 `NodeId`——并且明确提到了 rolldown [#9609](https://github.com/rolldown/rolldown/pull/9609)。由于一个 rolldown 的新类型早已贯穿全局，接入它只是一个局部变更：`AstFactory` 实现了 `GetAstBuilder` + `GetAllocator`，各类型的 `Foo::new(.., &ast_factory)` / `Foo::boxed(..)` 构造函数直接接收它，`make_*` 的实现体把 `self` 传进去，而对 oxc 的 `AstBuilder` 的 `Deref` 也被移除了。（泛型节点的调用点确实改了写法——`ast_factory.alloc_foo(..)` → `Foo::boxed(.., &ast_factory)`——但生成的节点是同一个，而 `make_*` 的调用点完全没动。）
+- **即使移除 `AstBuilder`，影响范围也仍然可控。** 如果 oxc 未来彻底删除或重塑这个构建器，rolldown 也只需要在这一个位置重新承载构造逻辑——`AstFactory` 提供这个表面本身（或实现 oxc 引入的任何新生成器 trait）——而所有通过 `AstFactory` 类型标注的调用点都可以原地不动。统一正是让这一点成为可能的原因：如果构造分散在四种不同的惯用法和数百个直接绑定到 oxc 类型的调用点上，就不可能在一个位置吸收上游变更。
 
-所以，即便 oxc 仍在变化中，这项工作现在也值得做——统一化正是限制这种变化成本的关键。oxc 自己的重设计**不能**解决的唯一一个可用性问题，是位置参数的冗长；这也正是保留一个薄的本地层的剩余理由：它只承载真正的 rolldown 模式，并且保持与 oxc 风格一致，而不是演化成另一套自己的分类体系。
+因此，这种统一性限制了 oxc 变动带来的成本。oxc 这次重设计**没有**解决的唯一一个易用性问题，是位置参数过于冗长；这也正是保留一个轻量本地层的理由：它只保留真正的 rolldown 模式，并与 oxc 的风格保持一致，而不是另起一套自己的分类体系。
 
 ## 迁移
 
-这是一项增量式约定，而不是一次性的大规模重构：
+这个约定是逐步引入的，但 oxc#23043 的切换（oxc 0.138）则是一口气完成的：
 
-- `AstSnippet` 将变为 `AstFactory` 的新类型封装：其 `pub builder` 字段将变为通过 `Deref` 暴露的包装 `AstBuilder`；那些简单的重命名将被放弃，改为使用解引用后的 oxc 构造函数；真正的模式将成为固有的 `make_*` 方法。别扭的 `AstSnippet` 名称将消失——rolldown 现在拥有了一个命名合理的构建器。
-- 新代码会立即遵循这一约定；现有代码会在合适时机逐步迁移（`..::dummy()` 这一组已经被 #9670 强制迁移过去了）。
+- `AstSnippet` 变成了 `AstFactory` 的 newtype：它的 `pub builder` 字段变成了被包装的 `AstBuilder`；那些简单的重命名被舍弃，改为使用 oxc 的构造器；真正的模式则变成了内在的 `make_*` 方法。`AstSnippet` 这个别扭的名字消失了——rolldown 现在拥有了一个命名恰当的 builder。
+- oxc 0.138 的 builder 重设计一次性迁移完成：所有泛型节点的调用点都从（当时已弃用的）`ast_factory.<builder_method>(..)` 形式迁移到了按类型的构造器（`Foo::new(.., &ast_factory)` / `Foo::boxed(..)` / `oxc::allocator::Vec::new_in(..)` / `Str::from_str_in(..)`），`AstFactory` 增加了 `GetAstBuilder` / `GetAllocator` 的实现，并移除了 `Deref`。新代码直接遵循按类型的约定。
 
 ## 相关
 

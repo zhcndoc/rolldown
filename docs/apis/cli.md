@@ -48,6 +48,18 @@ export default defineConfig((commandLineArgs) => {
 });
 ```
 
+### 配置加载器
+
+默认情况下，Rolldown 会先使用 Rolldown 对配置文件进行打包后再加载它（`configLoader: 'bundle'`）。这适用于任何受支持的运行时，包括 TypeScript 配置。
+
+如果你的运行时可以直接导入配置（Node.js 22.18+（原生 TypeScript 类型剥离）、Bun、Deno，或通过 `--import` 注册的加载器（例如 `tsx`、`jiti`）），你可以使用 `native` 加载器跳过打包步骤：
+
+```shell
+rolldown -c rolldown.config.ts --configLoader native
+```
+
+`native` 加载器更简单，并计划在未来成为默认值。
+
 ### 配置智能提示
 
 由于 Rolldown 附带 TypeScript 类型定义，你可以利用 IDE 的 JSDoc 类型提示获得智能提示：
@@ -138,6 +150,13 @@ import { data } from '../data-loading/cli-help.data'
 ### `-c, --config <filename>`
 
 使用指定的配置文件。如果使用了该参数但未指定文件名，Rolldown 将查找默认配置文件。有关更多详细信息，请参阅 [配置文件](#configuration-files)。
+
+### `--configLoader <loader>`
+
+如何加载配置文件。可选值之一：
+
+- `bundle`（默认）：在导入之前使用 Rolldown 对配置进行打包。
+- `native`：直接导入配置，依赖运行时对 TypeScript 和加载器的支持。请参阅 [配置加载器](#config-loaders)。
 
 ### `-h` / `--help`
 

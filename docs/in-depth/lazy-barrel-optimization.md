@@ -244,13 +244,13 @@ import { index, c } from './barrel';
 
 ## 配置
 
-默认情况下已启用 Lazy barrel 优化。你可以在 Rolldown 配置中临时禁用它：
+懒加载 barrel 优化目前默认处于禁用状态。你可以在你的 Rolldown 配置中启用它：
 
 ```js
 // rolldown.config.js
 export default {
   experimental: {
-    lazyBarrel: false,
+    lazyBarrel: true,
   },
 };
 ```

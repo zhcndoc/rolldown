@@ -42,8 +42,8 @@ catalog:
   '@napi-rs/wasm-runtime': ^1.1.6
   '@oxc-node/cli': ^0.1.0
   '@oxc-node/core': ^0.1.0
-  '@oxc-project/runtime': '=0.137.0'
-  '@oxc-project/types': '=0.137.0'
+  '@oxc-project/runtime': '=0.138.0'
+  '@oxc-project/types': '=0.138.0'
   '@pnpm/find-workspace-packages': ^6.0.9
   '@rolldown/pluginutils': ^1.0.0
   '@rollup/plugin-commonjs': ^29.0.0
@@ -76,14 +76,15 @@ catalog:
   fast-glob: ^3.3.3
   fixturify: ^3.0.0
   follow-redirects: ^1.15.6
+  fresh-import: ^0.2.1
   fs-extra: ^11.3.2
   glob: ^13.0.0
   lodash-es: ^4.17.21
   micromatch: ^4.0.8
   mocha: ^11.7.5
-  oxc-minify: '=0.137.0'
-  oxc-parser: '=0.137.0'
-  oxc-transform: '=0.137.0'
+  oxc-minify: '=0.138.0'
+  oxc-parser: '=0.138.0'
+  oxc-transform: '=0.138.0'
   pathe: ^2.0.3
   react: ^19.0.0
   react-dom: ^19.0.0
