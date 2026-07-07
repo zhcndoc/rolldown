@@ -4,10 +4,10 @@ Rolldown 可以从命令行使用。你可以提供一个可选的 Rolldown 配�
 
 ## 配置文件
 
-Rolldown 配置文件是可选的，但它们功能强大且方便，因此**推荐**使用。
-配置文件是一个 ES 模块，它导出一个包含所需选项的默认对象。
-通常，它被命名为 `rolldown.config.js`，并位于项目的根目录中。
-你也可以在 CJS 文件中使用 CJS 语法，此时使用 `module.exports` 而不是 `export default`。
+Rolldown 配置文件是可选的，但它们功能强大且方便，因此**推荐**使用。  
+配置文件是一个 ES 模块，它导出一个包含所需选项的默认对象。  
+通常，它被命名为 `rolldown.config.js`，并位于项目的根目录中。  
+你也可以在 CJS 文件中使用 CJS 语法，此时使用 `module.exports` 而不是 `export default`。  
 Rolldown 也原生支持 TypeScript 配置文件。
 
 请参阅 [参考](/reference/) 以获取可包含在配置文件中的完整选项列表。
@@ -30,7 +30,7 @@ rolldown --config           # 同上
 rolldown -c my.config.js    # 使用自定义配置文件
 ```
 
-如果你不传入文件名，Rolldown 将尝试在工作目录中加载 `rolldown.config.{js,mjs,cjs,ts,mts,cts}`。
+如果你不传入文件名，Rolldown 将尝试在工作目录中加载 `rolldown.config.{js,mjs,cjs,ts,mts,cts}`。  
 如果未找到配置文件，Rolldown 将显示错误。
 
 你也可以从配置文件中导出一个函数。该函数会使用命令行参数调用，因此你可以动态调整配置：
@@ -121,6 +121,18 @@ export default defineConfig({
 ## 命令行标志
 
 标志可以通过 `--foo`、`--foo <value>` 或 `--foo=<value>` 传入。像 `--minify` 这样的布尔标志不需要值，而像 `--transform.define` 这样的键值选项使用逗号分隔语法：`--transform.define key:value,key2:value2`。许多标志都有简写别名（例如，`-m` 对应 `--minify`，`-f` 对应 `--format`）。
+
+::: warning 禁用布尔标志
+
+要将布尔标志关闭，请在其前面加上 `--no-`，例如 `--no-minify` 或 `--no-codeSplitting`。将 `false` 作为值传入——`--minify false` 或 `--codeSplitting=false`——**不受支持**，并且会报错，因为该值会被读取为字符串 `"false"`，而不是布尔值。这与 [Rollup 的 CLI 行为](https://rollupjs.org/command-line-interface/)（`--no-treeshake` 等）一致。
+
+有些标志既可以接受布尔值，也可以接受对象（例如 `codeSplitting`）。对于这些标志，你可以：
+
+- 使用默认值启用：`--codeSplitting`
+- 关闭：`--no-codeSplitting`
+- 使用点号表示法设置嵌套字段：`--codeSplitting.minSize 30000`
+
+:::
 
 ::: info 集成到其他工具中
 

@@ -38,9 +38,9 @@ function resolvingPlugin() {
 
 请注意约定：自定义选项应通过与解析插件名称对应的属性来添加。由解析插件自行决定它接受哪些选项。
 
-## 自定义模块元数据
+## Custom Module Metadata
 
-插件可以为模块添加自定义元数据，这些元数据既可以由它们自己设置，也可以通过 [`resolveId`](/reference/Interface.Plugin#resolveid)、[`load`](/reference/Interface.Plugin#load) 和 [`transform`](/reference/Interface.Plugin#transform) 钩子由其他插件设置，并可通过 [`this.getModuleInfo`](/reference/Interface.PluginContext#getmoduleinfo)、[`this.load`](/reference/Interface.PluginContext#load) 以及 [`moduleParsed`](/reference/Interface.Plugin#moduleparsed) 钩子访问。这些元数据始终应当可以 `JSON.stringify`，并且会被持久化到缓存中，例如在监听模式下。
+Plugins can add custom metadata to modules. This metadata can be set by the plugins themselves, or by other plugins via the [`resolveId`](/reference/Interface.Plugin#resolveid), [`load`](/reference/Interface.Plugin#load), and [`transform`](/reference/Interface.Plugin#transform) hooks, and can be accessed through the [`this.getModuleInfo`](/reference/Interface.PluginContext#getmoduleinfo), [`this.load`](/reference/Interface.PluginContext#load), and [`moduleParsed`](/reference/Interface.Plugin#moduleparsed) hooks. This metadata should always be `JSON.stringify`-able, and will be persisted in the cache, for example in watch mode.
 
 ```js
 function annotatingPlugin() {
@@ -62,31 +62,31 @@ function readingPlugin() {
       const specialModules = Array.from(this.getModuleIds()).filter(
         (id) => this.getModuleInfo(id).meta.annotating?.special,
       );
-      // 使用这个列表执行某些操作
+      // Use this list to perform some operations
     },
   };
 }
 ```
 
-请注意约定：添加或修改数据的插件应当使用与插件名称对应的属性，在本例中是 `annotating`。另一方面，任何插件都可以通过 `this.getModuleInfo` 读取来自其他插件的所有元数据。
+Please note the convention: plugins that add or modify data should use a property corresponding to the plugin name, in this case `annotating`. On the other hand, any plugin can read all metadata from other plugins via `this.getModuleInfo`.
 
-如果有多个插件添加元数据，或者元数据是在不同钩子中添加的，那么这些 `meta` 对象会进行浅合并。这意味着，如果插件 `first` 在 `resolveId` 钩子中添加 `{meta: {first: {resolved: "first"}}}`，并在 `load` 钩子中添加 `{meta: {first: {loaded: "first"}}}`，而插件 `second` 在 `transform` 钩子中添加 `{meta: {second: {transformed: "second"}}}`，那么最终得到的 `meta` 对象将是 `{first: {loaded: "first"}, second: {transformed: "second"}}`。这里 `resolveId` 钩子的结果会被 `load` 钩子的结果覆盖，因为该插件将它们都存储在其顶层属性 `first` 下。另一方面，另一个插件的 `transform` 数据则会被放在旁边。
+If multiple plugins add metadata, or if metadata is added in different hooks, then these `meta` objects are shallow merged. This means that if plugin `first` adds `{meta: {first: {resolved: "first"}}}` in the `resolveId` hook, and adds `{meta: {first: {loaded: "first"}}}` in the `load` hook, while plugin `second` adds `{meta: {second: {transformed: "second"}}}` in the `transform` hook, then the final `meta` object will be `{first: {loaded: "first"}, second: {transformed: "second"}}`. Here the result from the `resolveId` hook is overwritten by the result from the `load` hook because that plugin stores them both under its top-level property `first`. On the other hand, the `transform` data from the other plugin is placed alongside it.
 
-一个模块的 `meta` 对象会在 Rolldown 开始加载模块时立即创建，并在该模块的每个生命周期钩子中更新。如果你保存了对此对象的引用，也可以手动更新它。要访问尚未加载的模块的 meta 对象，你可以通过 [`this.load`](/reference/Interface.PluginContext#load) 触发其创建并加载该模块：
+A module's `meta` object is created immediately when Rolldown starts loading the module, and is updated in each lifecycle hook for that module. If you keep a reference to this object, you can also update it manually. To access the meta object of a module that has not yet been loaded, you can trigger its creation and loading via [`this.load`](/reference/Interface.PluginContext#load):
 
 ```js
 function plugin() {
   return {
     name: 'test',
     buildStart() {
-      // 触发一个模块的加载。我们也可以在这里传入一个初始
-      // "meta" 对象，但如果该模块已经通过其他方式
-      // 加载过，它将被忽略
+      // Trigger loading of a module. We could also pass an initial
+      // "meta" object here, but if the module has already been
+      // loaded through other means, it will be ignored
       this.load({ id: 'my-id' });
-      // 现在模块信息已经可用，我们不需要等待
+      // Now the module information is available, and we don't need to wait for
       // this.load
       const meta = this.getModuleInfo('my-id').meta;
-      // 现在我们也可以手动修改 meta
+      // Now we can also modify meta manually
       meta.test = { some: 'data' };
     },
   };
@@ -133,3 +133,48 @@ function dependentPlugin() {
   };
 }
 ```
+
+## 描述性元数据
+
+插件可以为模块以及自身附加描述性元数据。这些元数据仅用于信息展示，旨在由检查构建结果的工具呈现，例如 [Vite devtools](https://github.com/vitejs/devtools)。
+
+### 模块描述
+
+工具通常会通过模块的 id 来显示模块，而这个 id 往往并不直观。例如，`\\0vite/modulepreload-polyfill.js` 无法提示该模块的用途。这对虚拟模块很有用。插件可以通过 [`resolveId`](/reference/Interface.Plugin#resolveid)、[`load`](/reference/Interface.Plugin#load) 或 [`transform`](/reference/Interface.Plugin#transform) 钩子，为模块附加一个人类可读的 [`description`](/reference/Interface.ModuleOptions#description)。
+
+```js
+function modulePreloadPolyfillPlugin() {
+  return {
+    name: 'vite:modulepreload-polyfill',
+    load: {
+      filter: { id: /^\0vite\/modulepreload-polyfill\.js$/ },
+      handler(id) {
+        return {
+          code: '/* ... */',
+          description: '对带有 `rel="modulepreload"` 的 `link` 标签的 polyfill',
+        };
+      },
+    },
+  };
+}
+```
+
+### 插件元数据
+
+一个单独的包通常会提供多个插件，而插件的 `name` 并不总能说明它来自哪个包。插件可以通过插件对象的 [`meta`](/reference/Interface.Plugin#meta) 属性声明其来源包名和版本，从而让工具能够按包对插件进行归属和分组。也可以通过 `description` 属性附加一段简短说明，描述该插件的作用。
+
+```js
+function vuePlugin() {
+  return {
+    name: 'vite:vue',
+    meta: {
+      packageName: '@vitejs/plugin-vue',
+      version: '5.0.0',
+      description: '处理 Vue 单文件组件',
+    },
+    // ...插件钩子
+  };
+}
+```
+
+完整形状请参见 [`PluginMeta`](/reference/Interface.PluginMeta) 类型。

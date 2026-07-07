@@ -8,6 +8,24 @@ Rolldown devtools 是一个基于 tracing 的系统，它会将结构化的构�
 
 ## 未来方向
 
+### 插件提供的元数据
+
+消费者并不总能判断一个虚拟模块是什么，或者某个插件来自哪个包。Rolldown 允许插件同时为这两者附加描述性元数据，这样 devtools 输出就能呈现更丰富、更贴近人工编写的上下文。该元数据仅用于信息展示，不会影响打包。参见 vitejs/devtools [#171](https://github.com/vitejs/devtools/issues/171)（模块描述）和 [#172](https://github.com/vitejs/devtools/issues/172)（插件包名）。
+
+**面向作者的契约（已在 `packages/rolldown` 中完成类型定义）：**
+
+- **模块描述** —— 插件从 `resolveId`/`load`/`transform` 钩子返回顶层 `description`。它是 `ModuleOptions` 上一个直接的可选字段（因此也可通过 `this.getModuleInfo` 读取），并且适用于动态生成的虚拟模块。
+- **插件元数据** —— 插件在插件对象上设置 `meta.packageName`、`meta.version` 和 `meta.description`（`PluginMeta`）。
+
+这些字段都不是必需的，并且对打包没有任何影响。它们是通用的描述性元数据；tracing 层只是其中一个消费者，它会把这些信息转发给诸如 Vite devtools 之类的工具。
+
+**发射侧（尚未接通）：** trace action 需要携带这些值，这样消费者才能真正接收到它们。
+
+- `SessionMeta.plugins[]`（`rolldown_devtools_action` 中的 `PluginItem`）应增加 `package_name: Option<String>`、`version: Option<String>` 和 `description: Option<String>`，并在发射 session meta 时读取每个插件的 `meta` 来填充。
+- 模块描述应附加在按模块输出数据的位置（例如 `HookLoadCallEnd` / `ModuleGraphReady`），从模块解析后的 `description` 中读取。
+
+在这套管线落地之前，设置这些字段除了类型检查之外不会产生任何效果；先定义契约，是为了让插件作者和消费者能够就数据形状达成一致。
+
 ### 性能
 
 最初的实现优先解决的是“可消费性”——把结构化数据输出到磁盘，这样外部工具就可以开始基于它进行开发。当时性能显式地不是优先级。

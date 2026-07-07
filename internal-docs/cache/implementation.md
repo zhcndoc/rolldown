@@ -1,4 +1,4 @@
-# Cache — Implementation
+# 缓存 — 实现
 
 > 缓存完整性契约和开放问题位于 [design.md](./design.md)。
 
@@ -16,9 +16,9 @@ Rolldown 有几种不同的缓存机制。其中架构上最核心的是 **`Scan
 
 ### 1. 增量构建缓存
 
-| 类型             | 位置                                              | 存储内容                                                               |
-| ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
-| `ScanStageCache` | `crates/rolldown/src/types/scan_stage_cache.rs:20` | 模块图快照 + 模块索引映射。详见本文其余部分。 |
+| Type             | Location                                           | Stores                                                                   |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------------------------------ |
+| `ScanStageCache` | `crates/rolldown/src/types/scan_stage_cache.rs:23` | 模块图快照 + 模块索引映射。参见本文档其余部分。 |
 
 ### 2. 跨构建失效状态
 
@@ -88,7 +88,7 @@ Rolldown 有几种不同的缓存机制。其中架构上最核心的是 **`Scan
 
 ### 结构体
 
-`crates/rolldown/src/types/scan_stage_cache.rs:20`：
+`crates/rolldown/src/types/scan_stage_cache.rs:23`:
 
 ```rust
 pub struct ScanStageCache {
@@ -96,35 +96,39 @@ pub struct ScanStageCache {
   pub barrel_state: BarrelState,
   pub module_id_to_idx: FxHashMap<ModuleId, VisitState>,
   pub importers: IndexVec<ModuleIdx, Vec<ImporterRecord>>,
+  pub modules_with_changed_importers: FxHashSet<ModuleIdx>,
+  pub pending_rescans: Vec<ResolvedId>,
   pub user_defined_entry: FxHashSet<ModuleId>,
   pub module_idx_by_abs_path: FxHashMap<ArcStr, ModuleIdx>,
   pub module_idx_by_stable_id: FxHashMap<StableModuleId, ModuleIdx>,
 }
 ```
 
-| 字段                     | 作用                                                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `snapshot`               | 完整的模块图。`None` 是合法的临时状态；它是 `private`，只能通过下述方法访问。                                      |
-| `barrel_state`           | barrel re-export 解析状态（`BarrelState`）。                                                                       |
-| `module_id_to_idx`       | `ModuleId` → `ModuleIdx` 的注册/分配器（见“模块身份模型”）。                                                        |
-| `importers`              | 反向依赖图：每个模块被哪些模块导入。                                                                                |
-| `user_defined_entry`     | 配置的根入口 `ModuleId` 集合。                                                                                      |
-| `module_idx_by_abs_path` | 绝对路径 → `ModuleIdx`，供 watcher 使用。路径使用 slash 规范化。                                                     |
-| `module_idx_by_stable_id`| `StableModuleId` → `ModuleIdx`，供 HMR 使用。                                                                       |
+| 字段                            | 用途                                                                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `snapshot`                       | 完整的模块图。`None` 是合法的临时状态；它是 `private`，只能通过下面的方法访问。                                                                                                        |
+| `barrel_state`                   | Barrel 重导出解析状态（`BarrelState`）。                                                                                                                                            |
+| `module_id_to_idx`               | `ModuleId` → `ModuleIdx` 的注册表/分配器（参见“模块身份模型”）。                                                                                                                    |
+| `importers`                      | 反向依赖图：每个模块都记录谁导入了它。                                                                                                                                                 |
+| `modules_with_changed_importers` | 其 `importers` 记录被部分扫描修改过的模块；`merge` 会清空它，并重新推导这些模块物化后的 importer 集合（见下文）。                                                                     |
+| `pending_rescans`                | 工作队列：被中止的部分扫描所涉及的文件，其修改已被回滚（`ModuleLoader::revert_partial_scan`）；下一次部分扫描会重试它们，以便错误继续显现。                                           |
+| `user_defined_entry`             | 已配置的根入口 `ModuleId` 集合。                                                                                                                                                       |
+| `module_idx_by_abs_path`         | 绝对路径 → `ModuleIdx`，供 watcher 使用。路径已做斜杠规范化。                                                                                                                         |
+| `module_idx_by_stable_id`        | `StableModuleId` → `ModuleIdx`，供 HMR 使用。                                                                                                                                         |
 
-`module_idx_by_abs_path` 和 `module_idx_by_stable_id` 是**派生字段**——
-`build_module_index_maps`（`scan_stage_cache.rs:213`）会在每次 `set_snapshot` 运行时
-清空并根据 snapshot 重新构建这两个映射。
+`module_idx_by_abs_path` 和 `module_idx_by_stable_id` 是**派生**得到的——
+`build_module_index_maps`（`scan_stage_cache.rs:297`）会在每次 `set_snapshot` 运行时，
+基于 snapshot 清空并重建这两个映射。
 
 snapshot 访问器（`scan_stage_cache.rs`）：
 
-- `set_snapshot`（`:34`）—— 安装 snapshot 并重建索引映射。
-- `get_snapshot`（`:66`）—— `&NormalizedScanStageOutput`；**如果 `snapshot` 为 `None` 会 panic**。
-- `get_snapshot_mut`（`:41`）—— `&mut`；**如果为 `None` 会 panic**。
-- `take_snapshot`（`:46`）—— 将 snapshot 移出，留下 `None`。
-- `update_defer_sync_data`（`:50`）—— 取出 snapshot，执行 `defer_sync_scan_data`，在任何结果下都恢复它，然后传播任何错误。
-- `merge`（`:70`）—— 将扫描输出拼接进 snapshot（见下文）。
-- `create_output`（`:229`）—— 生成供构建消费的 `NormalizedScanStageOutput`。
+- `set_snapshot` (`:44`) — 安装一个 snapshot 并重建索引映射。
+- `get_snapshot` (`:76`) — `&NormalizedScanStageOutput`；**如果 `snapshot` 为 `None` 会 panic**。
+- `get_snapshot_mut` (`:51`) — `&mut`；**如果为 `None` 会 panic**。
+- `take_snapshot` (`:56`) — 将 snapshot 移出，留下 `None`。
+- `update_defer_sync_data` (`:60`) — 取出 snapshot，运行 `defer_sync_scan_data`，在所有结果上都恢复它，然后再向外传播任何错误。
+- `merge` (`:80`) — 将一次 scan 输出拼接进 snapshot（见下文）。
+- `create_output` (`:313`) — 产出供构建消费的 `NormalizedScanStageOutput`。
 
 ### `BundleMode`
 
@@ -264,13 +268,12 @@ idx 在出生时就固定了；后续转换只是在 `Seen` / `Invalidate` 标�
 
 ## `ScanStageCache::merge` — 写入路径
 
-`scan_stage_cache.rs:70`。签名：`merge(&mut self, scan_stage_output: ScanStageOutput) -> BuildResult<()>`。
+`scan_stage_cache.rs:80`。签名：`merge(&mut self, scan_stage_output: ScanStageOutput, plugin_driver: &PluginDriver) -> BuildResult<()>`.
 
 ### 调用者
 
-- `bundle.rs:256` — 在 `normalize_scan_stage_output_and_update_cache` 中的
-  非全量扫描分支。
-- `hmr_stage.rs:286`, `:379`, `:621` — HMR 更新路径。
+- `bundle.rs:256` — 在 `normalize_scan_stage_output_and_update_cache` 中，非全量扫描分支。
+- `hmr_stage.rs:299`, `:410` — HMR 更新和 lazy-compile 路径。
 
 全量扫描构建路径不会调用 `merge`；它使用 `set_snapshot`（`bundle.rs:250`）。
 当前所有调用者都传入部分扫描输出，其 `module_table` 为
@@ -279,35 +282,29 @@ idx 在出生时就固定了；后续转换只是在 `Seen` / `Invalidate` 标�
 
 ### 算法
 
-1. **首次构建逃生口**（`:77`–`:82`）——如果 `snapshot` 为 `None`，则通过
-   `try_into` 转换整个输出并返回。
-2. **提取 `modules`**（`:83`–`:92`）——对 `module_table` 进行匹配：
-   `IndexVec` 分支是 `unreachable!()`；`Map` 分支收集为 `Vec` 并按 idx
-   **排序**。排序会把已有模块（idx < cache 长度）放在新模块之前，并让新模块按
-   升序排列，以便 `push` 将每个模块放入其分配好的槽位。
-3. **逐模块循环**（`:94`–`:158`）：
-   - `new_idx` 是 `Map` 的 key（扫描输出的索引）；`idx` 是
-     `module_id_to_idx[new_module.id()].idx()`（缓存的索引）。根据不变量 6，
-     二者相等。
-   - 更新 `module_idx_by_abs_path`（仅普通模块，路径做斜杠归一化）和
+1. **首次构建逃生口**（`:91`–`:96`）— 如果 `snapshot` 为 `None`，
+   通过 `try_into` 转换整个输出并返回。
+2. **提取 `modules`**（`:97`–`:106`）— 对 `module_table` 进行匹配：`IndexVec` 分支为
+   `unreachable!()`；`Map` 分支收集到一个 `Vec` 中，并按 `idx` **排序**。该排序会使现有模块（`idx < cache length`）
+   排在新模块（`idx ≥ cache length`）之前，并让新模块按升序排列，从而使 `push` 能将每个模块放到其分配好的槽位中。
+3. **逐模块循环**（`:108`–`:172`）：
+   - `new_idx` 是 `Map` 的键（用于索引扫描输出）；`idx` 是
+     `module_id_to_idx[new_module.id()].idx()`（用于索引缓存）。根据不变量 6，它们相等。
+   - 更新 `module_idx_by_abs_path`（仅普通模块，且对斜杠进行规范化）和
      `module_idx_by_stable_id`。
-   - **新模块**（`new_idx ≥ cache.module_table.modules.len()`）：将模块 / AST /
-     stmt infos / local symbol DB 追加到并行集合中；调整
-     `tla_module_count` 和 `tla_keyword_span_map`。
-   - **已有模块**：在 `idx` 处覆盖相同集合；按旧值与新值的差异调整 TLA 计数；
-     替换或移除 TLA span。
-   - 所有 payload 都是从扫描输出中移动出来的（`mem::take` / `take` /
-     `mem::replace` / `mem::swap`）——从不克隆。
-4. **合并入口点**（`:161`–`:181`）——对于匹配到的已有入口点，删除已重新扫
-   描模块的 `related_stmt_infos`，并扩展为新的内容；否则追加新的入口点。
-5. **修补 barrel 模块**（`:184`–`:192`）——排空
-   `barrel_state.resolved_barrel_modules`，并将已解析的导入记录写回缓存中的模块。
-6. **重新计算用户定义入口**（`:194`–`:208`）——从扫描输出中的集合开始，再加
-   回仍能解析到活跃模块的持久配置根目录
-   (`self.user_defined_entry`)。这里每次构建都会重建该集合，而不是单调扩展它。
+   - **新模块**（`new_idx ≥ cache.module_table.modules.len()`）：将模块 / AST / stmt infos / local symbol DB 推入并行集合；
+     调整 `tla_module_count` 和 `tla_keyword_span_map`。
+   - **已有模块**：在 `idx` 处覆盖相同集合；根据旧↔新差值调整 TLA 计数；替换或移除 TLA span。
+   - 所有负载都从扫描输出中被移动出去（`mem::take` / `take` / `mem::replace` / `mem::swap`）——从不克隆。
+4. **重新推导受影响缓存模块的 importer 集合**（`:171`–`:182`）—
+   drain `modules_with_changed_importers`（该集合由 `ModuleLoader::mark_module_importers_changed` 在每次 `importers` 边列表变动旁边填充），并通过 `EcmaView::rebuild_importer_sets` 从边列表为每个列出的模块重建其物化后的 `importers`/`importers_idx`/`dynamic_importers` 集合。扫描只会对其生成的模块执行这一步；对于某个缓存模块，如果其 importer 对它的 import 进行了添加/删除/重新分类，这里会刷新它（issue #7416）。
+5. **合并入口点** — 对于匹配的已有入口点，删除被重新扫描模块的 `related_stmt_infos` 并追加新的条目；否则推入新的入口点。
+6. **修补 barrel 模块** — drain `barrel_state.resolved_barrel_modules`，并将解析后的 import 记录写回缓存模块。
+7. **重新计算用户定义入口** — 从扫描输出的集合开始，加入仍能解析到存活模块的持久配置根节点
+   (`self.user_defined_entry`)。这样每次构建都会重建该集合，而不是单调扩展。
+8. **刷新面向插件的 `ModuleInfo`** — 对在步骤 4 中重新推导的模块，重新运行 `to_module_info` 和 `plugin_driver.set_module_info`，使 `this.getModuleInfo(id).importers` 与合并后的图一致（扫描只会为其生成的模块刷新这一点）。
 
-`merge` 有两个 panic 点：`module_id_to_idx[new_module.id()]` 这个索引表达式（在缺
-失键时 panic——只有当不变量 6 被破坏时才会发生）以及 `unreachable!()` 分支。
+`merge` 有两个 panic 点：`module_id_to_idx[new_module.id()]` 这个索引表达式（在缺失键时 panic——只有当不变量 6 被破坏时才会发生）以及 `unreachable!()` 分支。
 `Module::idx()` 返回的值与 `module_id_to_idx` 查找结果相同，并且是不会失败的。
 
 ---
@@ -316,25 +313,26 @@ idx 在出生时就固定了；后续转换只是在 `Seen` / `Invalidate` 标�
 
 ### `ScanStageCache` 的写入者
 
-| 写入者                                                   | 位置                                                                                | 写入内容                                                                                                                                          |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ScanStage::scan(scan_mode, &mut self.cache)`            | 调用位置 `bundle.rs:104`                                                               | 由 loader 写入非 snapshot 字段。                                                                                                                   |
-| `ModuleLoader` (`cache: &'a mut ScanStageCache`)         | `module_loader.rs:117` 及其方法                                                         | `module_id_to_idx`、`barrel_state`（例如在 invalidate 时移除 `barrel_infos`）、`importers`、`user_defined_entry`（全量增量扫描）。               |
-| `ScanStageCache::merge`                                  | `scan_stage_cache.rs:70`; 被 `bundle.rs:256`, `hmr_stage.rs:286/379/621` 调用         | `snapshot`、`module_idx_by_abs_path`、`module_idx_by_stable_id`、`barrel_state.resolved_barrel_modules`（被排空）、snapshot 中的 `tla_*` 字段。 |
-| `ScanStageCache::set_snapshot`                           | `scan_stage_cache.rs:34`; 被 `bundle.rs:250` 和 `update_defer_sync_data` 内部调用      | `snapshot` + 重建 `module_idx_by_abs_path` / `module_idx_by_stable_id`。                                                                        |
-| `ScanStageCache::update_defer_sync_data`                 | `scan_stage_cache.rs:50`; 被 `bundle.rs:257`, `hmr_stage.rs:289/382/623` 调用         | 取出并恢复 `snapshot`；`defer_sync_scan_data` 会修改其中按模块划分的 `side_effects`。                                                              |
-| `ScanStageCache::create_output`                          | `scan_stage_cache.rs:229`; 被 `bundle.rs:258` 调用                                    | 修改 `snapshot.symbol_ref_db`（在不限定作用域的情况下克隆它，然后交换）；返回一个 `NormalizedScanStageOutput`。                                   |
-| `merge_immutable_fields_for_cache`                       | `bundle.rs:315`，被 `bundle.rs:279` 调用                                                | `get_snapshot_mut()`；在 link 阶段之后恢复符号表作用域。                                                                                            |
-| `with_cached_bundle` / `with_cached_bundle_experimental` | `impl_bundler_incremental_build.rs:9` / `:27`                                           | 在 `Bundler` 与 `Bundle` 之间移动整个 `ScanStageCache`。                                                                                          |
+| 写入者                                                   | 位置                                                                                    | 写入内容                                                                                                                                                                                                                                         |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ScanStage::scan(scan_mode, &mut self.cache)`            | 在 `bundle.rs:104` 调用                                                               | 通过加载器写入非快照字段。                                                                                                                                                                                                                    |
+| `ModuleLoader` (`cache: &'a mut ScanStageCache`)         | `module_loader.rs:117` 和相关方法                                                      | `module_id_to_idx`、`barrel_state`（例如在失效时移除 `barrel_infos`）、`importers`、`modules_with_changed_importers`、`user_defined_entry`（完整增量扫描）。                                                                           |
+| `ScanStageCache::merge`                                  | `scan_stage_cache.rs:80`；在 `bundle.rs:256`、`hmr_stage.rs:299/410` 中调用             | `snapshot`、`module_idx_by_abs_path`、`module_idx_by_stable_id`、`barrel_state.resolved_barrel_modules`（被 drain）、`modules_with_changed_importers`（被 drain）、快照中的 `tla_*` 字段；为重新推导出的模块刷新插件 `module_infos`。 |
+| `ModuleLoader::revert_partial_scan`                      | `module_loader.rs` 扫描错误退出                                                      | 将 `module_id_to_idx` / `importers` / `barrel_state` / importer 标记恢复到扫描前状态，并填充 `pending_rescans`。                                                                                                                       |
+| `ScanStageCache::set_snapshot`                           | `scan_stage_cache.rs:44`；在 `bundle.rs:250` 以及 `update_defer_sync_data` 内部调用 | `snapshot` + 重建 `module_idx_by_abs_path` / `module_idx_by_stable_id`。                                                                                                                                                                            |
+| `ScanStageCache::update_defer_sync_data`                 | `scan_stage_cache.rs:60`；在 `bundle.rs:257`、`hmr_stage.rs:302/414` 中调用             | 取出并恢复 `snapshot`；`defer_sync_scan_data` 在其中修改每个模块的 `side_effects`。                                                                                                                                                     |
+| `ScanStageCache::create_output`                          | `scan_stage_cache.rs:313`；在 `bundle.rs:258` 中调用                                    | 修改 `snapshot.symbol_ref_db`（克隆后不带作用域，进行交换）；返回一个 `NormalizedScanStageOutput`。                                                                                                                                            |
+| `merge_immutable_fields_for_cache`                       | `bundle.rs:315`，在 `bundle.rs:279` 中调用                                              | `get_snapshot_mut()`；在 link 阶段后恢复符号表作用域。                                                                                                                                                                            |
+| `with_cached_bundle` / `with_cached_bundle_experimental` | `impl_bundler_incremental_build.rs:9` / `:27`                                           | 在 `Bundler` 和 `Bundle` 之间移动整个 `ScanStageCache`。                                                                                                                                                                                       |
 
 ### `ScanStageCache` 的读取者
 
-| 读取者                 | 位置                                  | 读取内容                                                                                                                                                     |
-| ---------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `HmrStage`             | `hmr_stage.rs:48`, `:52`              | `get_snapshot().module_table`、`get_snapshot().index_ecma_ast`；同时也使用模块索引映射。HMR 也是写入者（它调用 `merge` / `update_defer_sync_data`）。          |
-| `ModuleLoader`         | `module_loader.rs:410`, `:983`        | `get_snapshot()`（例如 `module_table.modules.get(..)`）。此外还读取 `module_id_to_idx`（`:229`, `:869`）、`barrel_state`、`user_defined_entry`。              |
-| `defer_sync_scan_data` | `module_loader/deferred_scan_data.rs` | 读取 `module_id_to_idx`（以 `&FxHashMap<ModuleId, VisitState>` 形式传入）；修改 snapshot 中按模块划分的 side effects。                                       |
-| `merge`                | `scan_stage_cache.rs:70`              | 读取 `module_id_to_idx` 和 `user_defined_entry`。                                                                                                            |
+| 读取者                 | 位置                              | 读取内容                                                                                                                                                        |
+| ---------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HmrStage`             | `hmr_stage.rs:48`、`:52`              | `get_snapshot().module_table`、`get_snapshot().index_ecma_ast`；也使用模块索引映射。HMR 也是写入者（它会调用 `merge` / `update_defer_sync_data`）。 |
+| `ModuleLoader`         | `module_loader.rs:410`、`:983`        | `get_snapshot()`（例如 `module_table.modules.get(..)`）。另外还读取 `module_id_to_idx`（`:229`、`:869`）、`barrel_state`、`user_defined_entry`。                        |
+| `defer_sync_scan_data` | `module_loader/deferred_scan_data.rs` | 读取 `module_id_to_idx`（作为 `&FxHashMap<ModuleId, VisitState>` 传入）；修改快照中每个模块的副作用。                                             |
+| `merge`                | `scan_stage_cache.rs:80`              | 读取 `module_id_to_idx`、`user_defined_entry` 和 `importers`（重新推导 importer 集合）。                                                                          |
 
 ---
 

@@ -24,6 +24,8 @@ Bundler（长生命周期）
   │     ├── snapshot（NormalizedScanStageOutput）
   │     ├── module_id_to_idx
   │     ├── importers
+  │     ├── modules_with_changed_importers
+  │     ├── pending_rescans
   │     ├── barrel_state
   │     ├── module_idx_by_abs_path
   │     └── module_idx_by_stable_id
@@ -76,14 +78,16 @@ Bundle（按构建创建，使用后即消耗）
 Bundler.cache（ScanStageCache） ──(move)──> Bundle.cache（临时持有者） ──(build)──> Bundle.cache ──(move)──> Bundler.cache
 ```
 
-| `ScanStageCache` 字段    | 用途                               |
-| ------------------------ | ---------------------------------- |
-| `snapshot`               | 完整模块图（模块、AST、符号、入口） |
-| `module_id_to_idx`       | 模块 ID 到索引的查找              |
-| `importers`              | 反向依赖图                         |
-| `barrel_state`           | barrel 导出优化状态                |
-| `module_idx_by_abs_path` | 基于路径的 watcher 查找           |
-| `module_idx_by_stable_id` | 用于 HMR 的稳定 ID 查找           |
+| `ScanStageCache` 字段           | 作用                                                                                       |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `snapshot`                       | 完整的模块图（模块、AST、符号、入口）                                           |
+| `module_id_to_idx`               | 模块 ID 到索引的查找                                                                     |
+| `importers`                      | 反向依赖图                                                                      |
+| `modules_with_changed_importers` | 其 `importers` 记录在部分扫描中发生变更的模块；由 `merge` 清空                  |
+| `pending_rescans`                | 工作队列：被中止（并回滚）的部分扫描对应的文件；由下一次部分扫描重试 |
+| `barrel_state`                   | barrel 导出优化状态                                                              |
+| `module_idx_by_abs_path`         | 供 watcher 使用的基于路径的查找                                                                 |
+| `module_idx_by_stable_id`        | 供 HMR 使用的稳定 ID 查找                                                                      |
 
 ### 构建失败时的缓存完整性
 
@@ -103,7 +107,23 @@ Bundler.cache（ScanStageCache） ──(move)──> Bundle.cache（临时持�
 - `bundle_up` 在 link 阶段之后、进入可失败的 `generate_bundle` / 文件名检查 / `invalidate_js_side_cache` 步骤之前，立即运行 `merge_immutable_fields_for_cache`。
 - `update_defer_sync_data` 会在向外传播错误之前恢复 snapshot。
 
-如果一个构建在接触缓存之前就失败了（例如 scan 阶段的解析错误），则不需要修复——`scan_modules` 会直接提前返回，缓存保持未变。
+失败的扫描也绝不能让缓存处于 _不同步_ 状态。任务结果会在到达时就被应用，因此一次被中止的部分扫描，已经把重新扫描的模块在 `module_id_to_idx` 中标记为 `Seen`，并且可能已经变更了已完成任务的 `importers` 边列表，以及为新发现的模块分配了索引；而 snapshot 从未得到这些变化（`merge` 在错误路径上不会执行）。把下一次部分扫描接到那个状态上，会默默地沿用过时的模块代码，并把新的模块索引从其 snapshot 中对应的位置移开。
+
+因此，`ModuleLoader::revert_partial_scan` 会在每次中止时恢复扫描前状态。snapshot 从不被扫描直接修改，所以它充当了干净的主副本，其他一切都从它恢复：
+
+- 现有的 `module_id_to_idx` 条目会在扫描结束时回到扫描前的值（`Seen` -> `Invalidate` -> `Seen`）；只有为新发现模块插入的键会被移除；
+- `importers` 边列表会从 snapshot 重新推导（`ScanStageCache::derive_importers_from_snapshot`），因为每条边都是某个模块的已解析导入记录；
+- `modules_with_changed_importers` 会被清空，`barrel_state` 会从预先克隆的副本恢复（仅在启用 lazy barrel 时才会克隆）；
+- 新分配的（现在已释放的）模块索引中的 `transform_dependencies` 条目会被丢弃，因此之后复用该索引的模块不会继承它们；
+- 被扫描的文件会进入 `ScanStageCache::pending_rescans`，这是下一次部分扫描会清空的工作队列，因此它们的错误会持续暴露，直到文件被修复。只有图仍然需要的文件才会入队——即条目文件，或在最新边状态下仍被某些内容导入的文件。一个损坏文件如果它的最后一个导入恰好被这次扫描移除了，就会被丢弃；否则它的重试会导致之后每次构建都失败，而同一棵树的全新构建本应通过。
+
+有两个消费者依赖这个队列的内容：
+
+- `HmrStage::compute_hmr_update` 会在计算客户端边界之前，把待处理文件折叠进它的 stale 和 changed 集合，因此一次被失败扫描回滚的编辑，在重试成功后会进入客户端的补丁（不仅仅是服务端图）；
+- 错误增强（`trace_import_chain_from_modules`）会在 revert 之前运行，此时失败扫描的模块仍存在于 `module_id_to_idx` 和活动边列表中。
+
+因此得到的不变量是：**在构建之间，缓存要么是空的
+（`snapshot` 为 `None`：全新 bundler，或一次失败的全量扫描已将其重置），要么就是一个任何部分扫描都可以继续构建的有效图。** `Bundler::incremental_bundle` 仅凭这个属性（`has_snapshot`）来决定扫描模式，其他消费者无需再推理失败构建。
 
 **为什么还要保留失败构建的缓存？** 提交一个 _破损_ 的缓存比直接丢弃它更糟：空的 snapshot 会让下一次 `get_snapshot()` panic，而破损的作用域会让下一次 link 时 `oxc_semantic` 数组越界。一个完整但略微过时的缓存是可恢复的；损坏的则不行。恢复路径是 `BundleMode` 的 `IncrementalFullBuild`（见下表）——它会重新扫描所有内容，但仍依赖缓存结构本身是有效的，才能合并进去。
 

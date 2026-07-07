@@ -13,12 +13,12 @@ Rolldown 插件是一个满足下面所述 [插件接口](#plugin-interface) 的
 
 ### 示例
 
-下面的示例展示了一个 Rolldown 插件，它会拦截对 `example-virtual-module` 的导入请求，并为其返回自定义内容。
+下面的示例展示了一个 Rolldown 插件，它会拦截对 `virtual:example` 的导入请求，并为其返回自定义内容。
 
 ::: code-group
 
 ```js [rolldown-plugin-example.js]
-const id = 'example-virtual-module';
+const id = 'virtual:example';
 const resolvedId = '\0' + id;
 
 export default function examplePlugin() {
@@ -26,14 +26,14 @@ export default function examplePlugin() {
     name: 'example-plugin', // 这个名称会显示在日志和错误中
     resolveId(source) {
       if (source === id) {
-        // 这会向 Rolldown 表示该导入应解析为名为 `\0example-virtual-module` 的模块
+        // 这表示告诉 Rolldown，这个导入应解析为名为 `\0virtual:example` 的模块
         return resolvedId;
       }
       return null; // 其他 id 应按常规方式处理
     },
     load(id) {
       if (id === resolvedId) {
-        // `\0example-virtual-module` 的源代码
+        // `\0virtual:example` 的源代码
         return `export default 'Hello from ${id}';`;
       }
       return null; // 其他 id 应按常规方式处理
@@ -53,15 +53,6 @@ export default defineConfig({
 
 :::
 
-::: tip 虚拟模块 {#virtual-modules}
-
-此插件实现了一种通常称为“虚拟模块”的模式。
-虚拟模块是文件系统中不存在的模块，而是由插件解析并提供。
-在上面的示例中，`example-virtual-module` 从未从磁盘读取，因为插件在 `resolveId` 中拦截了导入，并在 `load` 中提供了该模块的源代码。
-这种模式适用于注入辅助函数。
-
-:::
-
 ::: warning Hook Filters
 
 为了简单起见，这个示例插件没有使用 [Hook Filters](/apis/plugin-api/hook-filters)。
@@ -73,12 +64,28 @@ export default defineConfig({
 
 - 插件应具有清晰的名称，并带有 `rolldown-plugin-` 前缀。
 - 在 package.json 的 `keywords` 字段中包含 `rolldown-plugin` 关键字。
-- 确保你的插件在适当情况下输出正确的源映射。
-- 如果你的插件使用了 ["virtual modules"](#virtual-modules)，请在模块 ID 前加上 `\0` 前缀。这可以防止其他插件尝试处理它。
+- 请确保插件在适当情况下输出正确的源映射。
+- 如果你的插件使用了 [虚拟模块](#virtual-modules)，请遵循 [虚拟模块约定](#virtual-modules)。
 - （推荐）插件应进行测试。
-- （推荐）插件应使用英文文档。
+- （推荐）插件应使用英文进行文档编写。
 
 <!-- TODO: 添加一个如何测试插件的指南 -->
+
+### 虚拟模块约定 {#virtual-modules}
+
+虚拟模块是一种有用的方案，它允许你通过普通的 ESM import 语法，将构建时信息或辅助函数传递给源文件。虚拟模块是文件系统中不存在的模块，而是由插件解析并提供的，如 [上面的示例](#example) 所示。
+
+一旦注册了这样的插件，就可以通过其面向用户的 id 在 JavaScript 中导入该虚拟模块：
+
+```js
+import msg from 'virtual:example';
+
+console.log(msg);
+```
+
+按照约定，Rolldown 中的虚拟模块在面向用户的路径前缀中使用 `virtual:`。如果可能，应使用插件名称作为命名空间，以避免与生态系统中的其他插件发生冲突。例如，`rolldown-plugin-posts` 可以让用户导入 `virtual:posts` 或 `virtual:posts/helpers` 虚拟模块，以获取构建时信息。在内部，使用虚拟模块的插件在解析 id 时应当为模块 ID 添加 `\0` 前缀，这是来自 Rollup 生态系统的一种约定。这可以防止其他插件尝试处理该 id（例如 node 解析），并且像 sourcemaps 这样的核心功能可以利用这一信息区分虚拟模块和普通文件。
+
+请注意，直接从真实文件派生出来的模块，例如单文件组件（如 `.vue` 或 `.svelte` SFC）中的脚本模块，不需要遵循这一约定。SFC 在处理时通常会生成一组子模块，但这些代码可以映射回文件系统。对这些子模块使用 `\0` 会导致源映射无法正常工作。
 
 ## 插件接口
 
