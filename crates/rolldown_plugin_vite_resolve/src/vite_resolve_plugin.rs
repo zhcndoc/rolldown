@@ -283,7 +283,7 @@ impl Plugin for ViteResolvePlugin {
           })
           .flatten();
         return Ok(Some(HookResolveIdOutput {
-          id: path.to_slash_lossy().into(),
+          id: ArcStr::from(path.to_slash()),
           package_json_path,
           ..Default::default()
         }));
@@ -382,7 +382,7 @@ impl Plugin for ViteResolvePlugin {
         if !(matches!(self.external, ResolveOptionsExternal::True)
           || self.external.is_external_explicitly(&id))
         {
-          let mut message = format!("Automatically externalized node built-in module \"{}\"", &id);
+          let mut message = format!("Automatically externalized node built-in module \"{}\"", id);
           if let Some(importer) = args.importer {
             let current_dir =
               env::current_dir().unwrap_or(PathBuf::from(&self.resolve_options.root));

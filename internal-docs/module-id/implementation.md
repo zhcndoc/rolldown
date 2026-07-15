@@ -41,9 +41,9 @@ export function normalize(path) {
 pub struct ModuleId { repr: Repr }
 
 enum Repr {
-  Path(ArcStr),    // absolute filesystem path — path operations are meaningful
-  Virtual(ArcStr), // virtual id, prefixed with `\0` (Rollup convention)
-  Bare(ArcStr),    // bare specifier (`react`), URL, data URI, relative specifier, …
+  Path(ArcStr),    // 绝对文件系统路径 — 路径操作在这里有意义
+  Virtual(ArcStr), // 虚拟 id，以 `\0` 为前缀（Rollup 约定）
+  Bare(ArcStr),    // 裸说明符（`react`）、URL、data URI、相对说明符，……
 }
 ```
 
@@ -57,8 +57,8 @@ enum Repr {
 | -------------------- | -------------------------------- | -------------------------------- |
 | Windows 上的模块 ID | `C:\Users\project\src\file.js`   | `C:\Users\project\src\file.js`   |
 | Linux 上的模块 ID   | `/home/user/project/src/file.js` | `/home/user/project/src/file.js` |
-| 归一化        | 无（使用原生操作系统分隔符）      | 无（使用原生操作系统分隔符）      |
-| 是否依赖平台？  | 前缀 **和** 分隔符        | 前缀 **和** 分隔符        |
+| 归一化              | 无（使用原生操作系统分隔符）      | 无（使用原生操作系统分隔符）      |
+| 是否依赖平台？      | 前缀 **和** 分隔符                | 前缀 **和** 分隔符                |
 
 Rollup 和 Rolldown 在这里是**一致**的——两者都会按原样存储 `path.resolve()` / 解析器输出，并使用原生操作系统分隔符。Rollup 中的 `normalize` 函数只会应用于下游/输出场景（见上文），不会作用于模块 ID。
 
@@ -69,9 +69,9 @@ Rollup 和 Rolldown 在这里是**一致**的——两者都会按原样存储 `
 `StableModuleId` 是 `ModuleId` 的一个相对于 cwd、并以正斜杠规范化的版本。用于跨机器稳定性（源映射、HMR 客户端侧引用）。
 
 ```rust
-// Absolute → relative from cwd, forward slashes
-// "\0foo" → "\\0foo" (virtual module escape)
-// "fs" → "fs" (non-path specifiers unchanged)
+// 绝对路径 → 相对于 cwd 的相对路径，使用正斜杠
+// "\0foo" → "\\0foo"（虚拟模块转义）
+// "fs" → "fs"（非路径说明符保持不变）
 ```
 
 ### 路径标识重要的地方
@@ -88,9 +88,7 @@ Rollup 和 Rolldown 在这里是**一致**的——两者都会按原样存储 `
 
 ### 现有的规范化工具
 
-- `PathExt::expect_to_slash()` — 将 `\` 转换为 `/`（仅在非 Unix 平台上）。用于 `StableModuleId`、HMR、源映射。
-- `SugarPath::relative()` — 生成相对路径。用于 `StableModuleId`。
-- `stabilize_id()` — 绝对路径 → 基于当前工作目录的相对路径，并使用正斜杠。旧版工具，现功能已并入 `StableModuleId`。
+在 sugar_path 3 之后，使用 `rolldown_std_utils` 辅助函数（`relative_path_to_slash`、`relative_path_as_js_specifier`，……）。样式指南：[path-manipulation/style-guide.md](../path-manipulation/style-guide.md)。
 
 ## 核心问题
 

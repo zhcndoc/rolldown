@@ -1,6 +1,6 @@
-# 外部模块
+# External Modules
 
-当一个模块被标记为 external 时，Rolldown 不会将其打包。相反，`import` 或 `require` 语句会保留在输出中，并且预期该模块在运行时可用。
+When a module is marked as external, Rolldown will not bundle it. Instead, `import` or `require` statements are preserved in the output, and the module is expected to be available at runtime.
 
 ```js
 // 输入
@@ -12,7 +12,7 @@ import lodash from 'lodash';
 console.log(lodash);
 ```
 
-本页将端到端解释 externals 的工作方式：一个模块如何变为 external、它的导入路径如何在输出中确定，以及相关选项和插件钩子如何交互。
+This page will explain the end-to-end workings of externals: how a module becomes external, how its import path is determined in the output, and how the relevant options and plugin hooks interact.
 
 ## 模块如何变为 External
 
@@ -82,3 +82,27 @@ Rolldown 内置的解析器会尝试在磁盘上找到该模块。
 import lib from 'https://cdn.example.com/lib.js';
 // 始终为 external，原样输出
 ```
+
+## 未使用的导入会被移除
+
+如果外部模块中的某个导入没有被使用，Rolldown 会将其移除。
+
+```js
+// 输入
+import { used, unused } from 'ext-pkg';
+console.log(used);
+
+// 输出
+import { used } from 'ext-pkg';
+console.log(used);
+```
+
+请注意，即使所有导入都被移除了，语句本身通常仍会保留。外部模块被假定具有副作用，因此它会变成一个裸的 `import 'ext-pkg';`。只有当外部模块也被标记为无副作用时，这条语句才会被完全删除。
+
+::: warning 与打包模块的区别
+
+如果某个打包模块实际上并没有导出 `unused`，Rolldown 会在构建时发出 `MISSING_EXPORT` 错误，不管这个导入是否被使用。
+
+对于外部模块，Rolldown 并不知道实际存在哪些导出，因此无法检查。如果 `unused` 不存在，导入它会在运行时抛错，而移除这个导入也会连同这个错误一起移除。无声地引入语义变化通常不是好主意，但 Rolldown 在这里做了一个例外。未使用的导入通常来自死代码消除，无论是 Rolldown 自身还是某个插件，而不是手动编写的，因此这个错误很少是你真正想看到的。
+
+:::

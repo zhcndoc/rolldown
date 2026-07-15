@@ -8,17 +8,17 @@ use oxc::{
   ast::{
     NONE,
     ast::{
-      self, ClassElement, Expression, IdentifierReference, ImportExpression, MemberExpression,
-      NumberBase, Statement, VariableDeclarationKind,
+      self, ClassElement, Expression, IdentifierReference, ImportExpression, NumberBase, Statement,
+      VariableDeclarationKind,
     },
   },
   span::{GetSpan, GetSpanMut, SPAN, Span},
 };
 use rolldown_common::{
   AstScopes, Chunk, ChunkIdx, ConcatenateWrappedModuleKind, ExportsKind, ImportRecordIdx,
-  ImportRecordMeta, InlineConstMode, MemberExprRefResolution, Module, ModuleIdx,
-  ModuleNamespaceIncludedReason, ModuleType, NamespaceAlias, NormalModule, OutputExports,
-  OutputFormat, Platform, RenderedConcatenatedModuleParts, Specifier, SymbolRef, WrapKind,
+  ImportRecordMeta, InlineConstMode, MemberExprRefResolution, Module, ModuleIdx, ModuleType,
+  NamespaceAlias, NormalModule, OutputExports, OutputFormat, Platform,
+  RenderedConcatenatedModuleParts, Specifier, SymbolRef, WrapKind,
 };
 use rolldown_ecmascript::ToSourceString;
 use rolldown_ecmascript_utils::{
@@ -27,8 +27,10 @@ use rolldown_ecmascript_utils::{
 
 mod finalizer_context;
 mod impl_visit_mut;
+use finalizer_context::ModuleWrapperMode;
 pub use finalizer_context::ScopeHoistingFinalizerContext;
 use oxc_str::{CompactStr, Ident};
+use rolldown_std_utils::absolutize_path_buf;
 use rolldown_utils::ecmascript::is_validate_identifier_name;
 use rolldown_utils::indexmap::{FxIndexMap, FxIndexSet};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -96,6 +98,17 @@ pub struct ScopeHoistingFinalizer<'me, 'ast: 'me> {
   pub transferred_import_record: FxIndexMap<ImportRecordIdx, String>,
   pub rendered_concatenated_wrapped_module_parts: RenderedConcatenatedModuleParts,
   pub json_module_inlined_prop: Option<Box<FxHashMap<SymbolId, ast::Expression<'ast>>>>,
+  /// Reference ids of `import.meta.ROLLUP_FILE_URL_*` accesses that no emitted file matches.
+  ///
+  /// Deduplicated by reference id, because `try_rewrite_member_expr` runs *twice* on every member
+  /// expression it fails to rewrite: `visit_expression` calls it, and on `None` the arm falls
+  /// through to `walk_expression`, which re-dispatches the very same node into
+  /// `visit_member_expression`, where the identical lookup is attempted again. Pushing
+  /// `BuildDiagnostic`s straight into a `Vec` here would report each unknown reference id twice.
+  ///
+  /// Deduplicating also makes a reference id that is accessed several times report once, matching
+  /// Rollup, which throws on the first access it renders.
+  pub missing_file_reference_ids: FxIndexMap<CompactStr, Span>,
 }
 
 impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
@@ -891,12 +904,10 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
           let re_export_name = self.canonical_name_for_runtime("__reExport");
           let stmts = export_all_externals_rec_ids.iter().copied().flat_map(|idx| {
             let rec = &self.ctx.module.import_records[idx];
-            if rec.meta.contains(ImportRecordMeta::EntryLevelExternal)
-              && !self
-                .ctx
-                .linking_info
-                .module_namespace_included_reason
-                .contains(ModuleNamespaceIncludedReason::Unknown)
+            if !self
+              .ctx
+              .linking_info
+              .ns_star_external_re_export_emitted(rec.meta, self.ctx.options.format)
             {
               return vec![];
             }
@@ -971,19 +982,19 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     ret
   }
 
-  // Handle `import.meta.xxx` expression
+  // Handle `import.meta.xxx`, `import.meta['xxx']`, `import.meta?.xxx` and `import.meta?.['xxx']`
   pub fn try_rewrite_import_meta_prop_expr(
-    &self,
-    member_expr: &ast::StaticMemberExpression<'ast>,
+    &mut self,
+    member_expr: &ast::MemberExpression<'ast>,
   ) -> Option<Expression<'ast>> {
-    if member_expr.object.is_import_meta() {
-      let original_expr_span = member_expr.span;
+    if member_expr.object().is_import_meta() {
+      let original_expr_span = member_expr.span();
       let is_node_cjs = matches!(
         (self.ctx.options.platform, &self.ctx.options.format),
         (Platform::Node, OutputFormat::Cjs)
       );
 
-      let property_name = member_expr.property.name.as_str();
+      let property_name = member_expr.static_property_name()?;
       match property_name {
         // Try to polyfill `import.meta.url`
         "url" => {
@@ -1059,20 +1070,30 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
         }
         _ => {}
       }
-      return self.rewrite_rollup_file_url(property_name);
+      return self.rewrite_rollup_file_url(property_name, original_expr_span);
     }
     None
   }
 
-  fn rewrite_rollup_file_url(&self, property_name: &str) -> Option<Expression<'ast>> {
+  fn rewrite_rollup_file_url(
+    &mut self,
+    property_name: &str,
+    original_expr_span: Span,
+  ) -> Option<Expression<'ast>> {
     // rewrite `import.meta.ROLLUP_FILE_URL_<referenceId>`
     if let Some(reference_id) = property_name.strip_prefix("ROLLUP_FILE_URL_") {
       // compute relative path from chunk to asset
       let Ok(asset_file_name) = self.ctx.file_emitter.get_file_name(reference_id) else {
+        // Keep the span of the first access, so the diagnostic can point at the source.
+        self
+          .missing_file_reference_ids
+          .entry(CompactStr::new(reference_id))
+          .or_insert(original_expr_span);
         return None;
       };
-      let absolute_asset_file_name = asset_file_name
-        .absolutize_with(self.ctx.options.cwd.as_path().join(&self.ctx.options.out_dir));
+      let output_dir =
+        absolutize_path_buf(self.ctx.options.cwd.as_path().join(&self.ctx.options.out_dir));
+      let absolute_asset_file_name = asset_file_name.absolutize_with(output_dir);
       let relative_asset_path = &self.ctx.chunk.relative_path_for(&absolute_asset_file_name);
 
       // new URL({relative_asset_path}, import.meta.url).href
@@ -1167,7 +1188,7 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
   /// try rewrite `foo_exports.bar` or `foo_exports['bar']`  to `bar` directly
   /// try rewrite `import.meta`
   fn try_rewrite_member_expr(
-    &self,
+    &mut self,
     member_expr: &ast::MemberExpression<'ast>,
   ) -> Option<Expression<'ast>> {
     let span = member_expr.span();
@@ -1205,12 +1226,7 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
           )
         })
         .or_else(|| Some(self.ast_factory.make_member_expr_with_void_zero_object(props, span))),
-      _ => {
-        let MemberExpression::StaticMemberExpression(static_member_expr) = member_expr else {
-          return None;
-        };
-        self.try_rewrite_import_meta_prop_expr(static_member_expr)
-      }
+      _ => self.try_rewrite_import_meta_prop_expr(member_expr),
     }
   }
 

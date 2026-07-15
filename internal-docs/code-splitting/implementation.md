@@ -43,24 +43,36 @@ generate_chunks()
     │
     ├─ init_entry_point()             分配位位置，创建入口 chunk
     │
-    └─ split_chunks()
-         │
-         ├─ determine_reachable_modules_for_entry()   每个入口执行 BFS，在可达模块上设置位
-         │
-         ├─ apply_manual_code_splitting()             用户定义的 chunk 组（manualChunks）
-         │
-         ├─ Module assignment         按相同 BitSet 分组模块 → chunks
-         │
-         └─ ChunkOptimizer           将公共 chunk 合并回入口 chunk，移除空的 facade
-              │
-              ▼
-         ChunkGraph                   最终的模块到 chunk 分配
+    ├─ split_chunks()
+    │    │
+    │    ├─ determine_reachable_modules_for_entry()   每个入口执行 BFS，为可达模块设置位
+    │    │
+    │    ├─ apply_manual_code_splitting()             用户定义的 chunk 组（manualChunks）
+    │    │
+    │    ├─ Module assignment         按相同的 BitSet 对模块分组 → chunks
+    │    │
+    │    ├─ ChunkOptimizer           将公共 chunk 合并到入口 chunk，移除空的 facade
+    │    └─ try_merge_runtime_chunk() 可选地将独立的 runtime 合并到安全的宿主中
+    │
+    ├─ find_entry_level_external_module()             将星号到 external 的链路扁平化为 chunk 级
+    │                                                 re-export；重新传播 has_dynamic_exports
+    │
+    ├─ finalized_module_namespace_ref_usage()         最终的命名空间对象保留决策
+    │
+    ├─ sweep_unused_runtime_module()                  当回溯后
+    │                                                 不再需要任何 helper 时，移除 runtime 模块
+    │                                                 （见下方 Runtime Module
+    │                                                 Placement）
+    │
+    └─ Chunk exec-order assignment    → ChunkGraph    最终的模块到 chunk 分配
 
 ChunkGraph 之后的处理（在 generate() 中）：
 
 ChunkGraph
     │
-    ├─ compute_cross_chunk_links()                    确定跨 chunk 的导入/导出
+    ├─ used_symbol_refs.seal()                        冻结存活性；sweep 是最后一个写入者
+    │
+    ├─ compute_cross_chunk_links()                    确定跨 chunk 的 imports/exports
     │
     ├─ ensure_lazy_module_initialization_order()      重新排序包装模块的初始化调用
     │
@@ -71,9 +83,10 @@ ChunkGraph
 
 **关键文件：**
 
-- `crates/rolldown/src/stages/generate_stage/code_splitting.rs` — 流程编排，`generate_chunks()`，`ensure_lazy_module_initialization_order()`
-- `crates/rolldown/src/stages/generate_stage/dynamic_already_loaded.rs` — Rollup 风格的动态导入已加载原子缩减
+- `crates/rolldown/src/stages/generate_stage/code_splitting.rs` — 流水线编排，`generate_chunks()`，`ensure_lazy_module_initialization_order()`
+- `crates/rolldown/src/stages/generate_stage/dynamic_already_loaded.rs` — Rollup 风格的 dynamic import already-loaded atom reduction
 - `crates/rolldown/src/stages/generate_stage/chunk_optimizer.rs` — 合并/优化
+- `crates/rolldown/src/stages/generate_stage/runtime_module_sweep.rs` — 优化后的 runtime 需求 sweep
 - `crates/rolldown/src/chunk_graph.rs` — 输出数据结构
 - `crates/rolldown_utils/src/bitset.rs` — 紧凑的可达性表示
 - `crates/rolldown/src/types/linking_metadata.rs` — `original_wrap_kind()`，用于初始化顺序分析
@@ -106,7 +119,7 @@ entry_index 2  →  plugin.js       →  bit 2  →  ChunkIdx(2)
 
 运行时可能会参与这种位缩减，但仅作为放置元数据。在手动和普通 chunk 材料化之前，它会被提取到一个独立的运行时 chunk 中，因此这个阶段不会把运行时代码分配给用户 chunk，也不需要特定于运行时的循环处理。
 
-顶层 await 的细化故意还没有在这里建模。现有的 chunk 优化器在任何包含模块是 TLA 或包含 TLA 依赖时仍会全局退出，因此等待中的动态导入安全路径仍是未来工作。
+顶层 await 的细化故意还没有在这里建模。现有的 chunk 优化器在任何包含模块是 TLA 或包含 TLA 依赖时仍然会全局退出，因此等待中的动态导入安全路径仍是未来工作。
 
 ## 可达性传播
 
@@ -122,7 +135,7 @@ entry-a.js:   bits = 0001  （仅可从入口 0 到达）
 
 这等价于 Rollup 的“依赖入口集合”和 esbuild 的 `EntryBits`。关键洞见在于：具有相同 `bits` 的模块也具有相同的加载需求——它们总是一起需要，而不会单独需要——因此它们应该属于同一个 chunk。
 
-## Chunk 创建
+## Chunk Creation
 
 在可达性传播之后，`split_chunks()` 会根据模块的 `bits` 模式将模块分配到各个 chunk：
 
@@ -158,7 +171,7 @@ chunk 优化器会在安全时通过把公共 chunk 合并回入口 chunk 来减
 - 将该 facade 合并到其目标 chunk
 - 在 `post_chunk_optimization_operations` 中把它标记为 `Removed`
 
-A **user-defined** entry can likewise become an empty facade when manual code splitting (a `codeSplitting` group, possibly via `entriesAware` subgroup merging) places its module into a common chunk. Folding that common chunk back into the entry chunk is only safe when the chunk does not also hold **another user-defined entry's module**. Otherwise the sibling entry would be forced to import this entry chunk just to reach its own module, and loading it would eagerly run this entry's top-level `init_*` — leaking its side effects into the sibling (visible under `strictExecutionOrder`). In that case the facade is kept so each entry imports the shared (wrapped) chunk and runs only its own `init_*`. See [#9463](https://github.com/rolldown/rolldown/issues/9463).
+A **用户定义的**入口同样也可能在手动代码拆分（一个 `codeSplitting` 组，可能通过 `entriesAware` 子组合并）把它的模块放入某个公共 chunk 后，变成一个空的 facade。只有当该 chunk **不同时持有另一个用户定义入口的模块** 时，把这个公共 chunk 折叠回入口 chunk 才是安全的。否则，兄弟入口就会被迫导入这个入口 chunk 才能到达它自己的模块，而加载它会提前执行这个入口的顶层 `init_*`——在 `strictExecutionOrder` 下会把它的副作用泄漏到兄弟入口中。在这种情况下，会保留 facade，这样每个入口都导入共享的（被包装的）chunk，并且只运行自己的 `init_*`。参见 [#9463](https://github.com/rolldown/rolldown/issues/9463)。
 
 ### 运行时模块放置
 
@@ -198,9 +211,21 @@ consumer_chunks = (non-removed chunks with non-empty depended_runtime_helper)
 - **找到安全目标** → 运行时移入该 chunk，空的独立运行时 chunk 被标记为已移除。
 - **未找到安全目标** → 保持独立运行时 chunk。仅解析到外部模块的运行时导入会被忽略，不参与 chunk 循环检查；否则，仍然存活的内部运行时导入会让运行时保持独立。
 
+### 未使用运行时清扫（`sweep_unused_runtime_module`）
+
+Tree-shaking 会在 chunk 存在之前、链接时把运行时辅助函数纳入进来，而其中一些依据是保守的：以外部模块结尾的星号重新导出链会注册 `__reExport`/`__exportAll` 的需求，而只有 chunking 才能使其失效。`find_entry_level_external_module` 会执行这段回溯（把链条压平为 chunk 级别的 `export * from '<external>'` 语句，并把跨越式星号导入者上的 `has_dynamic_exports` 重新传播为 `false`），而 `finalized_module_namespace_ref_usage` 则会移除只服务于这条链的命名空间对象。最终的 finalizer 因此不会发出任何辅助函数调用——但运行时模块早已被包含并放置，所以它过去会作为一个死 chunk 连同裸导入一起被产出（[#9374](https://github.com/rolldown/rolldown/issues/9374)、[#7233](https://github.com/rolldown/rolldown/issues/7233)）。
+
+`sweep_unused_runtime_module`（位于 `runtime_module_sweep.rs`）弥补了这个缺口。它在 `generate_chunks()` 的末尾运行，严格位于上面的 `try_merge_runtime_chunk` 和两个回溯阶段之后，以及 chunk 执行顺序分配之前。它通过与模块 finalizer 相同的、经过回溯后的事实重新推导运行时需求，具体通过四个通道：按模块的 `depended_runtime_helper` 标记（对 `ReExport` 做折扣，除非某个被包含的 `export * from './normal'` 导入对象仍然具有 `has_dynamic_exports` —— 这正是 finalizer 检查的条件；CommonJS 导入对象总是保留它）、受 `namespace_included` 门控的命名空间对象通道（与 finalizer 共享 `LinkingMetadata::ns_star_external_re_export_emitted`，因此预测不会与发射结果分叉）、被包含语句引用的运行时拥有符号，以及 `referenced_symbols_by_entry_point_chunk`。
+
+该清扫过程是**全有或全无且保守的**：任何剩余需求，或者任何回退条件（tree-shaking 被禁用、运行时未被包含、运行时在开发/HMR 模式下具有副作用），都会让一切保持与 tree-shaking 结果完全一致。只有零需求的运行时才会被取消包含：其语句/模块包含状态会被清除，其符号会通过 `remove_owned_by` 从 `used_symbol_refs` 中删除，它会从所属 chunk 中移除，而现在为空的 chunk 会被用 `PostChunkOptimizationOperation::Removed` 标记为墓碑化。
+
+**该清扫依赖的存活性不变量。** 对运行时符号的陈旧引用会按设计在清扫后继续存在——不会渲染的命名空间语句仍会保留它们的 `__exportAll` 引用，chunk 级别的 `depended_runtime_helper` 位会保留其标记，而 `compute_cross_chunk_links` 会为 CJS 格式的 ESM 入口推测性地插入 `__toCommonJS`。在它们变成导入或导出之前，所有这些都会先按 `used_symbol_refs` 过滤，因此清除运行时的符号才是真正切断每一条跨 chunk 边的动作。每个裸导入发射器都能容忍 `module_to_chunk == None`，而命名/渲染流程已经会跳过墓碑化的 chunk（这与 chunk 优化器移除所使用的生命周期相同）。这就是为什么该清扫必须是 `used_symbol_refs` 的**最后写入者**——`generate()` 会在 `generate_chunks()` 返回后立即封存 builder。
+
+**回归覆盖：** `crates/rolldown/tests/rolldown/issues/9374/`（快照断言：对于多入口星号到外部链，不应产生运行时 chunk，`minify: false` 使残留的命名空间声明也会显现）；issues `6992`、`7115`、`7233`、`7233_chain` 在 `preserveModules` 下分别覆盖了 ESM 和 CJS 输出中的同类问题。
+
 **为什么是这种形状**
 
-过去运行时会先通过普通 bitset 分组放置，随后在检测到循环时再剥离出来。这让每个优化器都必须理解运行时宿主的边缘情况。先独立放置改变了默认策略：初始布局始终是无循环风险的，而唯一与运行时相关的优化，就是最后可选地合并进一个已经证明是支配者的目标中。
+运行时过去会先按普通 bitset 分组放置，然后在检测到循环时再剥离出来。这使得每个优化器都必须理解运行时宿主的边缘情况。先独立放置把默认行为翻转了：初始布局始终是无循环的，而运行时相关处理被限制在两个最终阶段中——先是上面的可选合并到一个已证明的支配者，然后是在 entry-level-external 回溯确定 finalizer 实际会发出什么之后，执行未使用运行时清扫。
 
 **回归覆盖**
 
@@ -249,7 +274,7 @@ assert.equal(bar, 'foo');
 - `lib.js`（exec_order 3，未包裹）通过 `require()` 引用了 `leaflet-toolbar` → `require_leaflet_toolbar()` 被放在这里
 - `main.js`（exec_order 4，未包裹）通过 `import` 引用了 `leaflet` → `require_leaflet()` 被放在这里
 
-由于 `lib.js` 出现在 bundle 中 `main.js` 之前，`require_leaflet_toolbar()` 会先运行——但它需要 `global.L`，而 `require_leaflet()` 还没有设置它：
+由于 `lib.js` 出现于 bundle 中 `main.js` 之前，`require_leaflet_toolbar()` 会先运行——但它需要 `global.L`，而 `require_leaflet()` 还没有设置它：
 
 ```js
 // ❌ 错误输出：require_leaflet_toolbar() 在 require_leaflet() 之前运行

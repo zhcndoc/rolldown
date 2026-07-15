@@ -1,4 +1,4 @@
-# Chunk Hash
+# 块哈希
 
 ## 摘要
 
@@ -17,13 +17,14 @@
 hash 计算位于 `crates/rolldown/src/utils/chunk/finalize_chunks.rs::finalize_assets`。在它运行时，每个 chunk 都已经被渲染成字符串，并且每个 chunk 都已经被分配了一个**初步文件名**，例如 `entries/main-!~{001}~.js` —— 其中的 `!~{001}~` 是一个 hash 占位符，见下文。
 
 ```
-[render chunks]
-  ↓ chunk.content (string) + chunk.preliminary_filename (with placeholder)
+[渲染 chunks]
+  ↓ chunk.content（字符串）+ chunk.preliminary_filename（带占位符）
 [finalize_assets]
-  ├─ Phase 1 (parallel):  per-chunk standalone content hash
-  ├─ Phase 2 (parallel):  per-chunk final hash = own standalone + transitive deps' standalone
-  ├─ Phase 3 (sequential): deconflict file names by rehashing on collision
-  └─ replace placeholders in content + filename with final hashes
+  ├─ 阶段 1（并行）：每个 chunk 的独立内容 hash
+  ├─ 阶段 2（并行）：每个 chunk 的最终 hash = 自身独立内容 + 传递依赖的独立内容
+  ├─ 阶段 3（串行）：通过对冲突进行重新 hash 来消解文件名冲突
+  ├─ 将 content + filename 中的占位符替换为最终 hash
+  └─ 准备 sourcemaps，对其最终内容进行 hash，然后 emit
 ```
 
 ## Hash 占位符
@@ -101,7 +102,20 @@ Rollup 中有一个针对这个确切情况的回归测试：`test/chunking-form
 
 在实践中，这种冲突很少见，因为默认值为 `Simple` 的 `experimental.attachDebugInfo` 会向渲染后的 chunk 注入一个 `//#region <module.debug_id>` 标记，这会根据模块路径区分内容。通过 `experimental.attachDebugInfo: 'none'` 禁用调试信息的用户，才更可能触发这种冲突并依赖这个循环。
 
-## 为什么不直接对初步文件名做 hash
+## Sourcemap 文件哈希
+
+`output.sourcemapFileNames` 有自己独立的 `[hash]` 占位符。它会在 chunk 哈希之后解析，因为最终的 sourcemap 会在其 `file` 字段中包含最终的 chunk 文件名。
+
+sourcemap 的处理顺序如下：
+
+1. 解析 chunk 哈希和最终的 chunk 文件名。
+2. 通过设置 `file`、应用 `sourcemapExcludeSources`、`sourcemapIgnoreList` 和 `sourcemapPathTransform`，并将源路径调整为相对于最终 chunk 目录，来准备每个 sourcemap。
+3. 如果 sourcemap 文件名模式包含 `[hash]`，则对已准备好的 map 序列化后的 JSON 进行哈希。
+4. 解析 sourcemap 文件名，然后添加 debug ID，并发出内联注释或单独的资源。
+
+准备和发出是分开的，因此用户回调只会运行一次，而每个会改变内容的 map 选项都会对 `[hash]` 产生影响。Debug ID 会刻意在 sourcemap 哈希之后添加，这与 Rollup 保持一致。传递给 sourcemap 回调的路径是默认的 `<chunk-file>.map` 路径，这样可以避免当自定义 sourcemap 文件名本身包含 `[hash]` 时产生循环依赖。
+
+## 为什么不直接对初步文件名做哈希
 
 一个诱人的替代方案是：在对初步文件名的占位符做规范化之后，把初步文件名混入最终 hash —— 这样对于 chunk 名称不同的 chunk，就无需再进行 rehash 循环，也能满足唯一性。
 
@@ -109,13 +123,13 @@ Rollup 中有一个针对这个确切情况的回归测试：`test/chunking-form
 
 ## debug_id
 
-`ecma_meta.debug_id`（用于在 source map 中为 Sentry 等输出 `//# debugId=...`）会被设置为与第 2 阶段生成的同一个 `u128` digest。这意味着 debug ID 也共享 hash 的稳定性属性——相同内容 → 跨构建相同 debug ID，这对 sourcemap 关联非常有用。发生冲突并重新哈希的 chunk 自然也会得到不同的 debug ID。
+`ecma_meta.debug_id`（used to emit `//# debugId=...` in source maps for Sentry, etc.）will be set to the same `u128` digest generated in stage 2. This means the debug ID also shares the stability property of the hash—same content → same debug ID across builds, which is very useful for sourcemap association. Chunks that collide and are rehashed will naturally get different debug IDs.
 
 ## 已知限制
 
 **第 3 阶段的 rehash 不会回传给导入者。** 第 2 阶段会把每个传递依赖的 _standalone_ hash（即 deconflict 之前的 hash）累加进导入者的最终 hash。如果第 3 阶段为了避免文件名冲突而把依赖 `B` 重新哈希，`B` 的导入者 `A` 最终在 import specifier 中会发出 `B` 重新哈希后的文件名——但 `A` 自己的最终 hash 是基于 `B` 重新哈希前的 standalone hash 计算出来的，所以 `A` 的 `[hash]` 并不会反映这一变化。相同输入 + 相同配置会产生相同的 deconflict 顺序，因此发出的字节也相同（在某个配置内是确定性的），但仅仅因为某些会改变字节完全相同 chunk 的 `InsChunkIdx` 顺序的因素而不同的两个构建（例如用户在 `input` 中重新排列 entries），可能会让 `A` 发出不同的字节，同时保持 `A` 的 `[hash]` 不变。Rollup 的 `generateFinalHashes` 也表现出同样的行为（其 `contentToHash` 累加的是 deconflict 之前的 `contentHash`，而不是 deconflicted 的最终 hash），因此若要修复这一点，就需要偏离参考实现，并按拓扑顺序处理 chunk，让导入者依赖导入对象 deconflict 之后的 hash。要触发这个问题，需要存在能被某个导入者引用的字节完全相同的 chunk（很少见），并且使用仅有 `[hash]` 的模板（也同样很少见）。
 
-## 文件
+## Files
 
 - `crates/rolldown/src/utils/chunk/finalize_chunks.rs` — `finalize_assets`, `deconflict_filenames`, `resolve_filename`, `rehash`
 - `crates/rolldown_utils/src/hash_placeholder.rs` — `HashPlaceholderGenerator`, `find_hash_placeholders`, `visit_with_placeholders_defaulted`, `replace_placeholder_with_hash`

@@ -139,6 +139,17 @@ export interface MangleOptions {
    * @default false
    */
   keepNames?: boolean | MangleOptionsKeepNames
+  /**
+   * Names that bindings must not be renamed to, and that bindings already
+   * carrying them keep. Equivalent to terser's `mangle.reserved`.
+   *
+   * Pass `['exports', 'module']` when minifying prebuilt CommonJS / UMD files
+   * that Node consumers `import` directly, so Node's cjs-module-lexer can still
+   * detect the mangled module's named exports.
+   *
+   * @default []
+   */
+  reserved?: Array<string>
   /** Debug mangled names. */
   debug?: boolean
 }
@@ -1679,6 +1690,7 @@ export declare class BindingNormalizedOptions {
   get name(): string | null
   get entryFilenames(): string | undefined
   get chunkFilenames(): string | undefined
+  get sourcemapFilenames(): string | undefined
   get assetFilenames(): string | undefined
   get dir(): string | null
   get file(): string | null
@@ -2519,6 +2531,7 @@ export interface BindingOutputOptions {
   paths?: Record<string, string> | ((id: string) => string)
   plugins: (BindingBuiltinPlugin | BindingPluginOptions | undefined)[]
   sourcemap?: 'file' | 'inline' | 'hidden'
+  sourcemapFileNames?: string | ((chunk: PreRenderedChunk) => string)
   sourcemapBaseUrl?: string
   sourcemapIgnoreList?: boolean | string | RegExp | ((source: string, sourcemapPath: string) => boolean)
   sourcemapDebugIds?: boolean

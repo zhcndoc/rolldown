@@ -12,8 +12,8 @@ use oxc::{
 };
 use rolldown_common::{
   ConstExportMeta, EcmaModuleAstUsage, EcmaViewMeta, ImportKind, ImportRecordMeta, LocalExport,
-  MemberExprObjectReferencedType, MemberExprRef, OutputFormat, RUNTIME_MODULE_KEY, StmtEvalFlags,
-  StmtInfoIdx, StmtInfoMeta, SymbolRefFlags, dynamic_import_usage::DynamicImportExportsUsage,
+  MemberExprObjectReferencedType, MemberExprRef, OutputFormat, RUNTIME_MODULE_KEY, StmtInfoIdx,
+  StmtInfoMeta, SymbolRefFlags, dynamic_import_usage::DynamicImportExportsUsage,
 };
 #[cfg(debug_assertions)]
 use rolldown_ecmascript::ToSourceString;
@@ -25,7 +25,7 @@ use crate::ast_scanner::cjs_export_analyzer::CommonJsAstType;
 
 use super::{
   AstScanner, UntranspiledSyntax, cjs_export_analyzer::CjsGlobalAssignmentType,
-  stmt_eval_analyzer::StmtEvalAnalyzer,
+  stmt_eval_analyzer::StmtEvalAnalyzer, top_level_import_read::TopLevelImportReadDetector,
 };
 
 impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
@@ -80,7 +80,8 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
         None,
         Some(&self.namespace_object_symbol_ids),
       );
-      self.current_stmt_info.eval_flags = analyzer.analyze_stmt(stmt);
+      let stmt_eval_facts = analyzer.analyze_stmt(stmt);
+      self.current_stmt_info.eval_flags = stmt_eval_facts.tree_shaking_flags();
 
       #[cfg(debug_assertions)]
       {
@@ -88,11 +89,13 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
       }
 
       self.visit_statement(stmt);
-      if self.current_stmt_info.eval_flags.intersects(
-        StmtEvalFlags::UnknownSideEffect
-          | StmtEvalFlags::GlobalVarAccess
-          | StmtEvalFlags::PureAnnotation,
-      ) {
+      // Tree-shaking side effects / global reads / pure annotations come from the analyzer.
+      // Top-level reads of imported bindings are detected by a separate uniform walk so the
+      // signal is complete by construction (no per-expression-form gaps).
+      if !self.result.ecma_view_meta.contains(EcmaViewMeta::ExecutionOrderSensitive)
+        && (stmt_eval_facts.is_order_sensitive()
+          || TopLevelImportReadDetector::detect(&self.result.symbol_ref_db.ast_scopes, stmt))
+      {
         self.result.ecma_view_meta.insert(EcmaViewMeta::ExecutionOrderSensitive);
       }
       self.result.stmt_infos.add_stmt_info(std::mem::take(&mut self.current_stmt_info));
@@ -282,8 +285,12 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
         .as_member_expression_kind()
         .map(|member_expr| {
           let static_name = member_expr.static_property_name().unwrap_or(ast::Str::from(""));
-          let is_special_property =
-            static_name == "url" || static_name == "dirname" || static_name == "filename";
+          // `import.meta.ROLLUP_FILE_URL_*` is rewritten to `new URL(..., import.meta.url).href`,
+          // so it degrades exactly like `import.meta.url` does.
+          let is_special_property = static_name == "url"
+            || static_name == "dirname"
+            || static_name == "filename"
+            || static_name.as_str().starts_with("ROLLUP_FILE_URL_");
           let format = &self.immutable_ctx.options.format;
           !is_special_property || matches!(format, OutputFormat::Iife | OutputFormat::Umd)
         })

@@ -8,7 +8,7 @@ import { VPTeamMembers } from '@voidzero-dev/vitepress-theme'
 const members = [
   {
     avatar: 'https://www.github.com/yyx990803.png',
-    name: 'Evan You',
+    name: '尤雨溪',
     links: [
       { icon: 'github', link: 'https://github.com/yyx990803' },
       { icon: 'x', link: 'https://x.com/youyuxi' }
@@ -16,23 +16,23 @@ const members = [
   },
   {
     avatar: 'https://www.github.com/Brooooooklyn.png',
-    name: 'Yinan Long (Brooooooklyn)',
+    name: 'Long Yinan（Brooooooklyn）',
     links: [
       { icon: 'github', link: 'https://github.com/Brooooooklyn' },
       { icon: 'x', link: 'https://x.com/Brooooook_lyn' }
     ]
   },
   {
-    avatar: 'https://www.github.com/hyf0.png',
-    name: 'Yunfei He (hyf0)',
+    avatar: 'https://www.github.com/hyfdev.png',
+    name: '何云飞（hyfdev）',
     links: [
-      { icon: 'github', link: 'https://github.com/hyf0' },
+      { icon: 'github', link: 'https://github.com/hyfdev' },
       { icon: 'x', link: 'https://x.com/_hyf0' }
     ]
   },
   {
     avatar: 'https://www.github.com/iwanabethatguy.png',
-    name: 'Xiangjun He (iwanabethatguy)',
+    name: '何翔军（iwanabethatguy）',
     links: [
       { icon: 'github', link: 'https://github.com/iwanabethatguy' }
     ]
@@ -73,7 +73,7 @@ const members = [
     ]
   },
   {
-    name: 'Shuyuan Wang (h-a-n-a)',
+    name: '王书源（h-a-n-a）',
     avatar: 'https://www.github.com/h-a-n-a.png',
     links: [
       { icon: 'github', link: 'https://github.com/h-a-n-a' },

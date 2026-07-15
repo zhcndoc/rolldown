@@ -476,6 +476,7 @@ isTypeTrue<IsSchemaSubType<typeof MangleOptionsKeepNamesSchema, MangleOptionsKee
 const MangleOptionsSchema = v.strictObject({
   toplevel: v.optional(v.boolean()),
   keepNames: v.optional(v.union([v.boolean(), MangleOptionsKeepNamesSchema])),
+  reserved: v.optional(v.array(v.string())),
   debug: v.optional(v.boolean()),
 }) satisfies v.GenericSchema<MangleOptions>;
 isTypeTrue<IsSchemaSubType<typeof MangleOptionsSchema, MangleOptions>>();
@@ -892,6 +893,10 @@ const OutputOptionsSchema = v.strictObject({
   sourcemapBaseUrl: v.pipe(
     v.optional(v.string()),
     v.description('Base URL used to prefix sourcemap paths'),
+  ),
+  sourcemapFileNames: v.pipe(
+    v.optional(ChunkFileNamesSchema),
+    v.description('Name pattern for emitted sourcemaps'),
   ),
   sourcemapDebugIds: v.pipe(v.optional(v.boolean()), v.description('Inject sourcemap debug IDs')),
   sourcemapExcludeSources: v.pipe(
