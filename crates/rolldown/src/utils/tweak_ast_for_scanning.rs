@@ -1,16 +1,16 @@
 use itertools::Itertools;
 use oxc::allocator::GetAllocator;
-use oxc::allocator::{Allocator, TakeIn};
-use oxc::ast::NONE;
+use oxc::allocator::{Allocator, ReplaceWith, TakeIn};
 use oxc::ast::ast::{self, BindingPattern, Declaration, ImportOrExportKind, Statement};
+use oxc::ast::builder::{AstBuilder, GetAstBuilder, NONE};
 use oxc::ast_visit::{VisitMut, walk_mut};
 use oxc::span::{SPAN, Span};
-use rolldown_ecmascript_utils::{AstFactory, StatementExt};
+use rolldown_ecmascript_utils::StatementExt;
 use rustc_hash::FxHashSet;
 
 /// Pre-process is a essential step to make rolldown generate correct and efficient code.
 pub struct PreProcessor<'ast, 'a> {
-  ast_factory: AstFactory<'ast>,
+  ast_builder: AstBuilder<'ast>,
   /// used to store none_hoisted statements.
   top_level_stmt_temp_storage: Vec<Statement<'ast>>,
   keep_names: bool,
@@ -32,7 +32,7 @@ impl<'ast, 'a> PreProcessor<'ast, 'a> {
     drop_labels: Option<&'a FxHashSet<String>>,
   ) -> Self {
     Self {
-      ast_factory: AstFactory::new(alloc),
+      ast_builder: AstBuilder::new(alloc),
       top_level_stmt_temp_storage: vec![],
       keep_names,
       drop_labels: drop_labels.filter(|set| !set.is_empty()),
@@ -52,7 +52,7 @@ impl<'ast, 'a> PreProcessor<'ast, 'a> {
     if let Statement::LabeledStatement(stmt) = it
       && labels.contains(stmt.label.name.as_str())
     {
-      *it = ast::Statement::new_empty_statement(stmt.span, &self.ast_factory);
+      *it = ast::Statement::new_empty_statement(stmt.span, self);
       return true;
     }
     false
@@ -70,28 +70,28 @@ impl<'ast, 'a> PreProcessor<'ast, 'a> {
     let var_decl_span = var_decl.span;
     var_decl
       .declarations
-      .take_in(&self.ast_factory.allocator())
+      .take_in(self)
       .into_iter()
       .enumerate()
       .map(|(i, declarator)| {
         let new_decl = ast::VariableDeclaration::boxed(
           if i == 0 && named_decl_span.is_none() { var_decl_span } else { SPAN },
           var_decl.kind,
-          oxc::allocator::Vec::from_iter_in([declarator], &self.ast_factory),
+          oxc::allocator::Vec::from_iter_in([declarator], self),
           var_decl.declare,
-          &self.ast_factory,
+          self,
         );
         if let Some(named_decl_span) = named_decl_span {
-          Statement::ExportNamedDeclaration(ast::ExportNamedDeclaration::boxed(
+          Statement::new_export_named_declaration(
             if i == 0 { named_decl_span } else { SPAN },
             Some(Declaration::VariableDeclaration(new_decl)),
-            oxc::allocator::Vec::new_in(&self.ast_factory),
+            [],
             // Since it is `export a = 1, b = 2;`, source should be `None`
             None,
             ImportOrExportKind::Value,
             NONE,
-            &self.ast_factory,
-          ))
+            self,
+          )
         } else {
           Statement::VariableDeclaration(new_decl)
         }
@@ -163,7 +163,7 @@ impl<'ast> VisitMut<'ast> for PreProcessor<'ast, '_> {
   }
 
   fn visit_program(&mut self, program: &mut ast::Program<'ast>) {
-    let original_body = program.body.take_in(&self.ast_factory.allocator());
+    let original_body = program.body.take_in(self);
     program.body.reserve_exact(original_body.len());
     self.top_level_stmt_temp_storage = Vec::with_capacity(
       original_body.iter().filter(|stmt| !stmt.is_module_declaration_with_source()).count(),
@@ -196,11 +196,8 @@ impl<'ast> VisitMut<'ast> for PreProcessor<'ast, '_> {
     }
     walk_mut::walk_statement(self, it);
     if let Some(split) = self.split_multi_declarator(it, false) {
-      *it = Statement::BlockStatement(ast::BlockStatement::boxed(
-        SPAN,
-        oxc::allocator::Vec::from_iter_in(split, &self.ast_factory),
-        &self.ast_factory,
-      ));
+      *it =
+        Statement::new_block_statement(SPAN, oxc::allocator::Vec::from_iter_in(split, self), self);
     }
   }
 
@@ -212,7 +209,7 @@ impl<'ast> VisitMut<'ast> for PreProcessor<'ast, '_> {
       walk_mut::walk_statements(self, it);
       return;
     }
-    let stmts = it.take_in(&self.ast_factory.allocator());
+    let stmts = it.take_in(self);
     for mut stmt in stmts {
       if self.try_drop_labeled(&mut stmt) {
         it.push(stmt);
@@ -236,91 +233,82 @@ impl<'ast> VisitMut<'ast> for PreProcessor<'ast, '_> {
   }
 
   fn visit_expression(&mut self, it: &mut ast::Expression<'ast>) {
-    let to_replaced = match it {
-      // transpose `require(test ? 'a' : 'b')` into `test ? require('a') : require('b')`
-      ast::Expression::CallExpression(expr)
-        if expr.callee.is_specific_id("require") && expr.arguments.len() == 1 =>
-      {
-        let arg = expr.arguments.get_mut(0).unwrap();
-        if let Some(cond_expr) = arg.as_expression_mut().and_then(|item| match item {
-          ast::Expression::ConditionalExpression(cond) => Some(cond),
-          _ => None,
-        }) {
-          let test = cond_expr.test.take_in(&self.ast_factory.allocator());
-          let consequent = cond_expr.consequent.take_in(&self.ast_factory.allocator());
-          let alternative = cond_expr.alternate.take_in(&self.ast_factory.allocator());
-          let new_cond_expr = ast::ConditionalExpression::boxed(
+    // transpose `require(test ? 'a' : 'b')` into `test ? require('a') : require('b')`
+    if matches!(it, ast::Expression::CallExpression(expr)
+    if expr.callee.is_specific_id("require")
+      && expr.arguments.len() == 1
+      && matches!(
+        expr.arguments[0].as_expression(),
+        Some(ast::Expression::ConditionalExpression(_))
+      ))
+    {
+      it.replace_with(|old| {
+        let ast::Expression::CallExpression(call_expr) = old else { unreachable!() };
+        let Some(ast::Argument::ConditionalExpression(cond_expr)) =
+          call_expr.unbox().arguments.into_iter().next()
+        else {
+          unreachable!()
+        };
+        let cond_expr = cond_expr.unbox();
+        ast::Expression::new_conditional_expression(
+          SPAN,
+          cond_expr.test,
+          ast::Expression::new_call_expression(
             SPAN,
-            test,
-            ast::Expression::new_call_expression(
-              SPAN,
-              ast::Expression::new_identifier(SPAN, "require", &self.ast_factory),
-              NONE,
-              oxc::allocator::Vec::from_value_in(
-                ast::Argument::from(consequent),
-                &self.ast_factory,
-              ),
-              false,
-              &self.ast_factory,
-            ),
-            ast::Expression::new_call_expression(
-              SPAN,
-              ast::Expression::new_identifier(SPAN, "require", &self.ast_factory),
-              NONE,
-              oxc::allocator::Vec::from_value_in(
-                ast::Argument::from(alternative),
-                &self.ast_factory,
-              ),
-              false,
-              &self.ast_factory,
-            ),
-            &self.ast_factory,
-          );
-
-          Some(ast::Expression::ConditionalExpression(new_cond_expr))
-        } else {
-          None
-        }
-      }
-      // transpose `import(test ? 'a' : 'b')` into `test ? import('a') : import('b')`
-      ast::Expression::ImportExpression(expr) if expr.options.is_none() => {
-        let source = &mut expr.source;
-        match source {
-          ast::Expression::ConditionalExpression(cond_expr) => {
-            let test = cond_expr.test.take_in(&self.ast_factory.allocator());
-            let consequent = cond_expr.consequent.take_in(&self.ast_factory.allocator());
-            let alternative = cond_expr.alternate.take_in(&self.ast_factory.allocator());
-
-            let new_cond_expr = ast::Expression::new_conditional_expression(
-              SPAN,
-              test,
-              ast::Expression::new_import_expression(
-                SPAN,
-                consequent,
-                None,
-                None,
-                &self.ast_factory,
-              ),
-              ast::Expression::new_import_expression(
-                SPAN,
-                alternative,
-                None,
-                None,
-                &self.ast_factory,
-              ),
-              &self.ast_factory,
-            );
-
-            Some(new_cond_expr)
-          }
-          _ => None,
-        }
-      }
-      _ => None,
-    };
-    if let Some(replaced) = to_replaced {
-      *it = replaced;
+            ast::Expression::new_identifier(SPAN, "require", self),
+            NONE,
+            [ast::Argument::from(cond_expr.consequent)],
+            false,
+            self,
+          ),
+          ast::Expression::new_call_expression(
+            SPAN,
+            ast::Expression::new_identifier(SPAN, "require", self),
+            NONE,
+            [ast::Argument::from(cond_expr.alternate)],
+            false,
+            self,
+          ),
+          self,
+        )
+      });
+    }
+    // transpose `import(test ? 'a' : 'b')` into `test ? import('a') : import('b')`
+    else if matches!(it, ast::Expression::ImportExpression(expr)
+      if expr.options.is_none()
+        && matches!(expr.source, ast::Expression::ConditionalExpression(_)))
+    {
+      it.replace_with(|old| {
+        let ast::Expression::ImportExpression(import_expr) = old else { unreachable!() };
+        let ast::Expression::ConditionalExpression(cond_expr) = import_expr.unbox().source else {
+          unreachable!()
+        };
+        let cond_expr = cond_expr.unbox();
+        ast::Expression::new_conditional_expression(
+          SPAN,
+          cond_expr.test,
+          ast::Expression::new_import_expression(SPAN, cond_expr.consequent, None, None, self),
+          ast::Expression::new_import_expression(SPAN, cond_expr.alternate, None, None, self),
+          self,
+        )
+      });
     }
     walk_mut::walk_expression(self, it);
+  }
+}
+
+impl<'ast> GetAstBuilder<'ast> for PreProcessor<'ast, '_> {
+  type Builder = AstBuilder<'ast>;
+
+  #[inline]
+  fn builder(&self) -> &AstBuilder<'ast> {
+    &self.ast_builder
+  }
+}
+
+impl<'ast> GetAllocator<'ast> for PreProcessor<'ast, '_> {
+  #[inline]
+  fn allocator(&self) -> &'ast Allocator {
+    self.ast_builder.allocator()
   }
 }

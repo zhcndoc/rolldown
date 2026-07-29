@@ -2,20 +2,13 @@
 
 ## 概要
 
-`@rolldown/test-dev-server` 浏览器套件使用真实的 Chromium 页面对
-rolldown 开发引擎（HMR、懒编译、错误覆盖层）进行驱动。该服务器是
+`@rolldown/test-dev-server` 浏览器套件使用一个真实的 Chromium 页面针对
+rolldown 开发引擎（HMR、懒加载编译、错误覆盖层）进行驱动。该服务器是
 **Vite 的完整 bundle 模式**（`experimental.bundledDev`），在运行时从
-位于 `packages/test-dev-server/vite` 的 vendored 子模块加载，并将其
-`rolldown` 解析链接到工作区的 `packages/rolldown` —— 该测试框架只在其上
-增加测试埋点（见 [The Vite backend](#the-vite-backend)）。它是**进程内运行**
-的：每个 spec 文件都会在各自的 vitest worker 中于一个由操作系统分配的端口上
-启动开发服务器，连接到同一个共享的 Chromium，并通过服务器自身的
-`close()` 将其关闭。playground 的发现是根据每个 spec 自己的路径派生出来的，
-因此不存在中心注册表——**新增测试就是新增一个文件夹和一个 spec，
-无需任何中心化修改**。配套的 node **fixtures** 套件（一个自定义开发服务器，
-构建到磁盘，将产物作为子进程运行——Vite 的 bundled dev 仅适用于
-客户端环境，因此该平台无法在其上运行）共享状态辅助工具，但除此之外是
-独立的。
+Vite 检出目录中的 `vite/` 加载（仓库根目录下的一个 gitignore 的 vitejs/vite
+`rolldown-canary` 克隆，并 rebased 到 `main`），其 `rolldown`
+解析链接到工作区的 `packages/rolldown` —— 测试框架只是在其上层增加
+测试埋点（见 [The Vite backend](#the-vite-backend)）。它是**进程内**运行的：每个 spec 文件都会在自己的 vitest worker 中于一个由操作系统分配的端口启动开发服务器，连接到同一个共享 Chromium，并通过服务器自身的 `close()` 将其关闭。Playground 的发现是根据每个 spec 自己的路径推导出来的，因此没有中心注册表——**新增一个测试只需要一个文件夹加一个 spec，不需要改任何中心配置**。配套的 node **fixtures** 套件（一个构建到磁盘的自定义开发服务器，该产物作为子进程运行——Vite 的 bundled dev 仅适用于 client 环境，因此该平台不能在其上运行）共享状态辅助工具，但除此之外是独立的。
 
 ## 原则
 
@@ -87,26 +80,38 @@ overlay 渲染在一个 **shadow root** 中，因此对宿主元素调用 `locat
 服务工作。harness 负责的部分位于 `src/vite-server.ts`：
 
 - **配置转换。** `dev.config.mjs` → Vite 内联配置：
-  `experimental.bundledDev: true`，playground 复制目录作为 `root`（其
-  `index.html` 的 module script 是入口），fixture 插件原样透传
+  `experimental.bundledDev: true`，将 playground 复制目录作为 `root`（其
+  `index.html` 的 module script 作为入口），fixture 插件原样传入
   （Vite 8 原生运行 rolldown），`assetsInlineLimit: 0` 用于 asset-request
-  断言，`treeshake` 原样转发。完整 bundle 模式强制
-  `devMode.lazy: true`，因此在浏览器运行中始终开启 lazy compilation。
-- **`vite` 不是包依赖。** 它通过文件 URL 从子模块已构建的 dist 中动态导入（`loadVite()`），harness 仅对其所触及的 API 片段使用本地结构化类型。Node 平台的 fixture 和从不运行浏览器测试的 CI 作业无需该子模块；若缺少 dist，会报出带有“运行 `just setup-test-dev-server-vite`”提示的失败信息。
-- **测试埋点**（`createHarnessPlugin`）：`/_dev/status` 中间件；`buildSeq` 统计 `buildStart` 以及广播的 `update`/`full-reload` 负载，并且刻意**不**统计 `error` 负载（服务器会把缓存的错误重放给每个新客户端，而 conservative-rebuild 规范会断言：在损坏的构建上刷新不会推动 `buildSeq`）；`moduleRegistrationSeq` 统计 `vite:module-loaded` 事件；bundle 状态通过 `bundledDev.devEngine.getBundleState()` 实时读取。
-- **上游缺口的兼容处理**，代码中每个都以 `WORKAROUND` 注释标出，等 Vite 修复后即可删除：
-  - _恢复性重载_：上游仅在 HMR 已经有待处理的 reload 时，才会在成功构建后触发 full-reload，因此处在错误覆盖层或 fallback 页面上的客户端永远不会得知“出错 → 正常”的构建其实已成功。该插件观察广播的 `error` 负载，并在下一次成功的 `generateBundle` 时清除缓存错误，随后在 `ensureLatestBuildOutput()` 之后触发 reload。
-  - _过期错误重放保护_：上游只在 `onOutput` 中清除 `lastBuildError`，而客户端在首次 update 遇到已有覆盖层时会硬重载——重连会收到一个过期错误重放。一个 `vite:client:connect` 监听器（在 Vite 自己的重放监听器之前注册）会在追踪到的构建状态健康时丢弃该过期错误。
+  断言，`treeshake` 透传。完整 bundle 模式会强制
+  `devMode.lazy: true`，因此浏览器运行中始终启用惰性编译。
+- **`vite` 不是 package 依赖。** 它通过文件 URL 从 checkout 中已构建的 dist
+  动态导入（`loadVite()`），并为 harness 触及的那一小段 API 提供本地结构化类型。
+  仅面向 Node 平台的 fixture 和从不运行浏览器测试的 CI 作业不依赖 checkout；
+  若 dist 缺失，则会以“运行 `just setup-vite`”的提示失败。
+- **测试埋点**（`createHarnessPlugin`）：`/_dev/status` 中间件；
+  `buildSeq` 统计 `buildStart` 以及广播的 `update`/`full-reload`
+  载荷，而**不**统计 `error` 载荷（服务器会将缓存的错误回放给每个新客户端，
+  而保守重建的规格会断言：在损坏的构建上刷新不会推动 `buildSeq`）；
+  `moduleRegistrationSeq` 统计 `vite:module-loaded` 事件；
+  bundle 状态直接从 `bundledDev.devEngine.getBundleState()` 读取。
+- **上游缺口的 workaround**，代码中都以 `WORKAROUND` 注释标出，等 Vite 修复后即可删除：
+  - _恢复性重载_：上游只有在 HMR 已经挂起了 reload 的情况下，成功构建后才会进行 full-reload，因此处于错误覆盖层或回退页上的客户端永远不会得知“出错 → 成功”的构建已经完成。插件会观察广播的 `error` 载荷，并在下一次成功的 `generateBundle` 时清除缓存错误，然后在 `ensureLatestBuildOutput()` 之后执行 reload。
+  - _旧错误回放保护_：上游只会在 `onOutput` 中清除 `lastBuildError`，而客户端在首次更新遇到已有覆盖层时会硬重载——这样重连会收到旧错误回放。一个 `vite:client:connect` 监听器（注册在 Vite 自己的回放监听器之前）会在跟踪到的构建状态健康时丢弃该旧错误。
 
-**子模块保持字节级纯净。** 不修改任何受跟踪文件，不打补丁——升级它只是一个指针更新。所有环境相关的内容都在未跟踪文件中完成，ผ่าน `scripts/setup-vite.mjs`
-（`just setup-test-dev-server-vite`，幂等，仅 `vp` 使用）：
+**checkout 保持未打补丁。** rolldown 侧不修改任何 Vite 源码。修复和测试调整应提交到 vitejs/vite 的 `rolldown-canary` 分支，
+本 harness 和 `packages/vite-tests` 都跟踪该分支。所有环境相关内容都放在未跟踪文件中，通过
+`scripts/src/setup-vite/` 脚本完成（`just setup-vite`，幂等，仅 `vp` 可用）。它是唯一会接触 `vite/` 的入口：移动 commit 的命令会紧接着重建所有内容，因此 checkout 与已构建 dist 永远不会脱节。步骤如下：
 
-1. 初始化子模块，或者重新同步一个不在固定提交上的 checkout —— 这样在子模块升级后再次运行时会拾取新提交（浅层 fetch，repo 根目录作为 cwd），
-2. `vp install --frozen-lockfile`（vp 会委托给子模块固定的 pnpm；这一步也会重置前一步的 step-4 替换，因此构建始终使用 Vite 自己固定的 rolldown），
-3. 通过直接调用其固定的 rolldown CLI 构建 `packages/vite`（vp 的 workspace 扫描会被 Vite 故意损坏的 BOM fixture 卡住；`build-types` 被跳过——harness 自己有类型），
-4. 将 `vite/packages/vite/node_modules/rolldown` 切换为指向 workspace 中 `packages/rolldown` 的符号链接，这样 Vite 的 dist 在运行时能解析到本地绑定。子模块内的任何安装都会重置这一点——需要重新运行脚本。
+1. 确保 `vite/` 处于最新的、基于 `main` rebase 的 `rolldown-canary`
+  （若缺失则 clone，若已存在则更新）；若 checkout 被开发者接管（dirty，或不在 `rolldown-canary` 上），则按原样构建，
+2. `vp install --frozen-lockfile`（vp 会委托给 checkout 中固定版本的 pnpm；这也会重置上一步的 step-4 swap，因此构建始终使用 Vite 自己固定的 rolldown），
+3. 通过 `packages/vite` 自己的 `build` 脚本构建它（`vp run build`），
+4. 将 `vite/packages/vite/node_modules/rolldown` 替换为指向 workspace 的 `packages/rolldown` 的符号链接，使 Vite 的 dist 在运行时解析到本地绑定。checkout 内的任何 install 都会重置这一点，因此在此类 install 之后需要重新运行脚本。
 
-仓库级工具会忽略 `packages/test-dev-server/vite/**`（`.gitignore` 条目覆盖了遵守 gitignore 的遍历工具如 oxfmt，外加 `.typos.toml` 和 `.ls-lint.json` 条目）——全仓范围的 `vp fmt --write` 绝不应触碰子模块文件。CI 上只有 dev-server 工作流会运行 setup 步骤；其他所有作业都不需要子模块。
+仓库范围的工具会忽略 `vite/**`（`.gitignore`
+条目覆盖尊重 gitignore 的遍历器，如 oxfmt，另有 `.typos.toml` 和
+`.ls-lint.json` 中的条目）——仓库范围的 `vp fmt --write` 绝不能触碰 `vite/` 内的文件。CI 上，dev-server 工作流和 vite-tests 作业都会通过 setup-vite 步骤准备 checkout（先运行 `run.ts`，然后在本地 clone 以运行 Vite 自己的测试套件）；其他所有作业都不需要 Vite checkout。
 
 ### 服务器入口点（`src/`）
 
@@ -182,14 +187,12 @@ Playground 通过 `pnpm-workspace.yaml` 中的
 
 ## 待跟进事项
 
-- **将这两个 Vite 捆绑开发版修复上游化。** 恢复性重载和
-  过期错误重放（参见 [The Vite backend](#the-vite-backend)）确实是
-  上游缺口；一旦在 vitejs/vite 中修复并更新子模块，就删除
-  `src/vite-server.ts` 中的 `WORKAROUND` 代码块。
+- **将这两个 Vite bundled-dev 修复上游化。** 恢复重载和
+  过期错误重放（见 [The Vite backend](#the-vite-backend)）是真实存在的上游缺口；一旦这些修复合并到 vitejs/vite `rolldown-canary`，请删除
+  `src/vite-server.ts` 中的 `WORKAROUND` 块。
 - **重载后的客户端重连门控。** 添加
-  `untilBrowserLogAfter(() => page.reload(), [/\[vite\] connected\./])`，这样
-  在重载后触发的编辑就不会因为尚未重新挂接的 websocket 而丢失——
-  标记已经存在，无需运行时更改。
+  `untilBrowserLogAfter(() => page.reload(), [/\[vite\] connected\./])`，这样在重载后触发的编辑就不会因为尚未重新连接的 websocket 而丢失——
+  这个标记已经存在，无需运行时改动。
 
 ## 相关
 

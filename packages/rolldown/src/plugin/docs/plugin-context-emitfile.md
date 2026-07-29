@@ -1,20 +1,20 @@
-#### In-depth (`type: 'chunk'`)
+#### 深入说明（`type: 'chunk'`）
 
-If the `type` is `'chunk'`, this emits a new chunk with the given module `id` as entry point. This will not result in duplicate modules in the graph, instead if necessary, existing chunks will be split or a facade chunk with reexports will be created. Chunks with a specified [`fileName`](/reference/Interface.EmittedChunk#filename) will always generate separate chunks while other emitted chunks may be deduplicated with existing chunks even if the name does not match. If such a chunk is not deduplicated, the [`output.chunkFileNames`](/reference/OutputOptions.chunkFileNames) pattern will be used.
+如果 `type` 是 `'chunk'`，这将以给定的模块 `id` 作为入口点发出一个新的 chunk。这不会导致图中出现重复模块；相反，必要时，现有 chunk 会被拆分，或者会创建一个带有 reexports 的 facade chunk。指定了 [`fileName`](/reference/Interface.EmittedChunk#filename) 的 chunk 将始终生成独立的 chunk，而其他已发出的 chunk 即使名称不匹配，也可能与现有 chunk 去重。如果这样的 chunk 没有被去重，则会使用 [`output.chunkFileNames`](/reference/OutputOptions.chunkFileNames) 模式。
 
-You can reference the URL of an emitted file in any code returned by a [`load`](/reference/Interface.Plugin#load) or [`transform`](/reference/Interface.Plugin#transform) plugin hook via `import.meta.ROLLUP_FILE_URL_referenceId` (returns a string). See [File URLs](/apis/plugin-api/file-urls) for more details and an example.
+你可以通过 `import.meta.ROLLDOWN_FILE_URL_referenceId`（返回一个字符串）在 [`load`](/reference/Interface.Plugin#load) 或 [`transform`](/reference/Interface.Plugin#transform) 插件钩子返回的任何代码中引用已发出文件的 URL。更多细节和示例请参见 [文件 URL](/apis/plugin-api/file-urls)。
 
-You can use [`this.getFileName(referenceId)`](/reference/Interface.PluginContext#getfilename) to determine the file name as soon as it is available. If the file name is not set explicitly, then:
+你可以使用 [`this.getFileName(referenceId)`](/reference/Interface.PluginContext#getfilename) 在文件名可用后立即确定它。若文件名未显式设置，则：
 
-- asset file names are available starting with the [`renderStart`](/reference/Interface.Plugin#renderstart) hook. For assets that are emitted later, the file name will be available immediately after emitting the asset.
-- chunk file names that do not contain a hash are available as soon as chunks are created after the [`renderStart`](/reference/Interface.Plugin#renderstart) hook.
-- if a chunk file name would contain a hash, using [`getFileName`](/reference/Interface.PluginContext#getfilename) in any hook before [`generateBundle`](/reference/Interface.Plugin#generatebundle) will return a name containing a placeholder instead of the actual name. If you use this file name or parts of it in a chunk you transform in [`renderChunk`](/reference/Interface.Plugin#renderchunk), Rolldown will replace the placeholder with the actual hash before [`generateBundle`](/reference/Interface.Plugin#generatebundle), making sure the hash reflects the actual content of the final generated chunk including all referenced file hashes.
+- 资源文件名可从 [`renderStart`](/reference/Interface.Plugin#renderstart) 钩子开始获取。对于更晚发出的资源，文件名会在发出资源后立即可用。
+- 不包含 hash 的 chunk 文件名，在 [`renderStart`](/reference/Interface.Plugin#renderstart) 钩子之后 chunk 被创建时即可获取。
+- 如果某个 chunk 文件名会包含 hash，那么在 [`generateBundle`](/reference/Interface.Plugin#generatebundle) 之前的任何钩子中使用 [`getFileName`](/reference/Interface.PluginContext#getfilename) 都会返回一个包含占位符而不是实际名称的文件名。如果你在 [`renderChunk`](/reference/Interface.Plugin#renderchunk) 中转换的 chunk 里使用了这个文件名或其部分内容，Rolldown 会在 [`generateBundle`](/reference/Interface.Plugin#generatebundle) 之前将占位符替换为实际 hash，确保该 hash 反映最终生成的 chunk 的实际内容，包括所有引用的文件 hash。
 
-#### In-depth (`type: 'prebuilt-chunk'`)
+#### 深入说明（`type: 'prebuilt-chunk'`）
 
-If the `type` is `'prebuilt-chunk'`, this emits a chunk with fixed contents provided by the [`code`](/reference/Interface.EmittedPrebuiltChunk#code) property.
+如果 `type` 是 `'prebuilt-chunk'`，这将发出一个内容固定、由 [`code`](/reference/Interface.EmittedPrebuiltChunk#code) 属性提供的 chunk。
 
-To reference a prebuilt chunk in imports, we need to mark the "module" as external in the [`resolveId`](/reference/Interface.Plugin#resolveid) hook as prebuilt chunks are not part of the module graph. Instead, they behave like assets with chunk meta-data:
+要在 imports 中引用预构建 chunk，我们需要在 [`resolveId`](/reference/Interface.Plugin#resolveid) 钩子中将“模块”标记为 external，因为预构建 chunk 不属于模块图。相反，它们的行为更像带有 chunk 元数据的资产：
 
 ```js
 function emitPrebuiltChunkPlugin() {
@@ -41,8 +41,8 @@ function emitPrebuiltChunkPlugin() {
 }
 ```
 
-Then you can reference the prebuilt chunk in your code by `import { foo } from './my-prebuilt-chunk.js';`.
+然后你就可以通过 `import { foo } from './my-prebuilt-chunk.js';` 在代码中引用这个预构建 chunk。
 
-#### In-depth (`type: 'asset'`)
+#### 深入说明（`type: 'asset'`）
 
-If the `type` is `'asset'`, this emits an arbitrary new file with the given source as content. Assets with a specified [`fileName`](/reference/Interface.EmittedAsset#filename) will always generate separate files while other emitted assets may be deduplicated with existing assets if they have the same source even if the name does not match. If an asset without a [`fileName`](/reference/Interface.EmittedAsset#filename) is not deduplicated, the [`output.assetFileNames`](/reference/OutputOptions.assetFileNames) pattern will be used.
+如果 `type` 是 `'asset'`，这将发出一个任意的新文件，其内容为给定的 source。指定了 [`fileName`](/reference/Interface.EmittedAsset#filename) 的资源将始终生成独立文件，而其他已发出的资源即使名称不匹配，如果它们具有相同的 source，也可能与现有资源去重。如果一个没有 [`fileName`](/reference/Interface.EmittedAsset#filename) 的资源没有被去重，则会使用 [`output.assetFileNames`](/reference/OutputOptions.assetFileNames) 模式。

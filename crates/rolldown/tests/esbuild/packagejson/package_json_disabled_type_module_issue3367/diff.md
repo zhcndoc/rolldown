@@ -13,6 +13,7 @@ var import_foo = __toESM(require_foo());
 ```
 ### rolldown
 ```js
+//#region (ignored) 
 //#endregion
 //#region entry.js
 (void 0)();
@@ -31,5 +32,4 @@ var import_foo = __toESM(require_foo());
 -var import_foo = __toESM(require_foo());
 -(0, import_foo.default)();
 +(void 0)();
-
 ```

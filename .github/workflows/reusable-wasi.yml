@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
           cache-key: debug-build-wasi
           save-cache: ${{ github.ref_name == 'main' }}
 
-      - uses: voidzero-dev/setup-vp@35171c92dd08b67d5a9d3f2a4327800e58396f2a # v1.13.0
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           version: '0.2.1'
           cache: true
@@ -40,6 +40,11 @@ jobs:
 
       - name: Stability Test
         run: vp run --filter rolldown-tests test:stability
+
+      # Runs against the WASI binding itself (NAPI_RS_FORCE_WASI), which no
+      # other CI test does. Regression coverage for #8411 and #8747.
+      - name: Tokio Runtime Lifecycle Test
+        run: vp run --filter rolldown-tests test:wasi-runtime
 
       # `@example/typescript` is excluded because its config enables `devtools`, which currently
       # panics under WASI when the writer tries to open its log file (crates/rolldown_devtools/src/writer.rs).

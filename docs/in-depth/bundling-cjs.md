@@ -1,4 +1,4 @@
-# Bundling CJS
+# 打包 CJS
 
 Rolldown 为 CommonJS 模块提供一等支持。本文档解释了 Rolldown 如何处理 CJS 模块，以及它们与 ES 模块之间的互操作性。
 
@@ -97,7 +97,7 @@ console.log(import_foo.value);
 
 ::: tip 仍然想把 `require` 转换为 `import`？
 
-如果你想把 `require` 调用转换为 `import` 语句，可以使用 [内置的 `esmExternalRequirePlugin`](/builtin-plugins/esm-external-require)。
+如果你想把 `require` 调用转换为 `import` 语句，可以使用[内置的 `esmExternalRequirePlugin`](/builtin-plugins/esm-external-require)。请注意，该插件必须自行负责它转换的外部依赖：把它们列在插件的 `external` 选项中，而不是顶层的 `external` 选项中。
 
 :::
 
@@ -138,11 +138,14 @@ export default (id) => {
 
 如果满足下面任一条件，那么 `default` 导入就是被导入的 CJS 模块的 `module.exports` 值。否则，`default` 导入就是被导入的 CJS 模块的 `module.exports.default` 值。
 
-- 导入方是 `.mjs` 或 `.mts`
-- （当它是动态导入时）导入方是 `.cjs` 或 `.cts`
-- 导入方最近的 `package.json` 中 `type` 字段设置为 `module`
-- （当它是动态导入时）导入方最近的 `package.json` 中 `type` 字段设置为 `commonjs`
+- 导入者是 `.mjs` 或 `.mts`
+- （当它是动态导入时）导入者是 `.cjs` 或 `.cts`
+- 导入者最近的 `package.json` 的 `type` 字段设置为 `module`
+- （当它是动态导入时）导入者最近的 `package.json` 的 `type` 字段设置为 `commonjs`
 - 被导入的 CJS 模块的 `module.exports.__esModule` 值未设置为 `true`
+- 被导入的 CJS 模块的 `module.exports` 值没有自有的 `default` 属性
+
+最后一个条件用于处理那些设置了 `__esModule` 但实际上并未提供 `default` 导出的 CJS 模块（例如 tslib 的 UMD 构建）。如果没有这个条件，`default` 导入将会是 `undefined`。`@rollup/plugin-commonjs` 也使用相同的回退方式处理这种情况。
 
 :::: details 详细行为
 

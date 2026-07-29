@@ -270,6 +270,8 @@ const config = defineConfig({
     ['script', { async: '', src: 'https://www.zhcndoc.com/js/common.js' }],
   ],
 
+  ignoreDeadLinks: true,
+
   themeConfig: {
     variant: 'rolldown',
     search: {

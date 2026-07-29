@@ -37,9 +37,7 @@ process.exitCode = failed ? 1 : 0;
 ```js
 import { watch } from 'rolldown';
 
-const watcher = watch({
-  /* ... */
-});
+const watcher = watch({/* ... */});
 watcher.on('event', (event) => {
   if (event.code === 'BUNDLE_END') {
     console.log(event.duration);
@@ -57,11 +55,11 @@ watcher.close();
 
 ::: warning Experimental
 
-此 API 处于实验阶段，可能会在补丁版本中发生变更。
+This API is experimental and may change in a patch release.
 
 :::
 
-`build()` 对于大多数使用场景来说是最简单的选择。该 API 与 esbuild 的 `build` 函数类似。它会在一次调用中完成打包和写入，并自动清理。
+`build()` is the simplest choice for most use cases. This API is similar to esbuild's `build` function. It performs bundling and writing in a single call, and cleans up automatically.
 
 ```js
 import { build } from 'rolldown';
@@ -75,4 +73,4 @@ const result = await build({
 console.log(result);
 ```
 
-更多详情请参见 [其参考文档](/reference/Function.build)。
+For more details, see [its reference documentation](/reference/Function.build).

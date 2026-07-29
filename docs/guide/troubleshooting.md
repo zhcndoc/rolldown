@@ -60,12 +60,7 @@ import { withFilter } from 'rolldown/filter';
 export default defineConfig({
   plugins: [
     // 仅对以 `.yaml` 结尾的模块运行 `yaml` 插件的 transform hook
-    withFilter(
-      yaml({
-        /*...*/
-      }),
-      { transform: { id: /\.yaml$/ } },
-    ),
+    withFilter(yaml({/*...*/}), { transform: { id: /\.yaml$/ } }),
   ],
 });
 ```
@@ -154,7 +149,7 @@ namespace.method();
 在 ECMAScript 中，`let`、`const` 和 `class` 声明会创建一个绑定，该绑定从其作用域开始时就存在，但在声明本身被求值之前一直处于未初始化状态。在这段窗口期内读取该绑定，即使通过 `typeof`，也会抛出 `ReferenceError`。这段窗口期被称为“暂时性死区（Temporal Dead Zone，TDZ）”。
 
 ```js
-typeof x; // ReferenceError: Cannot access 'x' before initialization
+typeof x; // ReferenceError：无法在初始化之前访问 'x'
 let x = 1;
 ```
 
@@ -198,4 +193,10 @@ console.log(bar());
 
 如果你为 bundle 生成了 sourcemap（[`sourcemap: true`](/reference/OutputOptions.sourcemap) 或 `sourcemap: 'inline'`），但同时使用了一个或多个在转换代码时未为该转换生成 sourcemap 的插件，就会看到这个警告。
 
-通常情况下，插件只有在配置了 `sourcemap: false` 时才会省略 sourcemap——所以你只需要把它改掉即可。如果该插件本身不生成 sourcemap，请考虑向插件作者提交 issue。
+通常，插件只有在它本身（而不是 bundle）被配置为 `sourcemap: false` 时才会省略 sourcemap——所以你只需要把它改掉。如果该插件不生成 sourcemap，可以考虑向插件作者提 issue。
+
+## 错误：`"Cannot find module '@rolldown/binding-...'"`
+
+这个错误意味着 Node.js 找到了 `rolldown` 包，但没有找到与平台相关的原生包。它通常是由一个已知的 npm 可选依赖 bug 引起的（[npm/cli#4828](https://github.com/npm/cli/issues/4828)）；如果你是用 npm 安装的，删除 `node_modules` 和 `package-lock.json` 后重新安装即可修复。
+
+当配置文件位于一个符号链接目录中，而该目录又指向另一个项目时，也可能出现这种情况，例如 Windows 和 WSL 之间共享的目录（[#9854](https://github.com/rolldown/rolldown/issues/9854)）。Node.js 在解析导入之前会先将配置解析到其真实路径，因此 `import ... from 'rolldown'` 可能会加载到为其他平台安装的 `node_modules`。请将配置文件放在符号链接目录之外，或者在运行时设置 `NODE_OPTIONS=--preserve-symlinks` 环境变量（这与 pnpm 不兼容，因为 pnpm 的 `node_modules` 布局依赖符号链接）。

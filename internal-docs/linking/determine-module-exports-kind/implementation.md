@@ -1,20 +1,20 @@
-# determine_module_exports_kind
+# 确定模块导出类型
 
-## Summary
+## 摘要
 
-`determine_module_exports_kind` runs early in `LinkStage` and decides two things that gate everything downstream: each module's final `ExportsKind` (with one carefully-noted exception, see §"Invariants") and which modules need a `WrapKind::Esm` / `WrapKind::Cjs` wrapper at finalization. It is the place where the bundler stops _observing_ what the source said and starts _deciding_ how each module will be emitted. Wrap decisions depend only on the _syntax_ of the `(importer, importee, ImportKind)` triple, not on usage, so they're settled before symbol-binding and tree-shaking — both of which need to know whether an importee is wrapped CJS or raw ESM to compute re-export visibility correctly.
+`determine_module_exports_kind` 在 `LinkStage` 中较早运行，并决定两个会影响后续所有流程的事项：每个模块最终的 `ExportsKind`（有一个特别注明的例外，见 §“不变量”）以及哪些模块在最终化时需要 `WrapKind::Esm` / `WrapKind::Cjs` 包装器。它是打包器停止“观察”源代码所述内容、开始“决定”每个模块将如何输出的地方。包装决策只取决于 `(importer, importee, ImportKind)` 三元组的“语法”，而不取决于使用方式，因此它们会在符号绑定和树摇之前就确定下来——而这两者都需要知道某个 importee 是被包装的 CJS 还是原始 ESM，才能正确计算重新导出的可见性。
 
-Source: `crates/rolldown/src/stages/link_stage/determine_module_exports_kind.rs`.
+来源：`crates/rolldown/src/stages/link_stage/determine_module_exports_kind.rs`。
 
-Related code:
+相关代码：
 
-- `crates/rolldown/src/stages/link_stage/generate_lazy_export.rs` — the one stage allowed to revise `exports_kind` after this pass (see §"Invariants").
-- `crates/rolldown/src/stages/link_stage/wrapping.rs` — consumes the `WrapKind` decisions made here.
-- `LinkingMetadata::sync_wrap_kind` — the writer used for wrap state.
+- `crates/rolldown/src/stages/link_stage/generate_lazy_export.rs` —— 唯一允许在此步骤之后修改 `exports_kind` 的阶段（见 §“不变量”）。
+- `crates/rolldown/src/stages/link_stage/wrapping.rs` —— 消费这里做出的 `WrapKind` 决策。
+- `LinkingMetadata::set_wrap_kind` —— 用于写入包装状态的写入器。
 
-## Pipeline placement
+## 管道位置
 
-The relevant prefix of `LinkStage::link()` (in `mod.rs`) runs roughly:
+`LinkStage::link()`（在 `mod.rs` 中）的相关前缀大致按以下顺序运行：
 
 ```
 sort_modules
@@ -30,90 +30,90 @@ reference_needed_symbols
 include_statements
 ```
 
-Position is load-bearing: `wrap_modules` propagates wrap requirements transitively through the graph using the `WrapKind`s set here as roots, and `bind_imports_and_exports` reads the `exports_kind` set here to decide how to thread re-exports through CJS namespace bindings.
+位置至关重要：`wrap_modules` 会使用此处设置的 `WrapKind` 作为根，在图中递归传播包装需求，而 `bind_imports_and_exports` 会读取此处设置的 `exports_kind`，以决定如何通过 CJS 命名空间绑定来传递重新导出。
 
-## State this pass touches
+## 本次传递涉及的状态
 
-`determine_module_exports_kind` writes:
+`determine_module_exports_kind` 会写入：
 
-- `module.exports_kind` for some normal modules (in-place via `addr_of!` cast — see §"The unsafe block").
-- `self.metas[idx].wrap_kind` (and `original_wrap_kind`) via `LinkingMetadata::sync_wrap_kind`. **Not idempotent** — the last writer wins, so call order is part of the contract.
+- 某些普通模块的 `module.exports_kind`（通过 `addr_of!` 强制转换原地写入——见 §“The unsafe block”）。
+- 通过 `LinkingMetadata::set_wrap_kind` 写入 `self.metas[idx].wrap_kind`。**这不是幂等的**——最后一次写入者获胜，因此调用顺序是契约的一部分。
 
-It does not touch symbol tables, tree-shaking flags, or chunk graph.
+它不会触及符号表、tree-shaking 标志或 chunk graph。
 
-## Promotion + wrap rules
+## 提升 + 包装规则
 
-For each `(importer, importee, rec.kind)`:
+对于每个 `(importer, importee, rec.kind)`：
 
-| `rec.kind`                 | `importee.exports_kind` | Effect                                                                                |
-| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
-| `Import`                   | `None` (non-lazy)       | Promote to `Esm`.                                                                     |
-| `Import`                   | `Esm` / `CommonJs`      | No-op. (CJS-imported-by-ESM is wrapping work handled in `wrap_modules`.)              |
-| `Require`                  | `Esm`                   | Mark importee `WrapKind::Esm` (to satisfy `require()` of an ESM module).              |
-| `Require`                  | `CommonJs`              | Mark importee `WrapKind::Cjs`.                                                        |
-| `Require`                  | `None`                  | Mark `WrapKind::Cjs` and promote `exports_kind` to `CommonJs`.                        |
-| `DynamicImport` (split)    | any                     | No-op. Code-splitting handles dynamic imports natively.                               |
-| `DynamicImport` (no split) | `Esm`                   | Mark `WrapKind::Esm`. `import()` lowers to `require + Promise.resolve(__toESM(...))`. |
-| `DynamicImport` (no split) | `CommonJs`              | Mark `WrapKind::Cjs`.                                                                 |
-| `DynamicImport` (no split) | `None`                  | Mark `WrapKind::Cjs` and promote to `CommonJs`.                                       |
-| `AtImport` / `UrlImport`   | —                       | `unreachable!` — see §"Why CSS import kinds are `unreachable!`".                      |
-| `NewUrl` / `HotAccept`     | —                       | No-op (asset reference / HMR metadata, not a module-shape signal).                    |
+| `rec.kind`                 | `importee.exports_kind` | 影响                                                                                 |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| `Import`                   | `None`（非 lazy）       | 提升为 `Esm`。                                                                       |
+| `Import`                   | `Esm` / `CommonJs`      | 无操作。（由 ESM 导入的 CJS 的包装工作由 `wrap_modules` 处理。）                     |
+| `Require`                  | `Esm`                   | 标记 importee 为 `WrapKind::Esm`（以满足对 ESM 模块的 `require()`）。                |
+| `Require`                  | `CommonJs`              | 标记 importee 为 `WrapKind::Cjs`。                                                   |
+| `Require`                  | `None`                  | 标记为 `WrapKind::Cjs`，并将 `exports_kind` 提升为 `CommonJs`。                      |
+| `DynamicImport`（split）   | 任意                    | 无操作。代码分割会原生处理动态导入。                                                 |
+| `DynamicImport`（no split）| `Esm`                   | 标记为 `WrapKind::Esm`。`import()` 降级为 `require + Promise.resolve(__toESM(...))`。 |
+| `DynamicImport`（no split）| `CommonJs`              | 标记为 `WrapKind::Cjs`。                                                             |
+| `DynamicImport`（no split）| `None`                  | 标记为 `WrapKind::Cjs`，并提升为 `CommonJs`。                                        |
+| `AtImport` / `UrlImport`   | —                       | `unreachable!` — 参见 §“为什么 CSS 导入种类是 `unreachable!`”。                      |
+| `NewUrl` / `HotAccept`     | —                       | 无操作（资源引用 / HMR 元数据，不是模块形状信号）。                                   |
 
-After processing all import records, the importer is itself wrapped as CJS when:
+在处理完所有导入记录后，当满足以下条件时，importer 自身会被包装为 CJS：
 
-- `importer.exports_kind == CommonJs`, **and**
-- it is _not_ an entry, **or** the output format is `Esm`, **or** the output is `Iife`/`Umd` and the importer touches `module`/`exports`.
+- `importer.exports_kind == CommonJs`，并且
+- 它 _不是_ 入口模块，**或** 输出格式是 `Esm`，**或** 输出是 `Iife`/`Umd` 且 importer 触及了 `module`/`exports`。
 
-The "is entry + Esm output" branch is what allows `module.exports = ...` to keep working in a CJS-emit-as-ESM scenario; the `Iife`/`Umd` branch prevents leaking `module`/`exports` into the IIFE wrapper's outer scope.
+“是入口 + Esm 输出”这一分支，允许 `module.exports = ...` 在以 CJS 形式输出为 ESM 的场景中继续工作；`Iife`/`Umd` 分支则防止 `module`/`exports` 泄漏到 IIFE 包装器的外层作用域。
 
-> **Why "lazy export" is excluded from the `Import` + `None` arm:**
-> Lazy-export modules are deferred ESM facades; promoting them here would short-circuit the dedicated lazy-export pass that runs later (`generate_lazy_export`), which performs additional restructuring that a naive `None → Esm` promotion would skip.
+> **为什么在 `Import` + `None` 分支中排除“lazy export”：**
+> lazy-export 模块是延迟执行的 ESM 外壳；如果在这里提升它们，会提前截断后面运行的专用 lazy-export 处理流程（`generate_lazy_export`），而该流程会进行额外的重构，这些重构会被简单的 `None → Esm` 提升所跳过。
 
-## Invariants (the contract for downstream stages)
+## 不变量（下游阶段的契约）
 
-After this pass completes:
+在此阶段完成后：
 
-1. **Non-lazy modules have their final `exports_kind`.** Every `Module::Normal` whose meta does **not** have `has_lazy_export()` has been classified — a residual `ExportsKind::None` means "no JS importer touched it; treat as a side-effect-only script."
-2. **Lazy-export modules are intentionally not finalized here.** `generate_lazy_export` runs later and may flip a lazy module's `exports_kind` to `Esm` (`generate_lazy_export.rs:88`, `:287`) and even revise its `wrap_kind` to `WrapKind::None` for the JSON-lazy path (`:296`). Don't widen invariant (1) without auditing that pass.
-3. **For every non-lazy `(importer, importee)` pair where wrapping is required, `metas[importee.idx].wrap_kind` is set.** `wrap_modules` may transitively propagate wrappers from there, but it will never _introduce_ a wrap that this pass missed.
+1. **非懒加载模块具有其最终的 `exports_kind`。** 每个 `Module::Normal`，只要其 meta **不** 具有 `has_lazy_export()`，就已经被分类——如果剩余的 `ExportsKind::None`，表示“没有任何 JS 导入方触碰过它；把它当作仅有副作用的脚本处理。”
+2. **懒导出模块在这里有意不做最终定型。** `generate_lazy_export` 会在后面运行，并且可能将懒模块的 `exports_kind` 改为 `Esm`（`generate_lazy_export.rs:88`, `:287`），甚至为 JSON-lazy 路径将其 `wrap_kind` 修订为 `WrapKind::None`（`:296`）。在未审查该阶段之前，不要扩大不变量 (1) 的范围。
+3. **对于每个需要包装的非懒 `(importer, importee)` 对，`metas[importee.idx].wrap_kind` 都已设置。** `wrap_modules` 可能会从那里传递性地传播包装，但它绝不会引入本阶段遗漏的包装。
 
-Anything that breaks (1) or (3) is a bug _here_, not in the consumer.
+任何破坏 (1) 或 (3) 的情况，都是这里的 bug，而不是使用方的 bug。
 
-## The `addr_of!(*importee).cast_mut()` trick
+## `addr_of!(*importee).cast_mut()` 技巧
 
-The body of the loop holds a shared borrow of `self.module_table.modules` (via the iterator) while wanting to write `importee.exports_kind`. Because `importee` is one element of the same `Vec` we're iterating, asking the borrow checker for `&mut` here is futile; the cast through a raw pointer is the local escape hatch.
+循环体通过迭代器持有 `self.module_table.modules` 的共享借用，同时又希望写入 `importee.exports_kind`。由于 `importee` 是正在遍历的同一个 `Vec` 中的一个元素，这里向借用检查器申请 `&mut` 是徒劳的；通过原始指针进行转换是本地的“逃生舱口”。
 
-Safety argument (also annotated in-source):
+安全性论证（源码中也有注释）：
 
-- `importer` and `importee` are _different_ modules in every well-formed case (an import always resolves to a different module).
-- In the self-import edge case (`importee == importer`), the only field written is `exports_kind`, which is independent of every field read in the surrounding match arms. The aliasing is therefore benign.
-- No re-entrant traversal observes the half-written state; mutation happens after the read of `importee.exports_kind` and the write does not change the iterator.
+- 在所有符合预期的情况下，`importer` 和 `importee` 都是 _不同_ 的模块（一次导入总是解析到另一个模块）。
+- 在自导入的边界情况（`importee == importer`）中，唯一被写入的字段是 `exports_kind`，它与周围 `match` 分支中读取的任何字段都相互独立。因此，这种别名是无害的。
+- 没有任何可重入遍历会观察到半写入状态；变更发生在读取 `importee.exports_kind` 之后，而且这次写入不会改变迭代器。
 
-This is _load-bearing unsafe_. The cleaner alternative is a two-pass form:
+这是一种 _负载关键型 unsafe_。更清晰的替代方案是两遍处理：
 
-1. Walk modules, collect a `Vec<(ModuleIdx, ExportsKind)>` of intended promotions.
-2. Apply each via `module_table.modules[idx].as_normal_mut()`.
-3. Re-walk to set `wrap_kind` (or fold step 3 into step 1's collection).
+1. 遍历模块，收集一个 `Vec<(ModuleIdx, ExportsKind)>`，存放计划中的提升操作。
+2. 通过 `module_table.modules[idx].as_normal_mut()` 逐个应用。
+3. 重新遍历以设置 `wrap_kind`（或者将第 3 步并入第 1 步的收集中）。
 
-That refactor was previously merged and then reverted (#9237) after a hard-to-reproduce regression. Until that regression has a minimal repro, the unsafe form stays. If you change this loop, preserve the property that **only `exports_kind` is mutated**, and only on a `&NormalModule` that is otherwise unaliased for the duration of the write.
+这个重构之前已经合并，后来又因为一个难以复现的回归问题被回滚（#9237）。在该回归问题拥有最小复现之前，这种 unsafe 形式会继续保留。若你修改这段循环，请保持这样一个性质：**只有 `exports_kind` 会被修改**，并且只在一个在写入期间除此之外没有别名的 `&NormalModule` 上修改。
 
-## Why CSS import kinds are `unreachable!`
+## 为什么 CSS import 类型是 `unreachable!`
 
-`Module::as_normal` filters out `Module::External`, `Module::CssModule`, and any non-JS module variant before this pass sees them. CSS dependencies are reached only via `ImportKind::AtImport` / `UrlImport`, which originate from CSS modules — not from JS. Therefore those kinds cannot appear in a JS module's `import_records`, and the panic is a guard against a misclassification upstream. `NewUrl` and `HotAccept` _do_ appear on JS modules but carry no exports/wrap implication, so they're explicit no-ops.
+`Module::as_normal` 在这个 pass 看到之前，就已经过滤掉了 `Module::External`、`Module::CssModule` 以及任何非 JS 模块变体。CSS 依赖只会通过 `ImportKind::AtImport` / `UrlImport` 到达，而这些来源于 CSS 模块，而不是 JS。因此，这些类型不可能出现在 JS 模块的 `import_records` 中，而这个 panic 是为了防止上游发生误分类。`NewUrl` 和 `HotAccept` _确实_ 会出现在 JS 模块中，但它们不携带任何 exports/wrap 相关的含义，所以它们被明确处理为 no-op。
 
-## Editing checklist
+## 编辑检查清单
 
-Things that are easy to break and worth re-checking when changing this file:
+在修改此文件时，有一些很容易破坏、值得重新检查的地方：
 
-- **Order between `sync_wrap_kind` calls and `exports_kind` mutation.** Wrap decisions inside the `Require` / `DynamicImport` arms read `importee.exports_kind` _before_ any promotion would happen. Don't reorder.
-- **The CJS-importer wrap rule** (after the per-record loop). The conjunction of conditions encodes three different output-format contracts; flattening it into a `match self.options.format` rewrite has tripped more than one reviewer. Add a regression test rather than refactoring blindly.
-- **Don't widen the unsafe block.** Anything that needs mutable access to other fields of `NormalModule` should go through a separate pass.
-- **Don't promote lazy-export modules here.** Leave `has_lazy_export()` modules to `generate_lazy_export`; promoting them prematurely will break the JSON-lazy and ESM-default code paths in that file.
+- **`set_wrap_kind` 调用与 `exports_kind` 变更之间的顺序。** `Require` / `DynamicImport` 分支中的包装决策会在任何提升发生之前读取 `importee.exports_kind`。不要重新排序。
+- **CJS 导入者包装规则**（在逐条记录循环之后）。这些条件的合取编码了三种不同的输出格式契约；将其扁平化改写为 `match self.options.format` 形式已经让不止一位审阅者踩过坑。请添加回归测试，而不是盲目重构。
+- **不要扩大 `unsafe` 块的范围。** 任何需要对 `NormalModule` 其他字段进行可变访问的操作，都应该通过单独的遍历来完成。
+- **不要在这里提升 lazy-export 模块。** 将 `has_lazy_export()` 模块留给 `generate_lazy_export`；过早提升它们会破坏该文件中的 JSON-lazy 和 ESM-default 代码路径。
 
-## Unresolved Questions
+## 未解决的问题
 
-- The `addr_of!` cast is a known wart. The two-pass refactor that removes it has been tried twice; both attempts hit a regression that wouldn't reproduce reliably (#9237). Worth one more attempt with a fuzzer-driven test corpus before accepting the unsafe block as permanent.
+- `addr_of!` 强制转换是一个已知的瑕疵。移除它的双遍重构已经尝试过两次；两次尝试都遇到了一个无法稳定复现的回归问题（#9237）。在接受该 unsafe 代码块作为永久方案之前，值得再借助一个由模糊测试驱动的测试语料库尝试一次。
 
-## Related
+## 相关
 
-- [module-execution-order](../module-execution-order/implementation.md)
+- [模块执行顺序](../module-execution-order/implementation.md)

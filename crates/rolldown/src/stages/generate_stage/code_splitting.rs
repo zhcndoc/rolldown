@@ -2,7 +2,10 @@ use std::{borrow::Cow, cmp::Ordering, collections::VecDeque, path::Path};
 
 use crate::{
   chunk_graph::ChunkGraph,
-  stages::generate_stage::{chunk_ext::ChunkDebugExt, chunk_optimizer::ChunkOptimizationGraph},
+  stages::generate_stage::{
+    chunk_ext::ChunkDebugExt,
+    chunk_optimizer::{ChunkOptimizationGraph, RuntimeMergeCascade},
+  },
   types::linking_metadata::LinkingMetadataVec,
   utils::chunk::normalize_preserve_entry_signature,
 };
@@ -168,15 +171,45 @@ impl GenerateStage<'_> {
 
     chunk_graph.sort_chunk_modules(self.link_output, self.options);
 
-    self.find_entry_level_external_module(&mut chunk_graph);
+    self.assign_chunk_exec_orders(&mut chunk_graph);
+    chunk_graph.rebuild_sorted_chunk_idx_vec(false);
 
-    self.finalized_module_namespace_ref_usage();
+    Ok(chunk_graph)
+  }
 
-    // Runs after the two passes above invalidated the link-time reasons for including the
-    // runtime module, and before chunk exec-order assignment so a dropped runtime chunk is
-    // tombstoned like any other removed chunk.
-    self.sweep_unused_runtime_module(&mut chunk_graph, used_symbol_refs);
-
+  /// Assign each live chunk a render `exec_order` from the execution order of its lead module, so
+  /// that both `sorted_chunk_idx_vec` and the cross-chunk import sort (`compute_cross_chunk_links`)
+  /// reflect real evaluation order. A `Common` chunk keys on `modules[0]` — the lowest-`exec_order`
+  /// module after `sort_chunk_modules`.
+  ///
+  /// This keying is sensitive to chunk *membership*: the runtime module has `exec_order` 0 and
+  /// `sort_chunk_modules` always places it first, so any chunk hosting the runtime keys on 0. The
+  /// provisional call in `generate_chunks` runs before the post-chunking
+  /// `sweep_unused_runtime_module`, so a still-live chunk the sweep later strips the runtime out of
+  /// would otherwise keep an `exec_order` derived from a module it no longer contains — sorting
+  /// ahead of chunks it should follow. `finalize_chunk_plan` therefore re-runs this after such a
+  /// sweep, restoring the ordering the pre-#10104 pipeline produced by sweeping *before* assignment.
+  ///
+  /// Composition with the strict path: `renumber_live_chunks` (strict-only, after order-wrap
+  /// lowering) merely *compacts* existing `exec_order` values to close tombstone gaps; it never
+  /// re-derives them from `modules[0]`. The two compose by last-writer-wins: the re-run happens after
+  /// lowering, so when the sweep removes the runtime it re-derives every live chunk's order from its
+  /// current `modules[0]`, producing a dense, correctly-keyed order that supersedes any earlier
+  /// `renumber_live_chunks` compaction. (They rarely both fire anyway, for two different reasons:
+  /// an order wrapper's synthetic statements keep `required_runtime_helpers()` non-empty, which
+  /// skips the sweep outright, while the empty-plan facade path leaves that set empty and is
+  /// instead stopped inside the sweep — an empty plan makes the `plan.modules()` collection in
+  /// `create_order_wrap_entry_facades` contribute nothing, leaving only its two
+  /// `wrap_kind() != WrapKind::None` filters, and such an entry always force-includes a wrapper
+  /// statement referencing `__commonJS`/`__esm`, so `runtime_helpers_still_demanded` keeps the
+  /// runtime.)
+  ///
+  /// The esbuild-style `Chunk#bits` sort is intentionally avoided: `Chunk#bits` is not stably
+  /// ordered (e.g. `BitSet(0) 00000001_00000000` > `BitSet(8) 00000000_00000001`), so it cannot fix
+  /// the relative order of dynamic and common chunks. `Chunk#exec_order` is both cheaper and stable,
+  /// and guarantees entry chunks precede others, static chunks precede dynamic ones, and every chunk
+  /// has a stable order at the per-entry-chunk level.
+  pub(super) fn assign_chunk_exec_orders(&self, chunk_graph: &mut ChunkGraph) {
     chunk_graph
       .chunk_table
       .iter_mut_enumerated()
@@ -228,19 +261,6 @@ impl GenerateStage<'_> {
       .for_each(|(i, (_chunk_idx, chunk))| {
         chunk.exec_order = i.try_into().expect("Too many chunks, u32 overflowed.");
       });
-    // The esbuild using `Chunk#bits` to sorted chunks, but the order of `Chunk#bits` is not stable, eg `BitSet(0) 00000001_00000000` > `BitSet(8) 00000000_00000001`. It couldn't ensure the order of dynamic chunks and common chunks.
-    // Consider the compare `Chunk#exec_order` should be faster than `Chunk#bits`, we use `Chunk#exec_order` to sort chunks.
-    // Note Here could be make sure the order of chunks.
-    // - entry chunks are always before other chunks
-    // - static chunks are always before dynamic chunks
-    // - other chunks has stable order at per entry chunk level
-    // i.e.
-    // EntryPoint (is_user_defined: true) < EntryPoint (is_user_defined: false) or Common
-    // [order by chunk index]               [order by exec order]
-
-    chunk_graph.rebuild_sorted_chunk_idx_vec();
-
-    Ok(chunk_graph)
   }
 
   /// Merge symbols that import the same binding from the same external module, now that chunk
@@ -543,7 +563,11 @@ impl GenerateStage<'_> {
   ///    indirect external module re-exports optimization.
   /// 3. **All other cases**: Remove the namespace object
   ///
-  pub fn finalized_module_namespace_ref_usage(&mut self) {
+  pub fn finalized_module_namespace_ref_usage(
+    &mut self,
+    chunk_graph: &ChunkGraph,
+    order_state: &super::order_wrap_state::OrderWrapState,
+  ) {
     let to_eliminate = self
       .link_output
       .module_table
@@ -558,8 +582,13 @@ impl GenerateStage<'_> {
         // exist regardless of the module's exports_kind (e.g. empty modules have
         // ExportsKind::None but still need their namespace declaration when exported
         // cross-chunk).
-        let is_namespace_referenced = if module_namespace_included_reason
-          .contains(ModuleNamespaceIncludedReason::SimulateFacadeChunk)
+        let order_requires_namespace = order_state
+          .requires_namespace(m.namespace_object_ref, |importer_idx| {
+            chunk_graph.module_is_in_live_chunk(importer_idx)
+          });
+        let is_namespace_referenced = if order_requires_namespace
+          || module_namespace_included_reason
+            .contains(ModuleNamespaceIncludedReason::SimulateFacadeChunk)
         {
           true
         } else if matches!(m.exports_kind, ExportsKind::Esm) {
@@ -619,7 +648,11 @@ impl GenerateStage<'_> {
   }
 
   /// Find all entry level external modules, and re propagate `has_dynamic_exports` for affected modules.
-  fn find_entry_level_external_module(&mut self, chunk_graph: &mut ChunkGraph) {
+  pub(super) fn find_entry_level_external_module(&mut self, chunk_graph: &mut ChunkGraph) {
+    for chunk in chunk_graph.chunk_table.iter_mut() {
+      chunk.entry_level_external_module_idx.clear();
+    }
+
     let module_to_entry_level_external_rec_list_maps = chunk_graph
       .chunk_table
       .par_iter_enumerated()
@@ -1033,7 +1066,7 @@ impl GenerateStage<'_> {
       );
     }
 
-    self.try_merge_runtime_chunk(chunk_graph, None);
+    self.try_merge_runtime_chunk(chunk_graph, None, RuntimeMergeCascade::Full);
 
     Ok(())
   }

@@ -230,48 +230,48 @@ export default defineConfig([
 ]);
 ```
 
-## 使用插件
+## Using Plugins
 
-Rolldown 的插件 API 与 Rollup 的完全一致，因此在使用 Rolldown 时，你可以复用大多数现有的 Rollup 插件。话虽如此，Rolldown 提供了许多 [内置功能](./notable-features)，使得使用插件变得没有必要。
+Rolldown's plugin API is completely consistent with Rollup's, so when using Rolldown, you can reuse most existing Rollup plugins. That said, Rolldown provides many [built-in features](./notable-features), making plugins unnecessary in many cases.
 
-此外，Rolldown 还提供了一些可用于特定用例的内置插件。有关更多信息，请参见 [内置插件](/builtin-plugins/)。
+In addition, Rolldown also provides some built-in plugins for specific use cases. For more information, see [Built-in Plugins](/builtin-plugins/).
 
-发布到 npm 的社区插件列在 [Vite 插件注册表](https://registry.vite.dev/plugins) 中。
+Community plugins published to npm are listed in the [Vite Plugin Registry](https://registry.vite.dev/plugins).
 
-## 使用 API
+## Using the API
 
-Rolldown 提供了一个与 [Rollup 的](https://rollupjs.org/javascript-api/)兼容的 JavaScript API，它将 `input` 和 `output` 选项分开：
+Rolldown provides a JavaScript API compatible with [Rollup’s](https://rollupjs.org/javascript-api/), which separates the `input` and `output` options:
 
 ```js
 import { rolldown } from 'rolldown';
 
 const bundle = await rolldown({
-  // 输入选项
+  // Input options
   input: 'src/main.js',
 });
 
-// 使用不同的输出选项在内存中生成 bundle
+// Generate the bundle in memory with different output options
 await bundle.generate({
-  // 输出选项
+  // Output options
   format: 'esm',
 });
 await bundle.generate({
-  // 输出选项
+  // Output options
   format: 'cjs',
 });
 
-// 或者直接写入磁盘
+// Or write directly to disk
 await bundle.write({
   file: 'bundle.js',
 });
 ```
 
-或者，你也可以使用更简洁的 `build` API，它接受的选项与配置文件导出完全相同：
+Alternatively, you can use the more concise `build` API, which accepts the same options as a config file export:
 
 ```js
 import { build } from 'rolldown';
 
-// build 默认写入磁盘
+// build writes to disk by default
 await build({
   input: 'src/main.js',
   output: {
@@ -287,9 +287,7 @@ rolldown watcher api 与 rollup 的 [watch](https://rollupjs.org/javascript-api/
 ```js
 import { watch } from 'rolldown';
 
-const watcher = watch({
-  /* 选项 */
-}); // 或 watch([/* 多个选项 */])
+const watcher = watch({/* 选项 */}); // 或 watch([/* 多个选项 */] )
 
 watcher.on('event', () => {});
 

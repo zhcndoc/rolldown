@@ -39,6 +39,10 @@ export default defineConfig({
 });
 ```
 
+:::warning 该插件必须独占其外部依赖
+将每个模块只列在此插件的 `external` 选项中，或只列在顶层的 `external` 选项中，切勿两者同时列出。顶层 `external` 会在解析时生效，因此插件会完全跳过重复的模块。构建会带着警告成功，但输出仍会在运行时继续对外部模块调用 `require()`。
+:::
+
 ## 选项
 
 ### `external`
@@ -69,7 +73,9 @@ esmExternalRequirePlugin({
 Found 2 duplicate external: `react`, `vue`. Remove them from top-level `external` as they're already handled by 'builtin:esm-external-require' plugin.
 ```
 
-这有助于避免配置混淆，并确保插件正确处理 ESM `require()` 转换。如果你对自己的配置很有信心，可以通过设置 `skipDuplicateCheck: true` 来禁用此检查。
+将此警告视为正确性信号。插件会保留重复的模块不做处理：顶层 `external` 选项具有优先级，因此输出中仍然包含该插件本应转换的原始 `require()` 调用。请从顶层 `external` 中移除这些重复项。不会有任何损失：插件本身无论如何都会将其自己的模块标记为外部依赖。
+
+`skipDuplicateCheck: true` 并不会让重复项正常工作。它只会静默掉警告，因此只有在你确定没有模块同时出现在这两个位置时才启用它。
 
 ## 限制
 

@@ -1,5 +1,5 @@
 {
-  "snapshot": false,
+  "configName": "on-demand",
   "config": {
     "input": [
       {
@@ -30,35 +30,19 @@
       "onDemandWrapping": true
     }
   },
-  "expectExecutionFailure": {
-    "reason": "#9887 / #10104: wrapped entry chunk cycle crashes on main",
-    "outputContains": ["is not a function", "wrapped_entry_chunk_cycle"]
-  },
   "configVariants": [
     {
-      "_configName": "cjs",
-      "format": "cjs",
-      "_expectExecutionFailure": {
-        "reason": "#9887 / #10104: wrapped entry chunk cycle crashes on main",
-        "outputContains": ["is not a function", "wrapped_entry_chunk_cycle"]
-      }
+      "_configName": "cjs-on-demand",
+      "format": "cjs"
     },
     {
       "_configName": "cjs-wrap-all",
       "format": "cjs",
-      "onDemandWrapping": false,
-      "_expectExecutionFailure": {
-        "reason": "#9887 / #10104: wrapped entry chunk cycle crashes on main",
-        "outputContains": ["is not a function", "wrapped_entry_chunk_cycle"]
-      }
+      "onDemandWrapping": false
     },
     {
       "_configName": "wrap-all",
-      "onDemandWrapping": false,
-      "_expectExecutionFailure": {
-        "reason": "#9887 / #10104: wrapped entry chunk cycle crashes on main",
-        "outputContains": ["is not a function", "wrapped_entry_chunk_cycle"]
-      }
+      "onDemandWrapping": false
     }
   ],
   "hiddenRuntimeModule": false

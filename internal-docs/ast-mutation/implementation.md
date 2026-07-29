@@ -41,17 +41,18 @@ Rolldown 的打包流水线有三个会与 AST 交互的阶段：
 
 主要的跨 pass 侧表、以 `NodeId` 为键的有：
 
-- `EcmaView::imports` - import 声明、export-from 声明、动态 `import()` 表达式，以及识别出的 `require()` 调用表达式。
+- `EcmaView::imports` - import declarations, export-from declarations, dynamic `import()` expressions, and recognized `require()` call expressions.
 - `EcmaView::dummy_record_set` - 需要运行时 helper 重写的 `require` 标识符引用。
 - `EcmaView::new_url_references` - 映射到资源导入记录的 `new URL('...', import.meta.url)` 节点。
+- `EcmaView::rolldown_file_url_references` and the generate stage's `ResolvedFileUrls` - `import.meta.ROLLDOWN_FILE_URL_<referenceId>` member expressions recorded at scan; `resolveFileUrl` hook results are keyed by `(ModuleIdx, NodeId)` for the finalizer's rewrite.
 - `EcmaView::this_expr_replace_map` - 应该变成 `exports` 或 `undefined` 的顶层 `this` 表达式。
-- `MemberExprRef::node_id` 和 `LinkingMetadata::resolved_member_expr_refs` - 从 scan 经由 link 到 finalization 的命名空间/成员表达式解析。
-- `DynamicImportExprInfo::node_id` 记录其所在模块内的动态 `import()` 节点；随后 `EntryPoint::related_stmt_infos` 传递 `(ModuleIdx, …, NodeId, …)` 元组，以便将动态 import 入口追溯回模块图。
-- 跨模块优化状态，它有两种形态：一种是按模块划分的无副作用调用表达式集合（裸 `NodeId`，仅在同一模块遍历内消费），另一种是按图范围统计的不可达动态 import 集合，使用 `(ModuleIdx, NodeId)` 作为键，因为它聚合了来自所有模块的记录。
+- `MemberExprRef::node_id` and `LinkingMetadata::resolved_member_expr_refs` - 从 scan 到 link 再到 finalization 的命名空间/成员表达式解析。
+- `DynamicImportExprInfo::node_id` 记录了其所在模块中的动态 `import()` 节点；`EntryPoint::related_stmt_infos` 随后携带 `(ModuleIdx, …, NodeId, …)` 元组，以便将动态 import 入口追溯回模块图中的位置。
+- 跨模块优化状态，它有两种形态：每个模块各自的一组无副作用调用表达式（裸 `NodeId`，只在同一模块的遍历中消费），以及按 `(ModuleIdx, NodeId)` 键控的全图范围内不可达动态导入集合，因为它汇总了来自每个模块的记录。
 
 这意味着 finalizer 生成的、保留默认 `NodeId::DUMMY` 的节点不会意外匹配 scan 阶段的记录。`Span` 不再需要同时充当这些重写决策的键。
 
-## Span 仍然适用的地方
+## `Span` 仍然适用的地方
 
 `Span` 仍然是源位置的正确表示。它依然用于：
 

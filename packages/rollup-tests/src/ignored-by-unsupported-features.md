@@ -24,14 +24,11 @@
  - rollup@function@enforce-sequential-plugin-order: 允许对并行插件 hook 强制执行顺序化的插件 hook 顺序
  - rollup@hooks@allows to enforce sequential plugin hook order in watch mode
 
-### 不支持 `renderDynamicImport/resolveFileUrl/resolveImportMeta/shouldTransformCachedModule` hooks
+### 不支持 `renderDynamicImport/resolveImportMeta/shouldTransformCachedModule` hooks
  - rollup@function@enforce-plugin-order: 允许强制执行插件 hook 顺序
  
 ### 不支持 `renderDynamicImport` hook
  - rollup@form@custom-dynamic-import-no-interop: 在使用自定义动态导入处理程序时不添加任何互操作@generates es
-
-### 不支持 `resolveFileUrl` hook
- - rollup@form@configure-file-url: 允许配置文件 URL@generates es
 
 ### `PluginContext.parse` 不支持 `allowReturnOutsideFunction` 选项
  - rollup@function@parse-return-outside-function: 通过选项支持解析函数外部的 return 语句
@@ -284,24 +281,27 @@
  - rollup@form@deprecated@removes-dynamic-assertions: 为动态导入保留 import 断言
  - rollup@form@deprecated@removes-static-attributes: 保留输入中的任何 import 断言
   
-### 不支持 Import 属性
- - rollup@form@import-attributes@attribute-shapes: 处理特殊形状的 attributes
- - rollup@form@import-attributes@keep-dynamic-assertions: 为动态导入保留 import attributes@generates es
- - rollup@form@import-attributes@keep-dynamic-attributes: 为动态导入保留 import attributes@generates es
+### 不支持 Import attributes
+ - rollup@form@import-attributes@attribute-shapes: 处理属性的特殊形状
+ - rollup@form@import-attributes@keep-dynamic-assertions: 保留动态导入的 import attributes@generates es
+ - rollup@form@import-attributes@keep-dynamic-attributes: 保留动态导入的 import attributes@generates es
  - rollup@form@import-attributes@keeps-static-assertions: 保留输入中的任何 import assertions@generates es
  - rollup@form@import-attributes@keeps-static-attributes: 保留输入中的任何 import attributes@generates es
  - rollup@form@import-attributes@plugin-attributes-resolvedynamicimport: 允许插件在 resolveDynamicImport 中读取和写入 import attributes
  - rollup@form@import-attributes@plugin-attributes-resolveid: 允许插件在 resolveId 中读取和写入 import attributes
- - rollup@form@import-attributes@removes-dynamic-attributes: 为动态导入保留 import attributes
+ - rollup@form@import-attributes@removes-dynamic-attributes: 保留动态导入的 import attributes
  - rollup@form@import-attributes@removes-static-attributes: 保留输入中的任何 import attributes
- - rollup@form@import-attributes@keep-attribute-declarations-for-external-dynamic-imports: 保留外部动态导入的 attribute 声明
- - rollup@form@import-attributes@keep-dynamic-attributes-assert: 为带有 "assert" 键的动态导入保留 import attributes@generates es
- - rollup@form@import-attributes@keep-dynamic-attributes-default: 为动态导入保留 import attributes@generates es
- - rollup@form@import-attributes@keep-dynamic-attributes-with: 为带有 "with" 键的动态导入保留 import attributes@generates es
+ - rollup@form@import-attributes@keep-attribute-declarations-for-external-dynamic-imports: 保留外部动态导入的属性声明
+ - rollup@form@import-attributes@keep-dynamic-attributes-assert: 保留带有 "assert" 键的动态导入的 import attributes@generates es
+ - rollup@form@import-attributes@keep-dynamic-attributes-default: 保留动态导入的 import attributes@generates es
+ - rollup@form@import-attributes@keep-dynamic-attributes-with: 保留带有 "with" 键的动态导入的 import attributes@generates es
  - rollup@form@import-attributes@keeps-static-attributes-key-assert: 使用带有 "with" 键的 import attributes 保留输入中的任何 import attributes@generates es
  - rollup@form@import-attributes@keeps-static-attributes-key-default: 使用带有 "with" 键的 import attributes 保留输入中的任何 import attributes@generates es
  - rollup@form@import-attributes@keeps-static-attributes-key-with: 使用带有 "with" 键的 import attributes 保留输入中的任何 import attributes@generates es
- - rollup@form@resolve-file-url-import-meta-attributes: 为 file 的 resolveFileUrl 和 resolveImportMeta 钩子添加 attributes@generates es
+ - rollup@form@resolve-file-url-import-meta-attributes: 为 file resolveFileUrl 和 resolveImportMeta 钩子添加 attributes@generates es
+ - rollup@form@configure-file-url: 允许配置 file urls@generates es
+ - rollup@chunking form@resolve-file-url: 允许配置 file urls@generates es
+ - rollup@chunking form@resolve-file-url: 允许配置 file urls@generates cjs
  - rollup@function@deprecated@load-attributes: 不允许从 "load" 钩子返回 attributes
  - rollup@function@deprecated@transform-attributes: 不允许从 "transform" 钩子返回 attributes
  - rollup@function@extend-more-hooks-to-include-import-attributes: 扩展 load、transform 和 renderDynamicImport 以包含 import attributes
@@ -364,66 +364,64 @@
  - rollup@function@import-not-at-top-level-fails: 禁止非顶层导入（缺少 `cause` 属性）
  - rollup@function@export-not-at-top-level-fails: 禁止非顶层导出（缺少 `cause` 属性）
 
-### 错误/警告未实现
- - rollup@hooks@当对多个 chunk 使用 "sourcemapFile" 选项时抛出错误（`INVALID_OPTION` 错误）
- - rollup@function@non-function-hook-async: 当为异步函数钩子提供一个值时抛出错误（期望 `INVALID_PLUGIN_HOOK` 错误，但得到 `PLUGIN_ERROR`）
- - rollup@function@non-function-hook-sync: 当为同步函数钩子提供一个值时抛出错误（`INVALID_PLUGIN_HOOK` 错误）
- - rollup@function@export-type-mismatch-b: export 类型必须为 auto、default、named 或 none（期望 `INVALID_EXPORT_OPTION` 错误，但得到 `InvalidArg`）
+### 未实现的错误/警告
+ - rollup@hooks@Throws when using the "sourcemapFile" option for multiple chunks (`INVALID_OPTION` error)
+ - rollup@function@non-function-hook-async: 在为异步函数 hook 提供值时抛出错误（期望 `INVALID_PLUGIN_HOOK` 错误，但得到 `PLUGIN_ERROR`）
+ - rollup@function@non-function-hook-sync: 在为同步函数 hook 提供值时抛出错误（`INVALID_PLUGIN_HOOK` 错误）
+ - rollup@function@export-type-mismatch-b: 导出类型必须为 auto、default、named 或 none（期望 `INVALID_EXPORT_OPTION` 错误，但得到 `InvalidArg`）
  - rollup@function@assign-namespace-to-var: 允许将命名空间赋值给变量（`EMPTY_BUNDLE` 警告）
  - rollup@function@can-import-self-treeshake: 直接自我导入（`EMPTY_BUNDLE` 警告）
- - rollup@function@external-conflict: 来自自定义解析器的外部路径保持为外部（#633）（`INVALID_EXTERNAL_ID` 错误）
- - rollup@function@shims-missing-exports: 为缺失的导出提供 shim（`SHIMMED_EXPORT` 警告）
- - rollup@function@conflicting-reexports@named-import-external: 当通过来自外部命名空间的命名导入引入冲突绑定时发出警告（`AMBIGUOUS_EXTERNAL_NAMESPACES` 警告）
- - rollup@function@cycles-pathological-2: 更优雅地解析更多病态的循环依赖
- - rollup@function@circular-missed-reexports: 处理循环重新导出（`MISSING_EXPORT` 应该是警告而不是错误）
- - rollup@function@iife-code-splitting: 当为 IIFE 构建生成多个 chunk 时抛出错误（`INVALID_OPTION` 错误）
- - rollup@function@inline-imports-with-multiple-array: 在内联动态导入时，不支持数组中存在多个输入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
- - rollup@function@inline-imports-with-multiple-object: 在内联动态导入时，不支持对象中存在多个输入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
- - rollup@function@preserve-modules@inline-dynamic-imports: 在保留模块时，不支持内联动态导入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
- - rollup@function@inline-imports-with-manual: 在内联动态导入时，不支持手动 chunk（`INVALID_OPTION` 错误）
- - rollup@function@warning-low-resolution-location: 当使用低分辨率 sourcemap 报告错误时进行处理（`THIS_IS_UNDEFINED` 警告）
- - rollup@function@warning-incorrect-sourcemap-location: 如果由于缺少 sourcemap 导致警告位置不正确，则不要失败（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED`）
- - rollup@function@paths-are-case-sensitive: 强制要求导入的大小写正确
+ - rollup@function@external-conflict: 来自自定义解析器的外部路径保持为 external (#633)（`INVALID_EXTERNAL_ID` 错误）
+ - rollup@function@shims-missing-exports: 为缺失的导出生成 shim（`SHIMMED_EXPORT` 警告）
+ - rollup@function@conflicting-reexports@named-import-external: 当通过来自外部命名空间的命名导入导入冲突绑定时发出警告（`AMBIGUOUS_EXTERNAL_NAMESPACES` 警告）
+ - rollup@function@cycles-pathological-2: 能更优雅地解析更复杂的循环依赖
+ - rollup@function@circular-missed-reexports: 处理循环重导出（`MISSING_EXPORT` 应为警告而不是错误）
+ - rollup@function@iife-code-splitting: 在 IIFE 构建中生成多个 chunk 时抛出错误（`INVALID_OPTION` 错误）
+ - rollup@function@inline-imports-with-multiple-array: 在内联动态导入时，不支持数组形式的多个输入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
+ - rollup@function@inline-imports-with-multiple-object: 在内联动态导入时，不支持对象形式的多个输入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
+ - rollup@function@preserve-modules@inline-dynamic-imports: 在保留模块时不支持内联动态导入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
+ - rollup@function@inline-imports-with-manual: 在内联动态导入时不支持手动分块（`INVALID_OPTION` 错误）
+ - rollup@function@warning-low-resolution-location: 处理使用低分辨率 sourcemap 报告错误的情况（`THIS_IS_UNDEFINED` 警告）
+ - rollup@function@warning-incorrect-sourcemap-location: 如果由于缺少 sourcemap 导致警告位置不正确，则不应失败（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED`）
+ - rollup@function@paths-are-case-sensitive: 强制要求导入时的大小写正确
  - rollup@function@warnings-to-string: 为警告提供字符串转换（`EMPTY_BUNDLE` 警告）
- - rollup@function@warn-on-empty-bundle: 如果生成了空 bundle，则发出警告（#444）（`EMPTY_BUNDLE` 警告）
+ - rollup@function@warn-on-empty-bundle: 如果生成了空 bundle，则发出警告  (#444)（`EMPTY_BUNDLE` 警告）
  - rollup@function@warn-on-namespace-conflict: 对重复的 export * from 发出警告（`NAMESPACE_CONFLICT` 警告）
- - rollup@function@warn-on-unused-missing-imports: 对缺失但未使用的导入发出警告（`MISSING_EXPORT` 应该是警告而不是错误）
+ - rollup@function@warn-on-unused-missing-imports: 对缺失但未使用的导入发出警告（`MISSING_EXPORT` 应为警告而不是错误）
  - rollup@function@warn-misplaced-annotations: 对放错位置的注解发出警告（`INVALID_ANNOTATION` 警告）
- - rollup@function@namespace-missing-export: 将缺失的命名空间成员替换为 undefined 并对此发出警告（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED`）
- - rollup@function@transform-without-code-warn-ast: 当 transform 钩子返回 map 但没有返回 code 时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
- - rollup@function@transform-without-code-warn-map: 当 transform 钩子返回 map 但没有返回 code 时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
+ - rollup@function@namespace-missing-export: 用 undefined 替换缺失的命名空间成员并对其发出警告（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED`）
+ - rollup@function@transform-without-code-warn-ast: 当 transform hook 返回 map 但没有返回 code 时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
+ - rollup@function@transform-without-code-warn-map: 当 transform hook 返回 map 但没有返回 code 时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
  - rollup@function@unknown-treeshake-value: 对 treeshake 选项中未知的字符串值抛出错误（`INVALID_OPTION` 错误）
  - rollup@function@warns-for-invalid-options: 对无效选项发出警告（`UNKNOWN_OPTION` 警告）
  - rollup@function@module-side-effects@invalid-option: 对无效选项发出警告（期望 `INVALID_OPTION` 错误，但得到 `InvalidArg`）
- - rollup@function@invalid-addon-hook: 当为 addon 钩子提供非字符串值时抛出错误（期望 `ADDON_ERROR` 错误，但得到 `unreachable: Invalid hook type`）
+ - rollup@function@invalid-addon-hook: 在为 addon hook 提供非字符串值时抛出错误（期望 `ADDON_ERROR` 错误，但得到 `unreachable: Invalid hook type`）
  - rollup@function@invalid-ignore-list-function: 如果 sourcemapIgnoreList 函数没有返回布尔值，则抛出描述性错误（期望 `VALIDATION_ERROR` 错误，但得到 `InvalidArg`）
- - rollup@function@invalid-transform-source-function: 如果 sourcemapPathTransform 函数没有返回字符串，则抛出描述性错误（#3484）（期望 `VALIDATION_ERROR` 错误，但得到 `GenericFailure`）
- - rollup@function@invalid-pattern-replacement: 对模式中无效的占位符抛出错误（`VALIDATION_ERROR` 错误）
+ - rollup@function@invalid-transform-source-function: 如果 sourcemapPathTransform 函数没有返回字符串，则抛出描述性错误 (#3484)（期望 `VALIDATION_ERROR` 错误，但得到 `GenericFailure`）
+ - rollup@function@invalid-pattern-replacement: 对模式中的无效占位符抛出错误（`VALIDATION_ERROR` 错误）
  - rollup@function@invalid-pattern: 对无效模式抛出错误（期望 `VALIDATION_ERROR` 错误，但得到 `INVALID_OPTION`）
  - rollup@function@invalid-top-level-await: 对无效的 top-level-await 格式抛出错误（期望 `INVALID_TLA_FORMAT` 错误，但得到 `UNSUPPORTED_FEATURE`）
- - rollup@function@load-returns-string-or-null: 如果 load 返回奇怪的内容则抛出错误（期望 `BAD_LOADER` 错误，但得到 `InvalidArg`）
- - rollup@function@vars-with-init-in-dead-branch: 处理死分支中带初始化的变量（#1198）（`EMPTY_BUNDLE` 警告）
- - rollup@function@module-level-directive: 模块级指令应当产生警告（`MODULE_LEVEL_DIRECTIVE` 警告）
- - rollup@function@hashing@maximum-hash-size: 当超过最大哈希大小时抛出错误（`VALIDATION_ERROR` 错误）
- - rollup@function@hashing@minimum-hash-size: 当超过最大哈希大小时抛出错误（`VALIDATION_ERROR` 错误）
- - rollup@function@hashing@length-at-non-hash: 当为 hash 以外的占位符配置长度时抛出错误（`VALIDATION_ERROR` 错误）
+ - rollup@function@load-returns-string-or-null: 如果 load 返回了奇怪的内容则抛出错误（期望 `BAD_LOADER` 错误，但得到 `InvalidArg`）
+ - rollup@function@vars-with-init-in-dead-branch: 处理死分支中带初始值的变量 (#1198)（`EMPTY_BUNDLE` 警告）
+ - rollup@function@module-level-directive: 模块级指令应产生警告（`MODULE_LEVEL_DIRECTIVE` 警告）
+ - rollup@function@hashing@maximum-hash-size: 当超过最大 hash 大小时抛出错误（`VALIDATION_ERROR` 错误）
+ - rollup@function@hashing@minimum-hash-size: 当超过最大 hash 大小时抛出错误（`VALIDATION_ERROR` 错误）
+ - rollup@function@hashing@length-at-non-hash: 在为非 "hash" 占位符配置长度时抛出错误（`VALIDATION_ERROR` 错误）
  - rollup@function@emit-file@invalid-file-type: 对无效文件类型抛出错误（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
- - rollup@function@emit-file@invalid-asset-name3: 对 Windows OS 上带绝对路径的无效资源名称抛出错误（`PLUGIN_ERROR`>`VALIDATION_ERROR` 错误）
- - rollup@function@emit-file@invalid-asset-name: 对无效资源名称抛出错误（`PLUGIN_ERROR`>`VALIDATION_ERROR` 错误）
- - rollup@function@emit-file@emit-same-file: 如果发出了多个同名文件，则发出警告（`FILE_NAME_CONFLICT` 错误）
- - rollup@function@emit-file@emit-from-output-options: 尝试在 outputOptions 钩子中发出文件时抛出错误（`CANNOT_EMIT_FROM_OPTIONS_HOOK` 错误）
- - rollup@function@conflicting-reexports@namespace-import: 当通过命名空间导入引入冲突绑定时发出警告（`MISSING_EXPORT` 警告）
- - rollup@function@cannot-resolve-sourcemap-warning: 处理无法在警告中解析 sourcemap 的情况（`SOURCEMAP_ERROR` 警告）
+ - rollup@function@emit-file@emit-same-file: 如果发出了多个同名文件则发出警告（`FILE_NAME_CONFLICT` 错误）
+ - rollup@function@emit-file@emit-from-output-options: 当尝试从 outputOptions hook 中发出文件时抛出错误（`CANNOT_EMIT_FROM_OPTIONS_HOOK` 错误）
+ - rollup@function@conflicting-reexports@namespace-import: 当通过命名空间导入导入冲突绑定时发出警告（`MISSING_EXPORT` 警告）
+ - rollup@function@cannot-resolve-sourcemap-warning: 处理无法解析 sourcemap 的警告（`SOURCEMAP_ERROR` 警告）
  - rollup@function@adds-json-hint-for-missing-export-if-is-json-file: 在导入一个没有导出的 json 文件时应提供 json 提示（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
- - rollup@function@emit-file@asset-source-invalid: 当设置空的资源源时抛出错误（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
- - rollup@function@emit-file@asset-source-missing3: 在设置资源源之前访问文件名时抛出错误（期望 `ASSET_SOURCE_MISSING` 错误，但抛出了 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing4: 在设置资源源之前访问文件名时抛出错误（期望 `ASSET_SOURCE_MISSING` 错误，但抛出了 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing2: 在未设置资源源时抛出错误（期望 `ASSET_SOURCE_MISSING` 错误，但抛出了 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing5: 在未设置资源源且访问资源 URL 时抛出错误（期望 `ASSET_SOURCE_MISSING` 错误，但抛出了 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing: 在未设置资源源时抛出错误（期望 `ASSET_SOURCE_MISSING` 错误，但抛出了 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-invalid: 设置空的 asset source 时抛出错误（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
+ - rollup@function@emit-file@asset-source-missing3: 在设置 asset source 之前访问文件名时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing4: 在设置 asset source 之前访问文件名时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing2: 未设置 asset source 时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing5: 未设置 asset source 且访问 asset URL 时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing: 未设置 asset source 时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
  - rollup@form@cycles-dependency-with-TLA-await-import: 当检测到包含顶层 await 导入的循环时抛出警告（`CIRCULAR_DEPENDENCY` 警告）
  - rollup@function@optional-chaining-namespace: 处理带命名空间的可选链（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED` 警告）
- - rollup@function@ast-validations@redeclare-import-var: 当使用 var 重新声明一个 import 时抛出错误（https://github.com/oxc-project/oxc/issues/15961）
- - rollup@function@warn-on-top-level-this: 对顶层 this 发出警告（#770）（`THIS_IS_UNDEFINED` 警告）
- - rollup@sourcemaps@warning-with-coarse-sourcemap: 在 coarse sourcemap@generates es 中获取正确的映射位置（`THIS_IS_UNDEFINED` 警告）
- - rollup@function@circular-namespace-reexport-cache: 处理通过缓存的命名空间重新导出产生的循环重新导出，支持多个导入者（`CYCLIC_CROSS_CHUNK_REEXPORT` 警告）
+ - rollup@function@ast-validations@redeclare-import-var: 通过 var 重新声明导入时抛出错误（https://github.com/oxc-project/oxc/issues/15961）
+ - rollup@function@warn-on-top-level-this: 对顶层 this 发出警告 (#770)（`THIS_IS_UNDEFINED` 警告）
+ - rollup@sourcemaps@warning-with-coarse-sourcemap: 在 coarse sourcemap@generates es 的情况下获得正确的映射位置（`THIS_IS_UNDEFINED` 警告）
+ - rollup@function@circular-namespace-reexport-cache: 通过缓存的命名空间重导出处理多个导入者的循环重导出（`CYCLIC_CROSS_CHUNK_REEXPORT` 警告）

@@ -6,23 +6,13 @@ source: crates/rolldown_testing/src/integration_test.rs
 ## main.js
 
 ```js
-// HIDDEN [\0rolldown/runtime.js]
-//#region lib.js
-var init_lib = __esmMin((() => {}));
+//#region main.js
+console.log(42);
 //#endregion
-//#region barrel.js
-var init_barrel = __esmMin((() => {
-	init_lib();
-}));
-//#endregion
-__esmMin((() => {
-	init_barrel();
-	console.log(42);
-}))();
 
 ```
 
-# Variant: on-demand: [on_demand_wrapping: true] [strict_execution_order: true]
+# Variant: wrap-all: [on_demand_wrapping: false]
 
 ## Assets
 
@@ -30,6 +20,13 @@ __esmMin((() => {
 
 ```js
 // HIDDEN [\0rolldown/runtime.js]
-}))();
+//#region main.js
+function init_main() {
+	return (init_main = __esmMin((() => {
+		console.log(42);
+	})))();
+}
+//#endregion
+init_main();
 
 ```

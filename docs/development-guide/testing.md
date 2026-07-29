@@ -31,7 +31,7 @@
 通常，我们使用两种类型的测试：
 
 - 数据驱动测试：测试运行器会查找符合特定约定（例如文件夹结构、文件命名）的测试用例并自动运行它们。这是我们添加新测试的主要方式。
-- 手动测试：对于无法轻松用数据驱动方式表达的更复杂场景，我们会编写手动测试代码来设置测试环境、使用特定选项运行打包器，并以程序方式验证输出。
+- 手动测试：对于无法轻松以数据驱动方式表达的更复杂场景，我们会编写手动测试代码来设置测试环境、使用特定选项运行打包器，并以程序方式验证输出。
 
 ## Rust
 
@@ -205,7 +205,7 @@ just test-node-rolldown -t test-name
 | **browser**  | `browser` | 运行在进程内 Vite full-bundle-mode 开发服务器之上的真实 Chromium 页面。大多数开发引擎测试都在这里。 |
 | **fixtures** | `node`    | 一个自定义开发服务器构建到**磁盘**，并将构建产物作为 `node` 子进程运行。                  |
 
-浏览器套件运行在 Vite 自身之上（`experimental.bundledDev`），由 `packages/test-dev-server/vite` 中 vendored 的 Vite 子模块提供服务，并且其 `rolldown` 依赖链接到工作区的 `packages/rolldown`——因此这些测试通过真实的 Vite 集成来验证本地 rolldown 绑定。支架背后的架构和设计原因记录在 [Dev Server Test Harness 设计文档](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中——在修改支架本身之前请先阅读它。
+浏览器套件运行在 Vite 本身上（`experimental.bundledDev`），由位于 `vite/` 的 Vite checkout 提供服务（仓库根目录下一个被 gitignore 的 vitejs/vite 克隆，`rolldown-canary` 已 rebase 到 `main`），并将其 `rolldown` 依赖链接到工作区的 `packages/rolldown`，因此测试会通过真实的 Vite 集成来验证本地 rolldown 绑定。该支架的架构和设计思路记录在 [Dev Server Test Harness design doc](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中。修改支架本身之前请先阅读它。
 
 ### 浏览器 playground
 
@@ -264,10 +264,10 @@ just build-rolldown
 pnpm --filter @rolldown/test-dev-server build
 ```
 
-浏览器套件还需要先设置好一次 Vite 子模块（init + install + build + 将工作区的 rolldown 链接进去）。在升级子模块之后，或在其中运行过 install 之后（install 会重置 rolldown 链接）请重新执行：
+浏览器套件还需要先配置好 Vite checkout（克隆或更新 vitejs/vite `rolldown-canary` 并 rebase 到 `main`，然后安装、构建，并将工作区的 rolldown 链接进去）。如果你接手的是一个已有的 checkout（脏工作区，或切换到了另一个分支），它会按原样构建。在 checkout 内部运行过 install 之后，请重新执行一次 setup（install 会重置 rolldown 链接）：
 
 ```sh
-just setup-test-dev-server-vite
+just setup-vite
 ```
 
 然后，从 `packages/test-dev-server/tests/` 目录下运行：
