@@ -82,7 +82,7 @@ Rolldown 会在 Rust 端评估过滤器，并且只有在过滤器匹配时才�
 
 ## 可组合过滤器
 
-对于更复杂的过滤逻辑，Rolldown 通过 [`@rolldown/pluginutils`](https://github.com/rolldown/rolldown/tree/main/packages/pluginutils) 包提供了可组合的过滤表达式。这些表达式允许你使用 `and`、`or` 和 `not` 等逻辑运算符来构建过滤器。
+对于更复杂的过滤逻辑，Rolldown 通过 [`@rolldown/pluginutils`](https://github.com/rolldown/plugins/tree/main/packages/pluginutils) 包提供了可组合的过滤表达式。你可以使用 `and`、`or` 和 `not` 等逻辑运算符来构建过滤器。
 
 > [!WARNING]
 > 可组合过滤器尚未在 Vite 或 unplugin 中支持。它们只能用于 Rolldown 插件。
@@ -117,7 +117,7 @@ export default function myPlugin() {
 - `include(expr)` / `exclude(expr)` — 顶层 include/exclude 包装器。
 - `queries(obj)` — 组合多个查询过滤器。
 
-完整 API 参考请参见 [`@rolldown/pluginutils` README](https://github.com/rolldown/rolldown/tree/main/packages/pluginutils#readme)。
+有关完整的 API 参考，请参阅 [`@rolldown/pluginutils` README](https://github.com/rolldown/plugins/tree/main/packages/pluginutils#readme)。
 
 ## 互操作性
 

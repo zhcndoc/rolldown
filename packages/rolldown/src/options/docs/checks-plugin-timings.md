@@ -1,14 +1,24 @@
-When enabled, Rolldown measures time spent in each plugin hook. If plugins significantly impact build performance, a warning is emitted with a breakdown of plugin timings.
+启用后，Rolldown 会测量插件钩子运行的时长，并在这些钩子占据构建过程较大比例时发出警告。
 
-**How it works:**
+**工作原理：**
 
-1. **Minimum build time**: To avoid noisy warnings for fast builds, the warning is only triggered if Rolldown's internal build time (Rust side) exceeds **3 seconds**.
+计时在 **JavaScript 回调内部**开始和结束，而不是围绕调用进行。Rolldown 会并发调度大多数钩子，而它们会在 JavaScript 的单线程上排队，因此从交接调用到获得结果之间的时间，大部分是调用所花费的等待时间。从回调内部开始计时可以天然排除这段等待时间。
 
-2. **Detection threshold**: A warning is triggered when plugin time (total build time minus link stage time) exceeds 100x the link stage time. This threshold was determined by studying plugin impact on real-world projects.
+1. **最短构建时间**：为避免快速构建产生噪声警告，仅当 Rolldown 的内部构建时间（Rust 侧）超过 **3 秒**时才会触发警告。
 
-3. **Identifying plugins**: When the threshold is exceeded, Rolldown reports up to 5 plugins that take longer than the average plugin time, sorted by duration. Each plugin shows its percentage of total plugin time. Only plugins with total duration of at least 1 second are included in the report.
+2. **检测阈值**：当插件耗时（总构建时间减去链接阶段耗时）超过链接阶段耗时的 100 倍时，会触发警告。该阈值是通过研究插件对真实项目的影响确定的。链接阶段是构建过程中唯一完全不运行插件的部分，因此可以作为可用的基准。
 
-> [!WARNING]
-> For hooks using [`this.resolve()`](/reference/Interface.PluginContext#resolve) or [`this.load()`](/reference/Interface.PluginContext#load), the reported time includes waiting for other plugins, which may overestimate that plugin's actual cost.
+3. **行项目**：最多列出 12 个钩子，按测量耗时排序，每个钩子都会显示其占总构建时间的比例以及调用次数。只有耗时至少 1 秒的钩子才会单独占一行。在选项上而不是插件上配置的用户回调——`external`、`treeshake.moduleSideEffects`、文件名和 addon 回调，以及 [`output.advancedChunks`](/reference/OutputOptions.advancedChunks) 的 `groups[].name` 分类器和 `groups[].test` 谓词——会显示在 `input options` / `output options` 下。
+
+   标题中的数值表示任意插件回调正在运行的墙上时间；无论它们重叠多少，该时间都只计算一次，因此不可能超过构建时间。各行的数值加起来可能超过该数值，因为一个回调可能在另一个回调内部运行——`buildStart` 中的 `this.emitFile()` 会调用你的 `assetFileNames`，这段时间会同时计入两者。
+
+> [!IMPORTANT]
+> **某些钩子会在“无法测量”的标题下列出，但不带数值。**
 >
-> Additionally, since plugin hooks execute concurrently, the statistics represent accumulated time rather than wall-clock time. The measured duration also includes Rust-side processing overhead, Tokio async scheduling overhead, NAPI data conversion overhead, and JavaScript event loop overhead.
+> 只有当两个时间跨度完全不重叠时，才能将从回调进入到回调退出的时间跨度加到另一个时间跨度上。同步回调不会重叠——它会一直占用线程，直到返回。异步回调则可能重叠：它可能在 `await` 处暂停，让同一个钩子的另一次调用开始，随后两个时间跨度会覆盖相同的墙上时间，将它们相加就会被重复计算。重叠还会改变时间跨度的含义——通过 `this.resolve` 或 `this.load` 等方式等待 Rolldown 自身的钩子，大部分时间都在等待打包器，因此其经过时间描述的是打包器，而不是你的插件。
+>
+> Rolldown 会测量重叠情况，而不是对此做假设，并评估其规模：它会准确记录某个钩子总耗时中被重复计算的部分；当该部分低于时间跨度的 1% 时，仍会保留该数值。因此，并发调度的钩子在其调用恰好不重叠时仍能被准确测量；数千次调用中的一次偶发重叠也不会使原本良好的测量结果失效——这还能让报告在不同运行之间保持稳定，而不是取决于调度情况。真正发生自身重叠的钩子会被列出名称，但不提供数值，因为任何数值都只能是上限，并会让它排在实际工作量更大的钩子之前。若要找出这些钩子的真实成本，请直接分析 JavaScript——例如在构建脚本上使用 `node --cpu-prof`，它会采样实际正在执行的内容。
+
+**列出的数值意味着什么。** 从回调内部开始测量会排除调用排队所花费的时间；但它不会区分运行时间和等待时间。列出的钩子数值是该回调的墙上时间，而不是 CPU 时间，因此，如果某个回调等待 I/O 且没有与自身的另一次调用重叠，那么等待时间也会计入其中。该数值不包括 Rolldown 在调用前后进行的数据转换时间。
+
+**未涵盖的内容。** 使用 Rust 编写的插件（`builtin:` 以及 Rolldown 内部提供的插件）没有可供测量的 JavaScript 回调，因此永远不会出现。并行插件也不会出现，因为它们的钩子运行在工作线程上。报告会在构建关闭时生成，因此 watch 和开发服务器重建不会输出该报告。

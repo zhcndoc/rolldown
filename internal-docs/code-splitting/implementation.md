@@ -47,7 +47,8 @@ generate_chunks()
     │
     ├─ split_chunks()
     │    │
-    │    ├─ determine_reachable_modules_for_entry()   为每个入口执行 BFS，为可达模块设置位
+    │    ├─ pre_chunk_order_state()                   发现消费者本地的 barrel/carrier
+    │    ├─ determine_reachable_modules_for_entry()   每个入口执行 BFS + 导入者本地路由位
     │    │
     │    ├─ apply_manual_code_splitting()             用户定义的 chunk 组（manualChunks）
     │    │
@@ -63,13 +64,13 @@ ChunkGraph 之后的处理（在 generate() 中）：
 ChunkGraph
     │
     ├─ finalize_chunk_plan()
-    │    ├─ finalize provisional namespace/external facts
+    │    ├─ 最终确定暂定的 namespace/external 事实
     │    ├─ analyze_execution_order()                构建一个带有每个模块原因的 OrderWrapPlan
     │    ├─ apply_order_wraps()                      将计划降级为包装器和拓扑编辑
     │    │    └─ ensure_runtime_module_for_order_wraps()   重新放置 runtime，然后进行唯一消费者折叠
-    │    ├─ recompute metadata if topology changed
+    │    ├─ 如果拓扑发生变化则重新计算元数据
     │    ├─ sweep_unused_runtime_module()            丢弃没有源需求或顺序状态需求的 runtime
-    │    └─ validate final output shape
+    │    └─ 验证最终输出形状
     │
     ├─ used_symbol_refs.seal()                        冻结活性分析；sweep 是最后一个写入者
     │
@@ -84,28 +85,38 @@ ChunkGraph
 
 **关键文件：**
 
-- `crates/rolldown/src/stages/generate_stage/code_splitting.rs` — 管线编排，`generate_chunks()`，`ensure_lazy_module_initialization_order()`
-- `crates/rolldown/src/stages/generate_stage/order_analysis.rs` — `strictExecutionOrder` 分析以及带理由的 `OrderWrapPlan`
+- `crates/rolldown/src/stages/generate_stage/code_splitting.rs` — pipeline 编排、`generate_chunks()`、`ensure_lazy_module_initialization_order()`
+- `crates/rolldown/src/stages/generate_stage/order_analysis.rs` — `strictExecutionOrder` 分析以及带原因的 `OrderWrapPlan`
 - `crates/rolldown/src/stages/generate_stage/order_wrapping.rs` — 在 chunk 分配后应用顺序包装器
-- `crates/rolldown/src/stages/generate_stage/order_wrap_state.rs` — 管理合成的包装器声明、导入者覆盖、namespace/runtime 需求，以及重新导出路由证据
-- `crates/rolldown/src/stages/generate_stage/compute_wrapped_esm_init_metadata.rs` — 推导供 interop 和顺序包装器共享的、已封存的最终 no-op 和被排除语句的初始化事实
-- `crates/rolldown/src/stages/generate_stage/finalize_chunk_plan.rs` — 输出元数据和校验之前的最终拓扑边界
-- `crates/rolldown/src/stages/generate_stage/dynamic_already_loaded.rs` — Rollup 风格的 dynamic import already-loaded 原子缩减
+- `crates/rolldown/src/stages/generate_stage/order_wrap_state.rs` — 管理合成的包装器/carrier 声明、导入者覆盖层、namespace/runtime 需求以及重新导出路由证据
+- `crates/rolldown/src/stages/generate_stage/compute_wrapped_esm_init_metadata.rs` — 推导供互操作和顺序包装器共享的、封存后的最终 no-op 及排除语句初始化事实
+- `crates/rolldown/src/stages/generate_stage/finalize_chunk_plan.rs` — 输出元数据和验证之前的最终拓扑边界
+- `crates/rolldown/src/stages/generate_stage/dynamic_already_loaded.rs` — Rollup 风格的动态导入已加载原子归约
 - `crates/rolldown/src/stages/generate_stage/chunk_optimizer.rs` — 合并/优化
-- `crates/rolldown/src/stages/generate_stage/runtime_module_sweep.rs` — 优化后的 runtime 需求清扫
+- `crates/rolldown/src/stages/generate_stage/runtime_module_sweep.rs` — 优化后的 runtime 需求清理
 - `crates/rolldown/src/chunk_graph.rs` — 输出数据结构
 - `crates/rolldown_utils/src/bitset.rs` — 紧凑的可达性表示
 - `crates/rolldown/src/types/linking_metadata.rs` — 不可变的链接阶段 `wrap_kind()`
 
 Wrap-all（默认的严格模式）仅根据预期顺序为计划设种子，并跳过预测；`experimental.onDemandWrapping` 启用选择性分析。`finalize_chunk_plan` 可能运行两次元数据传递。namespace 使用和入口级 external re-exports 会先在暂定图上完成最终化；当顺序包装或严格入口 facade 改变拓扑时，它们会被重新计算。
 
-`create_order_wrap_entry_facades` 和 `restore_order_wrap_entry_facades` 共享一次对活动动态导入者的、考虑语句的扫描。当一个纯动态入口具有 ESM init 目标，且每个仍然存活的调用点都可以被重写时，create 路径会避免生成一个仅严格模式使用的 facade（或者 restore 路径会让一个被优化器移除的 facade 保持死亡）：实现 chunk 会被标记为 common，`common_chunk_exported_facade_chunk_namespace` 请求 namespace 提取，而 `rewrite_dynamic_import_for_merged_entry` 会在每个调用点携带触发条件。带 TLA 污染的入口、可调用 `then` 的宿主 namespace、已发射/用户入口，以及任何具有入口级 external star 的入口都会保留一个真实 facade。将 external-star 入口转换为 common chunk 会移除该 facade 的格式特定合并。ESM 会失去其 chunk 级 `export *`；类 CJS 格式会用逐记录的 `__reExport` 调用替换去重后的 `Object.keys` 合并，而这在 primitive 模块值上也有所不同，并且 transitive star 根本无法从入口模块的直接记录中获得。chunk 的 `entry_level_external_module_idx` 覆盖直接和传递链，因此一个与格式无关的守卫可以保留这些接口中的全部内容。这个 external-star 守卫只在 create 路径生效；restore 路径依赖 chunk optimizer 的模拟 namespace 处理，其中 external-star 的保留是单独处理的。如果 restore 路径因为自身的折叠证明失败而已经复活了一个空 facade，那么 create 路径就不能把该 facade 重新分类为实现 chunk。
+`create_order_wrap_entry_facades` 和 `restore_order_wrap_entry_facades` 共享一次针对存活动态导入者的、感知语句的扫描。当一个纯动态入口具有同步激活目标，且每个仍存活的调用点都可以被重写时，创建路径会避免生成严格模式专用的 facade（或者恢复路径会让一个被优化器移除的 facade 保持死亡状态）：实现 chunk 会被标记为公共 chunk，`common_chunk_exported_facade_chunk_namespace` 请求提取 namespace，而 `rewrite_dynamic_import_for_merged_entry` 会在每个调用点携带触发操作。普通入口携带其单个 ESM init 目标；消费者本地入口携带其完整的缓存 namespace 目标列表，因此有意为空的共享 barrel 包装器绝不会被用作激活入口。同 chunk 重写会直接调用该列表。跨 chunk 重写会使宿主 chunk 依赖并导出每个叶子/载体包装器以及模拟的 namespace，然后在返回 namespace 之前按列表顺序调用这些导出的包装器。受 TLA 污染的入口或目标、具有可调用 `then` 的宿主 namespace、已输出/用户入口，以及带有任何入口级 external star 的入口，都会保留真实 facade。将 external-star 入口转换为公共 chunk 时，会移除 facade 的格式特定合并逻辑。ESM 会失去其 chunk 级别的 `export *`；类 CJS 格式会将去重后的 `Object.keys` 合并替换为逐条调用 `__reExport`，而对于原始模块值，这两者也存在差异；此外，入口模块的直接记录根本无法提供传递式 star。chunk 的 `entry_level_external_module_idx` 覆盖直接链和传递链，因此一个与格式无关的保护条件可以保留所有这些接口。这个 external-star 保护只存在于创建路径；恢复路径依赖 chunk 优化器对模拟 namespace 的处理，而 external-star 的保留由该处理单独负责。如果恢复路径已经因为自身的折叠证明失败而恢复了一个空 facade，创建路径就不能再将该 facade 重新归类为实现 chunk。
 
-create 路径会在 `OrderWrapState` 中注册一个合成的 namespace 声明及其 runtime 需求，然后重新计算 runtime-symbol 闭包。该状态保存 `DynamicImportExportsUsage` 选中的精确导出名，以及其背后未内联的绑定。即使同一 canonical binding 的另一个别名在别处仍然存活，这些名字也会保持与被移除的 facade 完全相同的最终化结果；这些 binding 引用则允许正常的跨 chunk 链接在入口变成 common chunk 后导入每个 getter 目标。真实的语义 namespace 消费者会覆盖这种收窄，并保留完整接口。runtime 需求包含 `ExportAll`；那些本应需要 external-star 合并的入口会改为保留它们的 facade。模拟 facade 的 namespace 需求与语义 namespace 需求仍然分离，因此这不会把收窄后的 dynamic-import 接口变成一个不透明的 namespace 读取，也不会重新打开链接阶段的用户代码活性分析。
+两个折叠路径都会在 `OrderWrapState` 中注册一个合成的 namespace 声明及其 runtime 需求，然后重新计算 runtime-symbol 闭包：创建路径在避免生成 facade 时执行，恢复路径在让优化器消除的 facade 保持死亡状态时执行。该状态存储由 `DynamicImportExportsUsage` 选出的确切导出名称，以及它们背后的未内联绑定。即使同一规范绑定的另一个别名在其他位置仍然存活，这些名称也能使最终化结果与被移除的 facade 保持一致；绑定引用则允许正常的跨 chunk 链接在入口成为公共 chunk 后导入每个 getter 目标。真正的语义 namespace 消费者会覆盖这种收窄，并保留完整接口。runtime 需求包括 `ExportAll`；需要 external-star 合并的入口会保留其 facade。模拟 facade 的 namespace 需求与语义 namespace 需求仍然分离，因此这不会将收窄后的动态导入接口变成不透明的 namespace 读取，也不会重新开启链接阶段的用户代码活性分析。
 
 一旦最终拓扑和活性都固定下来，`compute_wrapped_esm_init_metadata` 会生成一个稀疏的 `Sealed<FinalEsmInitMetadata>`：模块条目的缺失表示默认的 no-op/empty-target 值，而不是 wrapper 的缺失。`Sealed<T>` 有一个私有字段和构造器，只暴露 `Deref`，既没有 `DerefMut` 也没有 unwrap 操作。最终的跨 chunk 链接和模块最终化都需要这种 sealed 类型，因此重新持有该工件不能重新开启可变性，而未封存的结果也无法到达任一消费者。更早的 `predicted_static_import_edges` 传递会明确将最终元数据标记为不可用，而不是制造一个空的 sealed 工件；其 Project 模式的义务遍历则保持独立且保守。
 
-两种模式都消费同一份冻结的 tree-shaking 事实。`order_wrapper_is_reexport_transparent` 识别纯顺序包装器，它们只是初始化路由的中转点。随后 `collect_wrapped_esm_init_targets_for_import_record` 会按消费者解析义务：它会根据本地 facade 的活性过滤命名导入符，沿着 `OrderWrapState` 中记录的已消费 re-export facades 继续追踪，从包含的 `StmtInfo` 引用中解析静态 namespace 成员读取，只在不透明的 namespace 使用时展开全部导出，并应用与 inclusion 传递相同的常量内联绕过。这使 wrap-all 能输出更多 wrapper，而不会比 on-demand 保留或执行更多用户代码。
+两种模式都会使用相同的冻结 tree-shaking 事实。`order_wrapper_is_reexport_transparent` 会识别仅作为初始化路由中间点的纯 ESM 顺序包装器。`consumer_local_reexport_plan` 将这一类别扩展到仅重新导出的直接 barrel，只要其生成的 CJS 互操作可以被安全提取。它会为每条保留的 CJS 记录创建一个 `OrderCjsCarrierKey { importer, record }`，并将每个受影响的导出/facade 符号映射到该 carrier。原始重新导出语句不再在共享的 `init_barrel()` 中生成 `namespace = __toESM(require_cjs())`；CJS 被导入模块的最终化器会在该导入模块的 chunk 中声明一个经过记忆化的 carrier 和 namespace。
+
+`collect_wrapped_esm_init_targets_for_import_record` 随后会将每个消费者的义务解析为 `WrappedEsmInitTarget::{Module, CjsCarrier}`：它会根据本地 facade 的活性过滤具名说明符，跟随 `OrderWrapState` 中记录的已消费重新导出 facade，从所包含的 `StmtInfo` 引用中解析静态 namespace 成员读取，仅在不透明 namespace 使用时展开所有导出，并应用与纳入阶段相同的常量内联绕过逻辑。它还会递归纳入有副作用的 carrier，并按照完整的嵌套记录路径与选中的叶子一起排序。Emit、跨 chunk Register、按需 Project 以及 pre-chunk placement 都使用这一相同的目标模型。这使 wrap-all 能够生成更多包装器，同时不会比 on-demand 保留或执行更多用户代码。
+
+降级过程还会缓存每个消费者本地路由的完整 namespace 目标。入口序言和折叠后的动态入口调用点触发器在路由本身是入口时使用该列表。当所包含的导入/重新导出记录的目标是消费者本地路由时，即使链接阶段的互操作为该目标提供了 `WrapKind::Esm`，它也始终使用导入者本地解析器；这可以防止最终化器的旧式直接包装器路径绕过 carrier 初始化。对于 namespace 已被具体化的、被排除的 `export *` 记录，最终 ESM init 元数据会使用缓存的完整列表。在这两种情况下，调用都保持在消费方包装器的记忆化 guard 内，并位于重新导出记录所在的位置。最终元数据会在 Emit 和 Register 使用这些缓存目标之前，根据最终存活的 chunk 放置情况过滤它们。
+
+`consumer_local_reexport_plan` 是一个单调不动点，因此不含 carrier 的外层 barrel 可以在其内部拥有 carrier 的 barrel 被接受后，成为一个路由中间点。它会拒绝禁用 tree-shaking 的构建、同步 `import`/`require` SCC 成员、被不透明 CommonJS `require()` 指向的模块、受 TLA 污染的模块、动态导出、CJS `export *`、shim 导出、拼接后的包装器，以及任何不是完全由直接重新导出组成的源代码体。这些情况会保留现有的单体初始化路径。直接 require 目标保持单体形式；如果其重新导出记录暴露了下游消费者本地 namespace，最终元数据会在单体 guard 内初始化该路由完整的缓存目标列表。SCC 回退会在混合 ESM/CJS 循环周围保留一个模块级 evaluating guard。只有当其源记录具有副作用，并且 barrel 自身的副作用契约无条件保留该记录时，carrier 才会是 eager 的，因此 barrel 上的 `moduleSideEffects: false` 可以让一个本来有副作用的 CJS 路由保持 lazy。递归的 eager-carrier 发现会在每个转发跳点应用这一副作用门控，因此外层的 `moduleSideEffects: false` barrel 也会阻止更深层的 carrier 泄漏到无关消费者中。拥有 carrier 的 barrel 会被强制纳入 on-demand 计划，即使暂定源顺序本身不会选中它们；否则其普通 CJS 降级会在放置之后重新出现。
+
+消费者本地资格判断永远不会读取顺序包装计划，而 `apply_order_wraps` 即使消费者本地计划为空，也会具体化一个非空的消费者本地计划（例如全互操作图，或没有风险模块的 on-demand 轮次）：pre-chunk placement 无条件地应用了相同的路由，因此跳过降级会使 barrel 的单体互操作主体针对每个消费者的叶子放置生成，并导致 chunk 之间形成循环（#10515）。唯一的例外是禁用代码分割且只有一个入口的构建，并且计划为空——此时探测器发现的路由没有放置消费者，而一个无操作的 on-demand 计划可以保持其“等同于关闭标志”的输出承诺（`cjs_reexport_barrel_code_splitting_disabled`）。单独禁用该选项并不是决定性事实：插件生成的 chunk 仍会通过逐入口放置增加第二个入口（严格不变量套件中的 `disabled_splitting_emitted_entry`），因此该例外还以入口数量为条件。
+
+带有已记录保留路径的排除重新导出使用相同的边界规则。`collect_order_wrap_esm_init_targets` 会在添加任何路径之外的 eager carrier 之前，计算哪些保留路径模块可以通过一条完全保留副作用的链到达；显式选中的 carrier 仍然会被保留，因为那是绑定需求，而不是 eager 需求。将许可计算为任一路径可达性事实，也使汇聚的保留路径不受 DFS 顺序影响。非空的保留路径覆盖层会在记录路径后丢弃其直接包装器引用：sealed init 元数据只注册解析器的目标，最终化只生成这些目标，因此原本未使用的直接包装器不会对承载 carrier 的 chunk 创建裸的跨 chunk 导入。
 
 顺序规划会覆盖敏感后缀、依赖的导入者/读取者，以及任何已被该计划触及的静态 chunk SCC 中符合条件的敏感模块。在 `onDemandWrapping` 下，它接着运行 `order_analysis.rs` 中的 emergent-cycle 不动点（`post_lowering_import_edges`）：每一轮都把计划的 post-lowering `init_*` 转发边投影到来自 `predicted_static_import_edges` 的 pre-lowering 基线，然后为这些边闭合的 chunk cycle 中每个符合条件的模块加上包装，并重复直到风险集合不再增长（投影/省略的边来源清单见设计文档）。设置 `ROLLDOWN_ORDER_DEBUG=1` 可在 stderr 中输出每轮 SCC 计数和最终 wrap delta 的跟踪信息。
 
@@ -133,7 +144,7 @@ entry_index 2  →  plugin.js       →  bit 2  →  ChunkIdx(2)
 
 该阶段会根据模块当前的依赖入口位集将模块分组成临时原子，计算每个入口静态加载的原子，然后对动态导入运行固定点传播。某个动态入口的已加载原子是所有能够到达其所包含动态导入者的入口的静态原子与已加载原子的交集。对于某个动态入口已加载的任何原子都可以移除该动态入口位，然后在正常 chunk 创建期间，模块会根据缩减后的位集重新分组。
 
-当缩减后的位集会把某个原子放入单独的动态入口 chunk 时，该阶段会保留该动态入口可观察到的命名空间。只有在该原子没有额外导出、其导出已经是动态入口签名的一部分、它仅在运行时使用，或者它本身就是被移除的动态入口模块时，才接受这种缩减。否则，该原子会保持独立，这样 `import("./entry.js")` 就不会暴露仅被其他 chunk 需要的辅助导出。
+当缩减后的位集会将某个原子放入一个仅由动态导入的单一入口 chunk 时，缩减不会受到 `preserveEntrySignatures` 的限制。如果每个动态导入者都只从命名空间中读取静态已知的导出子集（`DynamicImportExportsUsage::Partial`），则额外的导出是不可观测的，该原子会原样合并，无需额外的中间命名空间。否则，由于我们控制该 chunk 的所有动态导入者，因此会在 chunk 内生成一个合成命名空间，并将其用作导入者代码中的“导入命名空间”（`import("./chunk.js").then((n) => n.<ns>)`）。如果存在 `then` 导出，或存在动态/外部的 `export * from`，则会放弃处理。该重写还要求由打包器控制导出命名，因此在 `preserveModules` 启用或 `minifyInternalExports` 关闭时会被禁用。
 
 每一次被接受的缩减也必须保持重分组后的静态原子图无环。“已经加载”并不总是意味着“已经初始化”：如果一个被缩减的原子被移动到一个静态导入其某个消费者的 chunk 中，ES 模块循环可能会暴露未初始化的绑定，包括 CJS 包装函数。
 
@@ -145,7 +156,11 @@ entry_index 2  →  plugin.js       →  bit 2  →  ChunkIdx(2)
 
 `determine_reachable_modules_for_entry()` 会对每个入口模块运行 BFS，在每个可达模块上设置 `splitting_info[module].bits.set_bit(entry_index)`。遍历过程中会跳过外部模块（它们不是 `Module::Normal`）。
 
-在处理完所有入口后，每个模块的 `bits` 编码了哪些入口可以到达它：
+严格构建首先会构造一个仅用于发现的全量包装 `OrderWrapState`。这是在分配 chunk 之前所必需的：重新导出桶的普通 `load_dependencies` 是面向整个 bundle 的并集，因此在真正的按记录载体创建之前使用它，会让一个急切入口获得只有动态入口才会使用的叶模块。当传入记录以某个消费者本地桶为目标时，共享解析器只会将该记录选中的叶模块和 CJS 载体的被导入模块加入队列。处理非入口的消费者本地桶时，会将该路径点标记为可达，将直接嵌套的消费者本地路径点加入队列，跳过其面向整个模块的依赖并集，并且只递归加入有副作用的载体。如果用户入口或动态入口自身的模块就是这样的桶，则仍会进行完整遍历，因为导入该入口会观察到其完整命名空间。
+
+由此得到的入口位会将每个载体放入与其 CJS 被导入模块相同的 chunk 中。之后的顺序降级会将载体的合成语句分配给该 chunk，而载体符号仍归属于执行重新导出的模块，以保持绑定身份。因此，符号分配和去歧义会使用合成语句的显式 chunk，而不是假设每个声明的符号都由其所属模块承载。CJS 命名空间合并和惰性初始化转移会跳过这些载体记录，因为移动或合并它们的 require 位置会破坏按记录划分的路由边界。
+
+处理完所有入口后，每个模块的 `bits` 会编码哪些入口可以到达它：
 
 ```
 shared.js:    bits = 1111  （可从全部 4 个入口到达）
@@ -155,7 +170,7 @@ entry-a.js:   bits = 0001  （仅可从入口 0 到达）
 
 这等价于 Rollup 的“依赖入口集合”和 esbuild 的 `EntryBits`。关键洞见在于：具有相同 `bits` 的模块也具有相同的加载需求——它们总是一起需要，而不会单独需要——因此它们应该属于同一个 chunk。
 
-## Chunk Creation
+## Chunk 创建
 
 在可达性传播之后，`split_chunks()` 会根据模块的 `bits` 模式将模块分配到各个 chunk：
 
@@ -191,7 +206,7 @@ chunk 优化器会在安全时通过把公共 chunk 合并回入口 chunk 来减
 - 将该 facade 合并到其目标 chunk
 - 在 `post_chunk_optimization_operations` 中把它标记为 `Removed`
 
-A **用户定义的**入口同样也可能在手动代码拆分（一个 `codeSplitting` 组，可能通过 `entriesAware` 子组合并）把它的模块放入某个公共 chunk 后，变成一个空的 facade。只有当该 chunk **不同时持有另一个用户定义入口的模块** 时，把这个公共 chunk 折叠回入口 chunk 才是安全的。否则，兄弟入口就会被迫导入这个入口 chunk 才能到达它自己的模块，而加载它会提前执行这个入口的顶层 `init_*`——在 `strictExecutionOrder` 下会把它的副作用泄漏到兄弟入口中。在这种情况下，会保留 facade，这样每个入口都导入共享的（被包装的）chunk，并且只运行自己的 `init_*`。参见 [#9463](https://github.com/rolldown/rolldown/issues/9463)。
+一个**用户定义的**入口同样也可能在手动代码拆分（一个 `codeSplitting` 组，可能通过 `entriesAware` 子组合并）把它的模块放入某个公共 chunk 后，变成一个空的 facade。只有当该 chunk **不同时持有另一个用户定义入口的模块** 时，把这个公共 chunk 折叠回入口 chunk 才是安全的。否则，兄弟入口就会被迫导入这个入口 chunk 才能到达它自己的模块，而加载它会提前执行这个入口的顶层 `init_*`——在 `strictExecutionOrder` 下会把它的副作用泄漏到兄弟入口中。在这种情况下，会保留 facade，这样每个入口都导入共享的（被包装的）chunk，并且只运行自己的 `init_*`。参见 [#9463](https://github.com/rolldown/rolldown/issues/9463)。
 
 ### 运行时模块放置
 
@@ -233,6 +248,13 @@ consumer_chunks = (non-removed chunks with non-empty depended_runtime_helper)
 - **找到安全目标** → 运行时移入该 chunk，空的独立运行时 chunk 被标记为已移除。
 - **未找到安全目标** → 保持独立运行时 chunk。仅解析到外部模块的运行时导入会被忽略，不参与 chunk 循环检查；否则，仍然存活的内部运行时导入会让运行时保持独立。
 
+### Facade 消除（`optimize_facade_entry_chunks`）
+
+当优化器把某个动态/发射出的入口的所有模块都拉入其他 chunk 后，它可能会变成一个空的 facade。优化器会识别这些情况，并且要么：
+
+- 将该 facade 合并到其目标 chunk
+- 在 `post_chunk_optimization_operations` 中把它标记为 `Removed`
+
 ### 后置排序提升运行时折叠（`ensure_runtime_module_for_order_wraps`）
 
 排序提升可能会使上面的合并所决定的位置失效。合成包装器和导入器覆写会增加只存在于 `OrderWrapState` 中的辅助需求，而不会写入链接阶段元数据，因此一个在提升前没有需求的 chunk，可能会变成消费者——而这个新的消费者又可能与运行时当前宿主处于静态循环中。因此，在启用代码分割时，`ensure_runtime_module_for_order_wraps` 会在 `apply_order_wraps()` 结束时恢复“独立优先”的基线：如果运行时被放在用户 chunk 中，就会被驱逐到一个新的独立 chunk；如果运行时之前从未被放置过，则会被独立地实体化。（在禁用代码分割时，上面的单 chunk 放置保持不变。）这些（重新）生成的 chunk 会携带合成的全活跃并集位，因此它们会作为通用来源进行排序和命名；这些位并不是可达性事实。
@@ -259,9 +281,9 @@ Tree-shaking 会在 chunk 存在之前、链接时把运行时辅助函数纳入
 
 **回归覆盖：** `crates/rolldown/tests/rolldown/issues/9374/`（快照断言：多入口 star-to-external 链不会产生运行时 chunk，`minify: false` 以便多余的命名空间声明也能暴露出来）；issues `6992`、`7115`、`7233`、`7233_chain` 在 `preserveModules` 下为 ESM 和 CJS 输出覆盖了同一类问题；`crates/rolldown/tests/rolldown/topics/runtime/sweep_shared_chunk_exec_order/` 锁定了上文的 exec-order 重新推导（`artifacts.snap` 中 `entry_a.js` 顶部发出的两个 import 的顺序就是全部断言——交换它们就意味着回归又回来了）。
 
-**为什么是这种形状**
+**为什么采用这种形状**
 
-Runtime 过去会先由常规 bitset 分组放置，之后在检测到循环时再被剥离出来。这让每个优化器都必须理解 runtime-host 的边界情况。Standalone-first 翻转了默认策略：初始布局总是循环安全的，而与 runtime 相关的处理被限制在三个最终 pass 中——先在 chunk 优化之后可选地合并到一个已证明的 host 中，然后在顺序下移之后重新放置并折叠唯一消费者，最后在 entry-level-external 回溯已经稳定最终会发出的内容之后执行未使用运行时清扫。
+Runtime 过去会先由常规 bitset 分组放置，之后在检测到循环时再被剥离出来。这让每个优化器都必须理解 runtime-host 的边界情况。独立优先策略翻转了默认策略：初始布局总是循环安全的，而与 runtime 相关的处理被限制在三个最终 pass 中——先在 chunk 优化之后可选地合并到一个已证明的 host 中，然后在顺序下移之后重新放置并折叠唯一消费者，最后在 entry-level-external 回溯已经稳定最终会发出的内容之后执行未使用运行时清扫。
 
 **回归覆盖**
 
@@ -399,12 +421,12 @@ pub struct ChunkGraph {
 }
 ```
 
-- `chunk_table` — 所有 chunk，按 `ChunkIdx` 索引。由于重新索引代价较高，可能包含已移除的 chunk（在 `post_chunk_optimization_operations` 中标记）。
-- `module_to_chunk` — 每个模块属于哪个 chunk。O(1) 查找。
+- `chunk_table` — 所有块，按 `ChunkIdx` 索引。由于重新索引代价较高，可能包含已移除的块（在 `post_chunk_optimization_operations` 中标记）。
+- `module_to_chunk` — 每个模块所属的块。O(1) 查找。
 
 ## 相关
 
 - [rust-bundler](../rust-bundler/implementation.md) — 构建生命周期
 - `crates/rolldown/src/stages/generate_stage/mod.rs` — 生成阶段入口点
 - `crates/rolldown/src/stages/generate_stage/manual_code_splitting.rs` — 用户定义的 chunk 分组
-- #8595 — 当存在 external entries 时，由 bit 位置 / chunk 索引不匹配引起的 bug
+- #8595 — 当存在 external entries 时，由 bit 位置 / chunk 索引不匹配引起的 bug。

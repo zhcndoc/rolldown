@@ -1,12 +1,12 @@
-# Dev Engine — 实现（`rolldown_dev`，完整打包模式）
+# 开发引擎——实现（`rolldown_dev`，完整打包模式）
 
 > **“为什么”——重建契约、错误流以及四项设计  
 > 原则**，它们决定引擎何时重建，见  
-> [design.md](./design.md)。本文是实现映射。下文中，“Design principle N” 指 design.md；“§N” 指本文中的某一节。
+> [design.md](./design.md)。本文是实现映射。下文中，“设计原则 N”指 design.md；“§N”指本文中的某一节。
 
 ## 概要
 
-开发引擎（`rolldown_dev` crate）是在完整打包模式下，rolldown 的开发模式构建编排层。它位于文件监听器 / 开发服务器与核心 `Bundler` 之间，负责决定要运行 _哪一种_ 构建——HMR 补丁、增量重建，还是完整构建——以及 _何时_ 运行。它的结构是：由一个 `DevEngine`（公开的异步 API 表层）驱动一个单消息循环的 `BundleCoordinator`（一个状态机加工作队列），后者一次只会启动一个 `BundlingTask`。本文是这套机制的结构图：组件分层、`CoordinatorMsg` 协议、`CoordinatorState` 状态机、`TaskInput` 工作类型，以及用于文件编辑、HMR 生成和浏览器页面加载时懒加载完整打包刷新的数据流管线。本文描述的是当前实现的 **事实**，而不是任何特定变更的叙事。
+开发引擎（`rolldown_dev` 包）是在完整打包模式下，rolldown 的开发模式构建编排层。它位于文件监听器 / 开发服务器与核心 `Bundler` 之间，负责决定要运行 _哪一种_ 构建——HMR 补丁、增量重建，还是完整构建——以及 _何时_ 运行。它的结构是：由一个 `DevEngine`（公开的异步 API 表层）驱动一个单消息循环的 `BundleCoordinator`（一个状态机加工作队列），后者一次只会启动一个 `BundlingTask`。本文是这套机制的结构图：组件分层、`CoordinatorMsg` 协议、`CoordinatorState` 状态机、`TaskInput` 工作类型，以及用于文件编辑、HMR 生成和浏览器页面加载时懒加载完整打包刷新的数据流管线。本文描述的是当前实现的 **事实**，而不是任何特定变更的叙事。
 
 ---
 
@@ -64,14 +64,18 @@ pub struct DevContext {
 }
 ```
 
+### 浏览器运行时所有权
+
+HMR 插件会追加 `experimental.devMode.implement`。Rust 层特意不提供默认实现。JavaScript API 在 `crates/rolldown_plugin_hmr/src/runtime/runtime-extra-dev-default.js` 中保留其默认客户端；选项规范化会从其包导出中读取独立的通用运行时，移除其生成的首行辅助导入，并通过包内部的 `#default-runtime` 导入读取默认运行时。随后，它会替换服务器地址并将两者连接起来。Rust 使用者和集成测试框架会显式提供完整实现。
+
+可复用的运行时类也会构建为 ESM 入口 `rolldown/experimental/runtime`；其包导出指向匹配的生成声明文件，因此自定义运行时实现可以从同一个说明符导入值及其类型。该入口从 `crates/rolldown/src/runtime/runtime-base.js` 的未修改副本中导入辅助工具，这与 Rust 核心在生成的 bundle 中包含的源代码相同。移除独立入口生成的辅助导入后，即可恢复逐字不变的通用运行时源代码以供注入，因此生成的 bundle 输出不会发生变化。
+
 ### 线程模型
 
 - `BundleCoordinator` 运行在 **一个** 专用的 tokio 任务中（`DevEngine::run` 会执行 `tokio::spawn(coordinator.run())`，`dev_engine.rs:115`）。它的 `run()` 是一个单一的 `while let Some(msg) = self.rx.recv().await` 循环，因此所有协调器状态的变更都是串行的——`CoordinatorState` 上没有锁，这个消息循环 _就是_ 锁。
 - 每个 `BundlingTask` 都运行在它 **自己的** 已启动任务中。协调器会持有当前正在运行任务的 `Shared` future 句柄（`current_bundling_future`）。
 - `Bundler` 通过 `Arc<Mutex<Bundler>>` 共享。`BundlingTask` 会在其 HMR / 重建工作期间持有它的锁。
 - 通信通过 **无界** mpsc 通道完成（`unbounded_channel::<CoordinatorMsg>()`，`dev_engine.rs:62`）。请求 / 响应消息会携带一个 `tokio::sync::oneshot` 回复通道。
-
----
 
 ## 2. 消息协议 —— `CoordinatorMsg`
 
@@ -158,21 +162,21 @@ stateDiagram-v2
     [*] --> Initialized : new()
     Initialized --> Idle : run() startup<br/>queue FullBuild + schedule
 
-    %% scheduling: schedule_build_if_stale pops a queued task and starts it
+    %% 调度：schedule_build_if_stale 弹出队列中的任务并启动
     Idle --> FullBuildInProgress : schedule pops FullBuild
     Idle --> InProgress : schedule pops Rebuild / Hmr / HmrRebuild
 
-    %% completion: BundleCompleted
+    %% 完成：BundleCompleted
     FullBuildInProgress --> Idle : completed ok
     FullBuildInProgress --> FullBuildFailed : completed err
     InProgress --> Idle : completed ok → schedule
     InProgress --> Failed : completed err<br/>(records stage)
 
-    %% file-change recovery from a failed build
+    %% 从失败构建中通过文件变更恢复
     FullBuildFailed --> FullBuildInProgress : file change<br/>queue FullBuild
     Failed --> InProgress : file change<br/>queue Hmr / HmrRebuild
 
-    %% rebuild triggers (no file change)
+    %% 重建触发器（无文件变更）
     Idle --> InProgress : EnsureLatestBundleOutput when stale<br/>queue empty Rebuild
     Idle --> InProgress : ModuleChanged<br/>queue Rebuild
     Idle --> FullBuildInProgress : TriggerFullBuild<br/>clear queue + FullBuild
@@ -204,8 +208,6 @@ stateDiagram-v2
 | 浏览器访问且已过期（`EnsureLatestBundleOutput`）            | 空文件的 `Rebuild`             | `InProgress`          | `ensure_latest_bundle_output`，`:401`（push `:419`） |
 | 程序化模块变更（`ModuleChanged`）                          | `Rebuild`                      | `InProgress`          | run 循环，`:128-145`                                |
 | 手动完整构建（`TriggerFullBuild`）                         | 清空队列，`FullBuild`          | `FullBuildInProgress` | `trigger_full_build`，`:457`                        |
-
----
 
 ## 5. `TaskInput` —— 队列中工作的单位
 
@@ -245,43 +247,45 @@ require_generate_hmr_update()// 对 Hmr | HmrRebuild 返回 true
 
 ---
 
-## 6. 从 fs 事件到队列任务 —— `handle_watch_event`
+## 6. 从文件系统事件到队列任务 —— `handle_watch_event`
 
 `handle_watch_event` (`bundle_coordinator.rs:154-194`) 将原始的 `notify` 事件批次转换为 `FxIndexMap<PathBuf, WatcherChangeKind>`：
 
 | `notify` `EventKind`                          | `WatcherChangeKind` |
 | --------------------------------------------- | ------------------- |
 | `Create(_)`                                   | `Create`            |
-| `Modify(Name(RenameMode::From))`, `Remove(_)` | `Delete`            |
+| `Modify(Name(RenameMode::From))`、`Remove(_)` | `Delete`            |
 | `Modify(_)`（其他）                           | `Update`            |
-| `Modify(Metadata(_))`（macOS 非 polling）     | 忽略                |
+| `Modify(Metadata(_))`（macOS 非轮询模式）     | 忽略                |
 
-然后它调用 `handle_file_changes`。注意，`rolldown_dev` 自身并不做防抖，也不做 Delete+Create 合并——它会将每个原始 watcher 事件批次直接向下分发。
+然后它调用 `handle_file_changes`。注意，`rolldown_dev` 自身并不做防抖，也不做 Delete+Create 合并——它会将每个原始监视器事件批次直接向下分发。
 
 ## 7. `handle_file_changes` —— 按状态进行队列化
 
 `handle_file_changes` (`bundle_coordinator.rs:197-237`) 根据当前状态决定文件变更会变成什么 `TaskInput`：
 
 ```
-state                                 → action
+状态                                  → 操作
 ─────────────────────────────────────────────────────────────────
 FullBuildInProgress                   → 将文件暂存到
                                         queued_file_changes_waited_
-                                        for_full_build (no task queued)
-Idle | InProgress                     → queue Hmr (or HmrRebuild if
-                                        rebuild_strategy == Always),
-                                        then schedule_build_if_stale()
-Failed { last_error_stage: Hmr }      → queue Hmr (or HmrRebuild if
-                                        rebuild_strategy == Always),
-                                        then schedule_build_if_stale()
-Failed { last_error_stage: Rebuild }  → queue HmrRebuild
-                                        (unconditional — Rebuild-stage
-                                        failure must rebuild),
-                                        then schedule_build_if_stale()
-FullBuildFailed                       → clear queued_file_changes,
-                                        queue TaskInput::FullBuild,
-                                        then schedule_build_if_stale()
-Initialized                           → error log, ignored
+                                        for_full_build（不入队任务）
+Idle | InProgress                     → 入队 Hmr（或在
+                                        rebuild_strategy == Always 时入队
+                                        HmrRebuild），然后调用
+                                        schedule_build_if_stale()
+Failed { last_error_stage: Hmr }      → 入队 Hmr（或在
+                                        rebuild_strategy == Always 时入队
+                                        HmrRebuild），然后调用
+                                        schedule_build_if_stale()
+Failed { last_error_stage: Rebuild }  → 入队 HmrRebuild
+                                        （无条件——Rebuild 阶段的失败
+                                        必须进行重建），然后调用
+                                        schedule_build_if_stale()
+FullBuildFailed                       → 清除 queued_file_changes，
+                                        入队 TaskInput::FullBuild，
+                                        然后调用 schedule_build_if_stale()
+Initialized                           → 记录错误日志，忽略
 ```
 
 说明：
@@ -306,25 +310,25 @@ Initialized                           → error log, ignored
 
 ---
 
-## 8. `schedule_build_if_stale` —— 弹出、合并、启动
+## 8. `schedule_build_if_stale` — Pop, Merge, Start
 
-`schedule_build_if_stale` (`bundle_coordinator.rs:303-372`) 是从 `queued_tasks` 到运行中的 `BundlingTask` 的桥梁。按状态的行为如下：
+`schedule_build_if_stale` (`bundle_coordinator.rs:303-372`) is the bridge from `queued_tasks` to a running `BundlingTask`. Its behavior by state is as follows:
 
-| 状态                                 | 行为                                                                                           |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `Initialized`                         | 记录错误日志，返回 `None`                                                                      |
-| `FullBuildInProgress` / `InProgress`  | 已有构建在运行——返回现有的 `current_bundling_future`，不调度任何内容                         |
-| `Idle` / `FullBuildFailed` / `Failed` | 弹出队首任务，贪婪地合并后续可合并任务，启动一个 `BundlingTask`                                 |
+| State                               | Behavior                                                                                     |
+| ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| `Initialized`                       | Log an error and return `None`                                                                |
+| `FullBuildInProgress` / `InProgress` | A build is already running—return the existing `current_bundling_future` without scheduling anything |
+| `Idle` / `FullBuildFailed` / `Failed` | Pop the first task, greedily merge subsequent mergeable tasks, and start a `BundlingTask`    |
 
-启动任务时：
+When starting a task:
 
-1. 弹出队首 `TaskInput`。
-2. 当下一个队列任务 `is_mergeable_with` 它时，用 `merge_with` 合并。
-3. 构造一个 `BundlingTask`。
-4. 如果 `task_input.requires_full_rebuild()` → 状态设为 `FullBuildInProgress`；否则 → 设为 `InProgress`。
-5. 用 `tokio::spawn` 将任务的 `run()` 作为 `Shared` future 启动；并将其存入 `current_bundling_future`。
+1. Pop the first `TaskInput`.
+2. While the next queued task `is_mergeable_with` it, merge it using `merge_with`.
+3. Construct a `BundlingTask`.
+4. If `task_input.requires_full_rebuild()` → set the state to `FullBuildInProgress`; otherwise → set it to `InProgress`.
+5. Use `tokio::spawn` to start the task's `run()` as a `Shared` future and store it in `current_bundling_future`.
 
-关键不变量：同一时间最多只运行一个 `BundlingTask`。当一个任务运行时，协调器处于 `*InProgress`，新的文件变更只会追加到 `queued_tasks`；当前任务结束后它们会被清空处理（见 §11）。
+Key invariant: at most one `BundlingTask` runs at a time. While a task is running, the coordinator is in a `*InProgress` state, and new file changes are only appended to `queued_tasks`; they will be processed after the current task finishes (see §11).
 
 ---
 
@@ -335,12 +339,12 @@ Initialized                           → error log, ignored
 ```rust
 pub enum RebuildStrategy {
   Always,   // 在 HMR 之后始终发起增量重建
-  Auto,     //（默认）仅当 HMR 更新包含 full-reload 时才重建
+  Auto,     //（默认）仅当 HMR 更新包含完整重载时才重建
   Never,    // HMR 之后绝不重建
 }
 ```
 
-它会在**两个**地方影响 dev 引擎：
+它会在**两个**地方影响开发引擎：
 
 ### 9a. 在队列阶段（`handle_file_changes`）
 
@@ -360,14 +364,14 @@ let task_input = if rebuild_strategy.is_always() {
 
 ```rust
 if rebuild_strategy.is_auto()
-  && has_full_reload_update         // 生成的 HMR 更新是 full reload
+  && has_full_reload_update         // 生成的 HMR 更新是完整重载
   && !self.input.requires_rebuild() // 输入原本是纯 Hmr
 {
   self.input = TaskInput::HmrRebuild { changed_files: … };
 }
 ```
 
-原因是：一次变更究竟是可以热替换，还是需要整页重载，只有在计算出 HMR diff 之后才能知道。所以在 `Auto` 模式下，协调器先入队一个便宜的 `Hmr`，任务计算 HMR diff，然后 _如果_ diff 结果表明需要 full-reload，任务就把自己升级为 `HmrRebuild` 并执行重建。`Always` 通过始终重建来跳过这一步延迟；`Never` 则在运行时从不重建。
+原因是：一次变更究竟是可以热替换，还是需要整页重载，只有在计算出 HMR 差异之后才能知道。所以在 `Auto` 模式下，协调器先入队一个开销较低的 `Hmr`，任务计算 HMR 差异，然后 _如果_ 差异结果表明需要完整重载，任务就把自己升级为 `HmrRebuild` 并执行重建。`Always` 通过始终重建来跳过这一步延迟；`Never` 则在运行时从不重建。
 
 结果：协调器入队的 `TaskInput` 变体并不一定就是实际运行的变体。一个由协调器入队的 `Hmr` 可以在任务执行过程中变成 `HmrRebuild`。
 
@@ -387,11 +391,11 @@ if rebuild_strategy.is_auto()
 `BundlingTask` 在 `run_inner`
 （`hmr_errored`、`rebuild_errored`）中跟踪两个彼此独立的标志，并通过优先级 **`Rebuild > Hmr`** 推导报告用的 `Option<ErrorStage>`：
 
-| `rebuild_errored` | `hmr_errored` | reported `error_stage` |
-| ----------------- | ------------- | ---------------------- |
-| `true`            | any           | `Some(Rebuild)`        |
-| `false`           | `true`        | `Some(Hmr)`            |
-| `false`           | `false`       | `None`                 |
+| `rebuild_errored` | `hmr_errored` | 报告的 `error_stage` |
+| ----------------- | ------------- | -------------------- |
+| `true`            | 任意          | `Some(Rebuild)`       |
+| `false`           | `true`        | `Some(Hmr)`           |
+| `false`           | `false`       | `None`                |
 
 `Rebuild` 优先是因为自动升级路径（§9b）：一个 `Hmr` 任务可以在执行中途被重写为 `HmrRebuild`，然后在重建阶段失败。在这种情况下两个标志都会被置位；报告 `Rebuild` 是保守的——下一次文件变更会强制重建，而这正是确认修复所需的行为。
 
@@ -427,7 +431,7 @@ if rebuild_strategy.is_auto()
 
 1. **默认受影响集合** — 文件自身的模块，以及每个通过 `addWatchFile` 注册该文件的模块
    （转换依赖），按稳定顺序排列：先是自身模块，然后是按稳定 id 排序的注册者。
-2. **`hotUpdate` 插件链**（仅 dev）—— 插件按钩子顺序运行；
+2. **`hotUpdate` 插件链**（仅开发模式）—— 插件按钩子顺序运行；
    每个都可以替换该集合。模块 id 在跨越钩子时会按 slash 规范化，
    与 `file` 保持相同约定；返回的带有原生分隔符的 id 仍然可以往返转换。
    空返回会抑制该文件的更新。图中不认识的 id 会被丢弃。懒编译代理和运行时模块在双向上都对该钩子隐藏。
@@ -719,11 +723,10 @@ async fn with_cached_bundle<T>(
 - `compute_update_for_calling_invalidate` — 程序化的 `invalidate()`。
 - `compile_lazy_entry` — 懒编译入口的编译。
 
-随后 `HmrStage` 会读取该缓存的快照（例如 `hmr/hmr_stage.rs` 中的 `module_table()` 会调用 `get_snapshot()`）。
+随后 `HmrStage` 会读取该缓存的快照（例如 `hmr/hmr_stage.rs` 中的
+`module_table()` 会调用 `get_snapshot()`）。
 
----
-
-## 15. `DevEngine` 的其他 API 面
+## 15. `DevEngine` 的其他 API
 
 除了 `ensure_latest_bundle_output` 之外，`DevEngine` 上的公开方法（`dev_engine.rs`）：
 
@@ -740,159 +743,155 @@ async fn with_cached_bundle<T>(
 | `close()`                                        | 发送 `Close`，运行 `closeBundle`，等待 coordinator 关闭                                      |
 | `is_closed()` / `bundler_options()`              | 访问器                                                                                       |
 
-`ModuleChanged` 的处理（`bundle_coordinator.rs:123-140`）：更新 watch
-路径，为变更的模块排队一个 `TaskInput::Rebuild`，将 `has_stale_bundle_output = true`，
-并进行调度。
+`ModuleChanged` 的处理（`bundle_coordinator.rs:123-140`）：更新监视路径，为变更的模块排队一个 `TaskInput::Rebuild`，将 `has_stale_bundle_output = true`，并进行调度。
 
-`#[cfg(feature = "testing")]` 下的方法——
-`ensure_task_with_changed_files`、`get_watched_files`、
-`create_client_for_testing`——用于测试框架驱动合成文件变更并检查 coordinator 状态。
+`#[cfg(feature = "testing")]` 下的方法——`ensure_task_with_changed_files`、`get_watched_files`、`create_client_for_testing`——用于测试框架驱动合成文件变更并检查 coordinator 状态。
 
 ## 16. 快速参考 — 概念到文件映射
 
-## 16. Error Handling
+## 16. 错误处理
 
-dev engine has three error audiences. Naming them matters because they require different handling, and a single `Result` cannot simultaneously satisfy all of them. Error classes and delivery channels are therefore split by audience as well.
+开发引擎面向三类错误受众。明确区分它们很重要，因为它们需要不同的处理方式，而单个 `Result` 无法同时满足所有受众的需求。因此，错误类别和传递渠道也会根据受众进行划分。
 
-### 16a. Three audiences
+### 16a. 三类受众
 
-- **End users** — application developers using a framework built on `rolldown_dev` (usually Vite). They write source code and plugins. They see errors from their own work — build errors, plugin failures.
-- **Binding consumers** — the framework or tool integrating `rolldown_dev` (usually Vite). They own the engine lifecycle: constructing it, calling `run`, routing HMR client messages to `invalidate`, and calling `close` on shutdown. They see errors when they call the engine at the wrong time (`invalidate` after `close`, `ensure_latest_build_output` before `run`, etc.). They are responsible for correct call ordering; we surface this misuse so they can find their bug.
-- **Us** — `rolldown_dev` itself. Treat invariant violations as panics (§16g). These are bugs we ship; neither user can recover from them, and a panic is the correct way to make them visible.
+- **终端用户** — 使用基于 `rolldown_dev` 的框架（通常是 Vite）的应用开发者。他们编写源代码和插件。他们会看到由自身工作引起的错误——构建错误、插件失败。
+- **绑定消费者** — 集成 `rolldown_dev` 的框架或工具（通常是 Vite）。他们负责引擎的生命周期：构造引擎、调用 `run`、将 HMR 客户端消息路由到 `invalidate`，以及在关闭时调用 `close`。当他们在错误的时机调用引擎时会看到错误（例如在 `close` 之后调用 `invalidate`、在 `run` 之前调用 `ensure_latest_build_output` 等）。他们有责任保证调用顺序正确；我们会暴露这种误用，以便他们定位自己的错误。
+- **我们** — `rolldown_dev` 本身。将不变量违反视为 panic（§16g）。这些是我们发布出去的 bug；两类用户都无法从中恢复，而 panic 是使其显现出来的正确方式。
 
-Errors by audience:
+按受众划分的错误：
 
-- **Build errors** → end users.
-- **Lifecycle errors** → binding consumers.
-- **Invariant violations** → panic (us).
+- **构建错误** → 终端用户。
+- **生命周期错误** → 绑定消费者。
+- **不变量违反** → panic（我们）。
 
-#### Build errors (end users)
+#### 构建错误（终端用户）
 
-`BuildResult<T>` / `BatchedBuildDiagnostic` are produced by bundler internals.
-They come from user code or plugins (resolve, load, transform, plugin lifecycle hooks).
+`BuildResult<T>` / `BatchedBuildDiagnostic` 由打包器内部产生。
+它们来自用户代码或插件（resolve、load、transform、插件生命周期钩子）。
 
-Examples:
+示例：
 
-- `Bundler::compute_hmr_update_for_file_changes` — diagnostics from HMR computation, surfaced inside `BundlingTask::generate_hmr_updates`.
-- `Bundler::compute_update_for_calling_invalidate` — diagnostics from the programmatic `invalidate()` path, surfaced by `DevEngine::invalidate`.
-- `Bundler::incremental_write` / `incremental_generate` — diagnostics from rebuilds, surfaced inside `BundlingTask::rebuild`.
-- `plugin_driver.watch_change` — `anyhow::Error` from the plugin `watchChange` hook, promoted to `BatchedBuildDiagnostic` at the `BundlingTask::run_inner` call site.
+- `Bundler::compute_hmr_update_for_file_changes` — HMR 计算产生的诊断信息，在 `BundlingTask::generate_hmr_updates` 内部被暴露。
+- `Bundler::compute_update_for_calling_invalidate` — 程序化 `invalidate()` 路径产生的诊断信息，由 `DevEngine::invalidate` 暴露。
+- `Bundler::incremental_write` / `incremental_generate` — 重建产生的诊断信息，在 `BundlingTask::rebuild` 内部被暴露。
+- `plugin_driver.watch_change` — 来自插件 `watchChange` 钩子的 `anyhow::Error`，在 `BundlingTask::run_inner` 调用点被提升为 `BatchedBuildDiagnostic`。
 
-#### Lifecycle errors (binding consumers)
+#### 生命周期错误（绑定消费者）
 
-`BuildResult<T>` is produced by `DevEngine` itself, not the bundler.
-They come from the engine’s state machine: methods being called on an already-closed engine, the coordinator’s mpsc channel closing mid-operation, internal oneshot replies never arriving because the coordinator disappeared.
+`BuildResult<T>` 由 `DevEngine` 本身产生，而不是由打包器产生。
+它们来自引擎的状态机：在已经关闭的引擎上调用方法、协调器的 mpsc 通道在操作过程中关闭、由于协调器消失而导致内部 oneshot 回复始终无法到达。
 
-Examples:
+示例：
 
-- `create_error_if_closed()?` at the top of every `DevEngine` method that touches the coordinator (`dev_engine.rs`).
-- `coordinator_sender.send(...).map_err_to_unhandleable().context(...)?` after the engine has been closed.
-- `reply_receiver.await.map_err_to_unhandleable().context(...)?` when it closed before the coordinator responded.
+- 每个会接触协调器的 `DevEngine` 方法（`dev_engine.rs`）顶部的 `create_error_if_closed()?`。
+- 引擎关闭后调用 `coordinator_sender.send(...).map_err_to_unhandleable().context(...)?`。
+- 协调器响应前关闭时调用 `reply_receiver.await.map_err_to_unhandleable().context(...)?`。
 
-These are the binding consumer’s responsibility — Vite must order calls correctly and avoid racing with `close()`. When the race really happens, we report it instead of swallowing it (§16d), so consumers can detect and fix ordering bugs.
+这些是绑定消费者的责任——Vite 必须正确安排调用顺序，并避免与 `close()` 发生竞态。当竞态确实发生时，我们会报告它，而不是将其吞掉（§16d），这样消费者就能检测并修复顺序错误。
 
-These two classes of errors currently share the same `BuildResult<T>` type — there is no static distinction. Code that needs to respond differently must check `DevEngine::is_closed()` first.
+这两类错误目前共用同一个 `BuildResult<T>` 类型——不存在静态区分。需要做出不同响应的代码必须先检查 `DevEngine::is_closed()`。
 
-### 16b. Two delivery channels
+### 16b. 两种传递渠道
 
-**Throw (sync APIs)** — public napi methods that take a single caller and return a single result, using `BindingResult<T> = Either<BindingErrors, T>` at the boundary; the JS wrapper calls `unwrapBindingResult`, which either returns the success value or throws `BundleError`.
+**抛出（同步 API）** — 接收单个调用方并返回单个结果的公共 napi 方法，在边界处使用 `BindingResult<T> = Either<BindingErrors, T>`；JS 包装器调用 `unwrapBindingResult`，该方法要么返回成功值，要么抛出 `BundleError`。
 
-Applies to: `invalidate`, `ensureLatestBuildOutput`, `getBundleState`,
-`waitForOngoingBundle`. Thrown errors reach whichever audience called the method:
+适用于：`invalidate`、`ensureLatestBuildOutput`、`getBundleState`、
+`waitForOngoingBundle`。抛出的错误会到达调用该方法的相应受众：
 
-- `invalidate` is usually called by the binding consumer’s HMR layer in response to an end user’s HMR client message. The thrown error is observed by the consumer; whether it is forwarded to the end user is up to the consumer.
-- `ensureLatestBuildOutput` is called by the consumer’s dev-server middleware before responding to a request. It is handled or forwarded by the consumer.
-- `close`, `run`, and lifecycle-shaped methods are by design consumer-driven.
+- `invalidate` 通常由绑定消费者的 HMR 层调用，以响应最终用户的 HMR 客户端消息。抛出的错误会被消费者观察到；是否将其转发给最终用户由消费者决定。
+- `ensureLatestBuildOutput` 由消费者的开发服务器中间件在响应请求之前调用。错误由消费者处理或转发。
+- `close`、`run` 以及生命周期形式的方法，按设计由消费者驱动。
 
-**Callback (async lifecycle)** — work that happens asynchronously inside `BundlingTask` is reported through the `on_output` / `on_hmr_updates` callbacks registered when the engine is constructed (see §10).
+**回调（异步生命周期）** — `BundlingTask` 内部异步发生的工作通过引擎构造时注册的 `on_output` / `on_hmr_updates` 回调报告（见 §10）。
 
-Applies to: all errors produced inside `BundlingTask::run_inner` —
-`watch_change`, `generate_hmr_updates`, `rebuild`. The consumer subscribes once at engine creation time and is notified of every build result. These callbacks are the standard channel for build errors to reach end users (forwarded by the consumer into its own error overlay / HMR error UI).
+适用于：`BundlingTask::run_inner` 内产生的所有错误 —
+`watch_change`、`generate_hmr_updates`、`rebuild`。消费者在引擎创建时订阅一次，并会收到每个构建结果的通知。这些回调是构建错误传达给最终用户的标准渠道（由消费者转发到其自身的错误覆盖层 / HMR 错误 UI）。
 
-Rule for choosing the channel: **if the consumer cannot set up a callback in advance because the error comes from a one-shot call, throw; otherwise use the callback**.
+选择渠道的规则：**如果消费者无法提前设置回调，因为错误来自一次性调用，则抛出错误；否则使用回调**。
 
-### 16c. Error routing inside `BundlingTask`
+### 16c. `BundlingTask` 内的错误路由
 
-`run_inner` has three stages that can produce errors. Each stage is responsible for routing decisions for its own errors; `run_inner` itself has no top-level error handler.
+`run_inner` 包含三个可能产生错误的阶段。每个阶段负责为自身的错误作出路由决策；`run_inner` 本身没有顶层错误处理器。
 
-| Stage                  | Callback used     | If callback registered   | If callback missing     |
-| ---------------------- | ----------------- | ------------------------ | ----------------------- |
-| `watch_change` hook    | `on_output`       | Deliver, then return early | Log only, return early |
-| `generate_hmr_updates` | `on_hmr_updates`  | Deliver, then may continue | Log only, may stop      |
-| `rebuild`              | `on_output`       | Deliver                   | Log only                |
+| 阶段                   | 使用的回调          | 已注册回调时             | 缺少回调时              |
+| ---------------------- | ------------------- | ------------------------ | ----------------------- |
+| `watch_change` 钩子    | `on_output`         | 发送，然后提前返回       | 仅记录日志，然后提前返回 |
+| `generate_hmr_updates` | `on_hmr_updates`    | 发送，然后可能继续       | 仅记录日志，可能停止     |
+| `rebuild`              | `on_output`         | 发送                     | 仅记录日志               |
 
-A failure in a stage sets the corresponding stage flag (`watch_change` / `generate_hmr_updates` use `hmr_errored`, `rebuild` uses `rebuild_errored`).
-At the end of the task, these are folded into `error_stage: Option<ErrorStage>` with priority
-`Rebuild > Hmr` (§10), and reported to the coordinator via `BundleCompleted { error_stage, .. }`. The coordinator uses that to transition to
-`FullBuildFailed` / `Failed { last_error_stage }` (§11), regardless of whether the error-receiving callback itself was registered.
+某个阶段失败时，会设置相应的阶段标志（`watch_change` / `generate_hmr_updates` 使用 `hmr_errored`，`rebuild` 使用 `rebuild_errored`）。
+任务结束时，这些标志会按照优先级
+`Rebuild > Hmr`（§10）汇总为 `error_stage: Option<ErrorStage>`，并通过 `BundleCompleted { error_stage, .. }` 报告给协调器。协调器据此转换到
+`FullBuildFailed` / `Failed { last_error_stage }`（§11），无论接收错误的回调本身是否已注册。
 
-`generate_hmr_updates` returns `bool` — “may later stages continue?” — preserving the short-circuit semantics from before `BuildResult`: rebuild is skipped only when an HMR error has no callback available to expose it (matching the old `?` propagation behavior).
+`generate_hmr_updates` 返回 `bool`——“后续阶段是否可以继续？”——保留了 `BuildResult` 之前的短路语义：仅当没有可用于暴露 HMR 错误的回调时，才会跳过 rebuild（与旧的 `?` 传播行为一致）。
 
-`watch_change` is short-circuiting: if a plugin’s `watchChange` hook fails, HMR generation and rebuild cannot safely continue, so `run_inner` returns early.
+`watch_change` 具有短路语义：如果插件的 `watchChange` 钩子失败，HMR 生成和 rebuild 就无法安全继续，因此 `run_inner` 会提前返回。
 
-### 16d. Engine closed: default to exposing to binding consumers
+### 16d. 引擎已关闭：默认向绑定消费者暴露错误
 
-Lifecycle errors (engine closed, coordinator disappeared, channel disconnected) are **exposed to the binding consumer**, not silently swallowed. Vite needs to see that it called `invalidate` after `close` so it can fix call ordering; swallowing the error would only hide misuse and let it spread.
+生命周期错误（引擎已关闭、协调器消失、通道断开）会**暴露给绑定消费者**，而不会被悄然吞掉。Vite 需要知道它在 `close` 之后调用了 `invalidate`，这样才能修正调用顺序；吞掉错误只会掩盖误用，并让问题扩散。
 
-**Per-method exception**: when “do nothing and return” is obviously the correct answer for the method’s semantics, the method MAY return `Ok` instead of a lifecycle error. The conditions are:
+**逐方法例外**：当对于某个方法的语义而言，“什么也不做并返回”显然是正确答案时，该方法**可以**返回 `Ok`，而不是生命周期错误。条件如下：
 
-- the method is waiting / observing, not requesting work.
-- “the thing you are waiting for can no longer happen” is already a complete and honest answer.
-- throwing would force the consumer to write `try/catch` for a normal shutdown event, with no useful recovery action.
+- 该方法是在等待/观察，而不是请求执行工作。
+- “所等待的事情不可能再发生”本身已经是完整且诚实的答案。
+- 抛出错误会迫使消费者针对正常的关闭事件编写 `try/catch`，但没有任何有用的恢复操作。
 
-Methods currently using this exception:
+目前使用此例外的方法：
 
-- `DevEngine::wait_for_ongoing_bundle` (`dev_engine.rs:144-172`) — waiting for a bundle that is in progress but will not happen anymore; returning `Ok` is semantically correct. The doc comment for this method explicitly says so.
-- `BindingDevEngine::ensure_current_build_finish` (the napi wrapper used by JS `DevEngine.ensureCurrentBuildFinish`) — the same shape, PR #9564.
+- `DevEngine::wait_for_ongoing_bundle`（`dev_engine.rs:144-172`）——等待一个正在进行但之后不会再发生的 bundle；返回 `Ok` 在语义上是正确的。该方法的文档注释对此有明确说明。
+- `BindingDevEngine::ensure_current_build_finish`（JS `DevEngine.ensureCurrentBuildFinish` 使用的 napi 包装器）——情况相同，见 PR #9564。
 
-All other lifecycle error paths should be exposed. When adding a new method, **default to exposure**; only use this exception when there is a clear semantic reason, and document it on the method.
+所有其他生命周期错误路径都应被暴露。添加新方法时，**默认应暴露错误**；只有在存在明确的语义理由时才使用此例外，并在方法上对此进行说明。
 
-### 16e. Conversion path: `BuildResult` → `BindingResult` → JS
+### 16e. 转换路径：`BuildResult` → `BindingResult` → JS
 
-Three steps:
+分为三个步骤：
 
-1. **`BuildResult<T>`** (`Result<T, BatchedBuildDiagnostic>`) — bundler’s native error type, used throughout Rust crates internally.
-   `BatchedBuildDiagnostic` carries one or more `BuildDiagnostic`s.
+1. **`BuildResult<T>`**（`Result<T, BatchedBuildDiagnostic>`）——打包器原生的错误类型，内部在整个 Rust crate 中使用。  
+   `BatchedBuildDiagnostic` 携带一个或多个 `BuildDiagnostic`。
 
-2. **`BindingResult<T>`** (`Either<BindingErrors, T>`,
-   `crates/rolldown_binding/src/types/error/mod.rs`) — napi boundary type.
-   On the `Err` side, each `BuildDiagnostic` is converted into a `BindingError` via `to_binding_error(diagnostic, cwd)`
-   (`crates/rolldown_binding/src/types/binding_outputs.rs:79`).
-   `cwd` is used by `DiagnosticOptions` to format paths relative to the project root. `BindingDevEngine` stores `cwd: Arc<Path>` so struct methods and the two callback closures can share the same allocation.
+2. **`BindingResult<T>`**（`Either<BindingErrors, T>`，  
+   `crates/rolldown_binding/src/types/error/mod.rs`）——napi 边界类型。  
+   在 `Err` 分支中，每个 `BuildDiagnostic` 都会通过 `to_binding_error(diagnostic, cwd)` 转换为 `BindingError`  
+   （`crates/rolldown_binding/src/types/binding_outputs.rs:79`）。  
+   `cwd` 由 `DiagnosticOptions` 用于将路径格式化为相对于项目根目录的路径。`BindingDevEngine` 存储 `cwd: Arc<Path>`，以便结构体方法和两个回调闭包共享同一分配。
 
-3. **JS layer** (`packages/rolldown/src/utils/error.ts`) —
-   `unwrapBindingResult(container)` returns `T` on success and throws a `BundleError` aggregating the individual `BindingError`s on failure.
-   `normalizeBindingResult(container)` returns `T | Error` without throwing, for callbacks that do not have suitable `throw` semantics.
+3. **JS 层**（`packages/rolldown/src/utils/error.ts`）——  
+   `unwrapBindingResult(container)` 成功时返回 `T`，失败时抛出一个聚合各个 `BindingError` 的 `BundleError`。  
+   `normalizeBindingResult(container)` 不抛出异常，而是返回 `T | Error`，用于不适合使用 `throw` 语义的回调。
 
-### 16f. Conventions
+### 16f. 约定
 
-- **Do not call `.expect()` / `.unwrap()` on `BuildResult` or any consumer-reachable `Result`.** A panic would cross the napi FFI boundary and may crash the Node process. Use `match` instead and route through the appropriate channel.
-- **`create_error_if_closed()` is the entry guard.** Every `DevEngine` method that touches the coordinator runs it first. By default, the resulting error is exposed to the binding consumer (§16d); methods that use the “swallow and return `Ok`” exception (§16d) must also handle mid-call closure races at every `.send(...)` and `.recv()` site.
-- **Plugin errors are user-visible.** Never drop them silently; they always reach `on_output` or `on_hmr_updates`.
-- **Each stage owns its own delivery.** Inside `BundlingTask`, each stage function handles its own error delivery; `run_inner` is not a centralized error handler.
-- **`error_stage` is for the coordinator, callbacks are for the consumer.** Every error produces both; the stage state machine is driven by the former, and the callback notifies the user.
+- **不要对 `BuildResult` 或任何消费者可达的 `Result` 调用 `.expect()` / `.unwrap()`。** panic 会越过 napi FFI 边界，并可能导致 Node 进程崩溃。请改用 `match`，并通过适当的通道进行处理。
+- **`create_error_if_closed()` 是入口守卫。** 每个会接触协调器的 `DevEngine` 方法都会先运行它。默认情况下，产生的错误会暴露给绑定消费者（§16d）；使用“吞掉错误并返回 `Ok`”例外情况（§16d）的方法，还必须在每个 `.send(...)` 和 `.recv()` 位置处理调用过程中发生的关闭竞态。
+- **插件错误对用户可见。** 绝不能静默丢弃它们；它们始终会到达 `on_output` 或 `on_hmr_updates`。
+- **每个阶段负责自身的传递。** 在 `BundlingTask` 内，每个阶段函数负责处理自身的错误传递；`run_inner` 不是集中式错误处理器。
+- **`error_stage` 面向协调器，回调面向消费者。** 每个错误都会同时产生这两者；阶段状态机由前者驱动，而回调负责通知用户。
 
-### 16g. When to panic
+### 16g. 何时触发 panic
 
-Not every `Result` in dev engine should be routed. Some `.expect(...)` / `.unwrap()` calls are correct: they assert internal invariants — properties guaranteed by our own code — and a panic is how we surface a programming bug, not a runtime condition.
+开发引擎中的并非每个 `Result` 都应该被路由。有些 `.expect(...)` / `.unwrap()` 调用是正确的：它们断言的是内部不变量——由我们自己的代码保证的属性——而 panic 是暴露编程错误的方式，而不是运行时条件。
 
-Rules:
+规则：
 
-- **Panic on invariant violations.** If our own state machine logic, shutdown ordering, or message protocol contract is correct, then that code path should be unreachable. If it fires, we shipped a bug, and panic makes the issue visible instead of burying it in a silent log.
-- **Route runtime conditions.** Anything involving user code, plugin behavior, filesystem state, network, races with consumer-driven lifecycle events such as `close()`, or input validation — route it through the channels in §16b. Panicking there can crash the Node process for something the consumer must be able to observe and recover from.
+- **在不变量违反时触发 panic。** 如果我们自己的状态机逻辑、关闭顺序或消息协议契约是正确的，那么该代码路径就不应该被执行。如果它被触发，说明我们发布了一个 bug；此时 panic 可以让问题显现出来，而不是将其埋没在无声的日志中。
+- **路由运行时条件。** 任何涉及用户代码、插件行为、文件系统状态、网络、与消费者驱动的生命周期事件（例如 `close()`）之间的竞态，或输入验证的情况——都应通过 §16b 中的通道进行路由。在这些情况下触发 panic，可能会因为消费者必须能够观察并恢复的情况而导致 Node 进程崩溃。
 
-A useful test when deciding: _can anything outside our crate trigger this error?_ If yes, route it; if no, panic.
+在做决定时，一个有用的判断方法是：_crate 外部的任何因素都可能触发此错误吗？_ 如果是，就进行路由；如果不是，就触发 panic。
 
-Existing and intentional panic sites in `rolldown_dev` that are not just expedient shortcuts:
+`rolldown_dev` 中现有且有意保留的 panic 位置，它们并非只是权宜之计：
 
 - `crates/rolldown_dev/src/watcher_event_handler.rs:10` —
-  `coordinator_tx.send(...).expect(...)`. The coordinator’s mpsc receiver is owned by the coordinator task, and it only closes when the `Close` message arrives. A filesystem watcher cannot trigger that path; if its `send` fails, our shutdown ordering is wrong.
-- `crates/rolldown_dev/src/bundling_task.rs:71` — the same pattern on the final `BundleCompleted` send. The coordinator waits for all in-flight `BundlingTask`s before processing `Close` (§4), so by design the receiver must still be alive when this send happens.
+  `coordinator_tx.send(...).expect(...)`。协调器的 mpsc 接收端由协调器任务持有，并且只有在 `Close` 消息到达时才会关闭。文件系统 watcher 无法触发该路径；如果其 `send` 失败，说明我们的关闭顺序有误。
+- `crates/rolldown_dev/src/bundling_task.rs:71` — 最终发送 `BundleCompleted` 时采用相同的模式。协调器会等待所有正在进行的 `BundlingTask` 完成后再处理 `Close`（§4），因此按照设计，在执行此发送时接收端必须仍然处于活动状态。
 - `crates/rolldown_dev/src/bundle_coordinator.rs:323, 420` —
-  `current_bundling_future.clone().unwrap()` is only reachable in `*InProgress` states, and the state machine guarantees `Some(_)` there. Seeing `None` here means a state transition was missed.
-- `crates/rolldown_dev/src/dev_engine.rs:117` — `join_handle.await.unwrap()` on the coordinator task. `coordinator::run()` is internal code and should not panic; a `JoinError` here means we introduced a panic in coordinator logic, and we should fix that panic itself rather than hide the symptom.
+  `current_bundling_future.clone().unwrap()` 只能在 `*InProgress` 状态下到达，而状态机保证此时为 `Some(_)`。如果此处出现 `None`，说明遗漏了一次状态转换。
+- `crates/rolldown_dev/src/dev_engine.rs:117` — 对协调器任务使用 `join_handle.await.unwrap()`。`coordinator::run()` 是内部代码，不应触发 panic；此处出现 `JoinError` 意味着我们在协调器逻辑中引入了 panic，因此应该修复该 panic 本身，而不是掩盖症状。
 
-When adding a new panic site, record the asserted invariant in the `.expect(...)` message so the next reader can understand the contract without reverse-engineering it.
+添加新的 panic 位置时，请在 `.expect(...)` 消息中记录所断言的不变量，以便下一位读者无需通过逆向分析即可理解该契约。
 
 ## 17. 资源发射与交付（完整 bundle 模式）
 
@@ -920,42 +919,42 @@ import.meta.url)`——在引擎中通过**两个阶段**流转：
 
 ```mermaid
 flowchart TD
-  %% ===== triggers =====
-  T1([initial load]) --> FULL["TaskInput: FullBuild"]
-  T2([file edit]) --> D{"HMR result?"}
-  T3([dynamic import]) --> LAZY["compileEntry (DevEngine)"]
+  %% ===== 触发器 =====
+  T1([初始加载]) --> FULL["TaskInput: FullBuild"]
+  T2([文件编辑]) --> D{"HMR 结果?"}
+  T3([动态导入]) --> LAZY["compileEntry (DevEngine)"]
 
-  %% ===== dispatch (run_inner) =====
-  D -->|"non-HMR rebuild"| REB["TaskInput: Rebuild"]
-  D -->|"accepted patch"| HMR["TaskInput: Hmr"]
-  D -->|"full reload"| HR["TaskInput: HmrRebuild"]
+  %% ===== 分发 (run_inner) =====
+  D -->|"非 HMR 重构建"| REB["TaskInput: Rebuild"]
+  D -->|"已接受的补丁"| HMR["TaskInput: Hmr"]
+  D -->|"完整重新加载"| HR["TaskInput: HmrRebuild"]
 
-  %% ===== function chains =====
+  %% ===== 函数链 =====
   FULL --> RB
   REB --> RB["rebuild() → bundle_up:<br/>GenerateStage::generate (chunks)<br/>+ add_additional_files"]
-  HMR --> GH["generate_hmr_updates():<br/>render_hmr_patch (code)<br/>+ add_additional_files"]
+  HMR --> GH["generate_hmr_updates():<br/>render_hmr_patch (代码)<br/>+ add_additional_files"]
   HR --> GH
-  HR -. "then" .-> RB
-  LAZY --> CL["compile_lazy_entry (code)<br/>+ add_additional_files"]
+  HR -. "然后" .-> RB
+  LAZY --> CL["compile_lazy_entry (代码)<br/>+ add_additional_files"]
 
-  %% ===== shared emitter (asset bytes converge here) =====
-  FE[("FileEmitter.files<br/>emit_file writes;<br/>add_additional_files drains once<br/>(emitted_files gate)")]
-  RB <-->|"emit / drain"| FE
-  GH <-->|"emit / drain"| FE
-  CL <-->|"emit / drain"| FE
+  %% ===== 共享发射器（资源字节在此汇聚） =====
+  FE[("FileEmitter.files<br/>emit_file 写入；<br/>add_additional_files 只排空一次<br/>(emitted_files 闸门)")]
+  RB <-->|"发射 / 排空"| FE
+  GH <-->|"发射 / 排空"| FE
+  CL <-->|"发射 / 排空"| FE
 
-  %% ===== callbacks =====
+  %% ===== 回调 =====
   RB --> OUT[["on_output"]]
   GH --> HMRU[["on_hmr_updates"]]
   GH --> ADD[["on_additional_assets"]]
   CL --> ADD
-  CL --> RET[["compileEntry return"]]
+  CL --> RET[["compileEntry 返回值"]]
 
-  %% ===== sinks =====
+  %% ===== 接收端 =====
   OUT --> MEM[("Vite memoryFiles")]
   ADD --> MEM
-  MEM --> MW["memoryFilesMiddleware<br/>serves /assets/*"]
-  HMRU --> B(["browser / client"])
+  MEM --> MW["memoryFilesMiddleware<br/>提供 /assets/*"]
+  HMRU --> B(["浏览器 / 客户端"])
   RET --> B
   MW --> B
 ```
@@ -982,7 +981,7 @@ flowchart TD
 
 | 概念                                           | 文件                                                            |
 | ---------------------------------------------- | --------------------------------------------------------------- |
-| 公共开发 API，coordinator 启动                 | `crates/rolldown_dev/src/dev_engine.rs`                         |
+| 公共开发 API，协调器启动                       | `crates/rolldown_dev/src/dev_engine.rs`                         |
 | 状态机、排队、调度                              | `crates/rolldown_dev/src/bundle_coordinator.rs`                 |
 | 一单位构建工作                                 | `crates/rolldown_dev/src/bundling_task.rs`                      |
 | 共享上下文                                     | `crates/rolldown_dev/src/dev_context.rs`                        |
@@ -1010,4 +1009,4 @@ flowchart TD
   消息触发
 - [dev-server-test-harness](../dev-server-test-harness/implementation.md) — 开发服务器的浏览器测试 harness
 - `crates/rolldown_dev/` — 开发引擎实现
-- `crates/rolldown_dev_common/` — `RebuildStrategy`、开发选项
+- `crates/rolldown_dev_common/` — `RebuildStrategy`、开发选项。

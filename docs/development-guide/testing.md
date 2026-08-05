@@ -2,8 +2,8 @@
 
 ## 快速指南
 
-:::tip TLDR
-运行 `just test-update` 来运行所有 rust 和 node.js 测试，并自动更新快照
+:::tip 简而言之
+运行 `just test-update` 来运行所有 Rust 和 Node.js 测试，并自动更新快照
 :::
 
 我们有两组测试套件：一组用于 Rust，另一组用于 Node.js。
@@ -41,12 +41,12 @@
 
 数据驱动测试用例是一个包含 `_config.json` 文件的文件夹。测试运行器会从 `_config.json` 读取配置，打包输入文件，并执行输出文件以验证行为。
 
-`_config.json` 包含测试套件的配置。如果一切正常，你在编辑 `_config.json` 时应该能够获得自动补全，这得益于 [config](https://github.com/rolldown/rolldown/blob/main/.vscode/settings.json#L36-L40)。
+`_config.json` 包含测试套件的配置。如果一切正常，你应该能够在编辑 `_config.json` 时获得自动补全，这是由于[配置](https://github.com/rolldown/rolldown/blob/main/.vscode/settings.json#L40-L43)的作用。
 
 对于所有可用选项，你可以参考
 
-- [Bundler Options](https://github.com/rolldown/rolldown/blob/100c6ee13cef9c50529b8d6425292378ea99eae9/crates/rolldown_common/src/inner_bundler_options/mod.rs#L53)
-- [JSON Schema file](https://github.com/rolldown/rolldown/blob/main/crates/rolldown_testing/_config.schema.json)
+- [打包器选项](https://github.com/rolldown/rolldown/blob/100c6ee13cef9c50529b8d6425292378ea99eae9/crates/rolldown_common/src/inner_bundler_options/mod.rs#L53)
+- [JSON Schema 文件](https://github.com/rolldown/rolldown/blob/main/crates/rolldown_testing/_config.schema.json)
 
 #### 数据驱动测试做什么？
 
@@ -205,7 +205,7 @@ just test-node-rolldown -t test-name
 | **browser**  | `browser` | 运行在进程内 Vite full-bundle-mode 开发服务器之上的真实 Chromium 页面。大多数开发引擎测试都在这里。 |
 | **fixtures** | `node`    | 一个自定义开发服务器构建到**磁盘**，并将构建产物作为 `node` 子进程运行。                  |
 
-浏览器套件运行在 Vite 本身上（`experimental.bundledDev`），由位于 `vite/` 的 Vite checkout 提供服务（仓库根目录下一个被 gitignore 的 vitejs/vite 克隆，`rolldown-canary` 已 rebase 到 `main`），并将其 `rolldown` 依赖链接到工作区的 `packages/rolldown`，因此测试会通过真实的 Vite 集成来验证本地 rolldown 绑定。该支架的架构和设计思路记录在 [Dev Server Test Harness design doc](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中。修改支架本身之前请先阅读它。
+浏览器套件运行在 Vite 本身上（`experimental.bundledDev`），由位于 `vite/` 的 Vite checkout 提供服务（仓库根目录下一个被 gitignore 的 vitejs/vite 克隆，`rolldown-canary` 已 rebase 到 `main`），并将其 `rolldown` 依赖链接到工作区的 `packages/rolldown`，因此测试会通过真实的 Vite 集成来验证本地 rolldown 绑定。该支架的架构和设计思路记录在 [开发服务器测试支架设计文档](https://github.com/rolldown/rolldown/blob/main/internal-docs/dev-server-test-harness/implementation.md) 中。修改支架本身之前请先阅读它。
 
 ### 浏览器 playground
 

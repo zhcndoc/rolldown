@@ -53,7 +53,9 @@ let member = StaticMemberExpression::boxed(SPAN, object, property, false, builde
 
 命名可以机械地对应：`alloc_X` → `X::boxed`，普通值构造函数 `x` → `X::new`，枚举构造函数 → `Enum::new_<variant>`（例如，`Expression::new_call_expression` 构建 `Expression::CallExpression`）。oxc 的构造函数是按位置传参的；如果前面是一段较长的内容，请用注释说明它生成的 JS，正如 oxc 自己所建议的那样。
 
-### Rolldown 特有模式 → 扩展 trait 上的 `new_*` 关联函数
+导出构造遵循 oxc 按语法区分节点的拆分方式：对于 `export const …` / `export function …`，使用 `ExportDeclaration`；对于 `export { foo }` 这样的本地子句，使用 `ExportNamedDeclaration`；对于 `export { foo } from "mod"` 这样的重新导出，使用 `ExportFromDeclaration`。不要使用带有可选 declaration 或 source 字段的旧式重载结构重新构造；匹配语法的特定类型可以让无效组合无法表示。
+
+### Rolldown 特定模式 → 扩展 trait 上的 `new_*` 关联函数
 
 对于那些将多个节点组合成某种重复出现的 rolldown 约定的构造（CJS/ESM 互操作包装器、`__toESM` / `__toCommonJS` 调用、`.then` 链，等等），应当在其所生成的节点类型对应的扩展 trait 上添加一个 `new_*` 关联函数，而不是在调用处手写实现。所有 trait 都位于同一个模块（`crates/rolldown_ecmascript_utils/src/ast_factory.rs`），并从 crate 根部重新导出，因此调用处只需通过一次 `use` 引入所需的 trait，并以 `as _` 形式导入：
 
@@ -105,13 +107,13 @@ rolldown 的构造函数沿用了 oxc 的 `new_` 前缀——它们读起来像�
 
 该约定分两步完成：
 
-1. **`AstSnippet` → `AstFactory` 新类型（oxc#23043 切换，oxc 0.138）。** `AstSnippet` 变成了 `AstBuilder` 上的一个新类型：它的 `pub builder` 字段变成了被包装的 builder，去掉了那种简单的重命名，改为使用 oxc 按类型提供的构造函数，而真正的模式则变成了固有的 `make_*` 方法。所有泛型节点的调用点都迁移到了按类型的构造函数，且启用了 oxc_ast 的 **`disable_old_builder`** cargo 特性，移除了已弃用的 `AstBuilder` 方法（并去掉了 `AstBuilder` 的 `Clone`/`Copy`，以及顶层 `oxc::ast::{AstBuilder, NONE}` 的 re-exports —— 请改为从 `oxc::ast::builder::` 导入）。
+1. **`AstSnippet` → `AstFactory` 新类型（oxc#23043 切换，oxc 0.138）。** `AstSnippet` 变成了基于 `AstBuilder` 的新类型：原先的 `pub builder` 字段变成了被包装的 builder，简易重命名方法被移除，改用 oxc 针对每种类型提供的构造函数，而真正的模式则变成了固有的 `make_*` 方法。所有泛型节点调用点都改为使用针对具体类型的构造函数，并启用了 oxc_ast 的 **`disable_old_builder`** cargo 特性，移除了已弃用的 `AstBuilder` 方法（同时移除了 `AstBuilder` 的 `Clone`/`Copy`，以及顶层的 `oxc::ast::{AstBuilder}` 重新导出——请改为从 `oxc::ast::builder::` 导入）。
 
-2. **`AstFactory` 新类型 → 扩展 trait 上的 `new_*`（本次变更）。** `AstFactory` 上的固有 `make_*` 方法变成了按节点类型的 `*FactoryExt` trait 上的 `new_*` 关联函数，这些函数对 `B: GetAstBuilder + GetAllocator` 泛型化，并将 builder 放在最后；私有的多步骤辅助函数变成了同一模块中的自由函数。两个面向构造的绑定扩展 trait（`BindingPatternExt`、`BindingPropertyExt`）也以相同方式对 builder 泛型化，从而与已删除的类型解耦。每个 holder 结构体的 `ast_factory: AstFactory` 字段都变成了 `ast_builder: AstBuilder`，并且每个 `self.ast_factory.make_x(..)` 调用点都变成了 `Type::new_x(.., &self.ast_builder)`。`AstFactory` 这个新类型已被删除。
+2. **`AstFactory` 新类型 → 扩展 trait 上的 `new_*`（本次变更）。** `AstFactory` 上的固有 `make_*` 方法变成了按节点类型划分的 `*FactoryExt` trait 上的 `new_*` 关联函数，这些函数对 `B: GetAstBuilder + GetAllocator` 进行泛型化，并将 builder 放在参数列表末尾；私有的多步骤辅助函数变成了同一模块中的自由函数。两个面向构造的绑定扩展 trait（`BindingPatternExt`、`BindingPropertyExt`）也以相同方式对 builder 进行泛型化，从而与已删除的类型解耦。每个 holder 结构体的 `ast_factory: AstFactory` 字段都变成了 `ast_builder: AstBuilder`，并且每个 `self.ast_factory.make_x(..)` 调用点都变成了 `Type::new_x(.., &self.ast_builder)`。`AstFactory` 这个新类型已被删除。
 
 `disable_old_builder` 仍然处于启用状态，并通过 `crates/rolldown_ecmascript/Cargo.toml` 中对 `oxc_ast` 的直接依赖进行固定（cargo-shear 会忽略；特性统一会将其应用到 umbrella 重新导出的那份副本上）。在升级时，请保持这个固定与 `oxc` 版本同步。
 
 ## 相关
 
 - [ast-mutation](../ast-mutation/implementation.md) — 约束合成节点的 span/`NodeId` 作为标识的契约
-- [runtime-helpers](../runtime-helpers/implementation.md) — `new_*` 互操作构造函数会调用的运行时函数
+- [runtime-helpers](../runtime-helpers/implementation.md) — `new_*` 互操作构造函数会调用的运行时函数。

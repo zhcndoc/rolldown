@@ -36,37 +36,38 @@
 
 以下是严格输出会为了确定性而刻意接受额外包装的主要位置：
 
-- **全包裹模式** 会将所有符合条件的内容都包裹起来（见“模式”）。
-- **块循环回退**（按需）：一个根模块如果能够沿着预测到的边到达一个静态块循环，那么它还会按预期顺序额外包裹其中每个符合条件的模块。在一个循环中，求值顺序取决于运行时先进入哪个块，而降低（lowering）本身会移动这个入口点；而且预测也无法看到另一个循环块会急切调用的 `var` 形式互操作包装器定义。
-- **入口触发器 façade**：只要其块被求值，内联入口触发器就会触发，因此凡是其块中还有别的东西 _可能_ 加载的入口——无论是顺序包裹还是互操作包裹，在两种严格模式下都是如此——都会把触发器移到 façade 上。这个问题是通过将真实的跨块链接计算与完全降低后的顺序状态（`lowered_static_import_edges`）进行比较来回答的，而不是靠预测，因此某个入口如果只有它自己能加载到的块，就会保持触发器内联，不会额外增加文件。“加载”既包括来自其他块的静态导入，也包括宿主在入口块中的任何其他模块的跨块动态导入——例如，把一个动态目标手动分组到入口旁边时，`import()` 会求值入口块。对入口模块本身的动态导入必须运行其程序，而失效的动态导入会降级为无效 stub，所以二者都不会强制拆分；任何其他仍然存活的记录，即使从未执行，也都算作可能的加载来源。  
-  纯动态入口是一个例外：当每个存活的 `import()` 调用点都可以携带该触发器时，允许这种情况：实现块会变成公共块，而每个调用点都会重写为 `Promise.resolve().then(() => (init_*(), namespace))` 或 `import(host).then(n => (n.init_*(), n.namespace))`。这既适用于被块优化器移除的 façade，也适用于严格降低本来会创建的 façade。以下情况会被拒绝：先前已恢复的空 façade、已发出/用户入口、带有 TLA 污染的目标、可能暴露可调用 `then` 的跨块宿主命名空间，或者——在创建路径上——直接或传递性的 `export-star` 链路会到达外部模块。入口级外部合并会以 façade 块的形式在所有格式中呈现，而模块本地的模拟命名空间无法重现它们特定于格式的行为。外部 `star` 保护仅适用于创建路径：恢复路径则依赖块优化器的模拟命名空间处理，其中对外部 `star` 的保留是单独处理的。
-- **在严格模式下跳过 CJS 命名空间合并**（`determine_safely_merge_cjs_ns`）：合并会把仍然保留的 `require` 调用移动到仍会被包含的那条语句上——这是包裹无法修复的块内移动。每个导入者的调用点都会增加字节数；包装器会进行记忆化。
-- **`expected ∖ actual` 种子**：对预测顺序不可见的、顺序敏感的模块（树摇会把它视为无副作用）会被包裹，而不是被信任。
+- **全包装模式**会包装所有符合条件的内容（见“模式”）。
+- **分块循环提前退出**（按需）：能够通过预测的边到达静态分块循环的根，会按照其预期顺序额外包装每个符合条件的模块。在循环内部，求值顺序取决于运行时首先进入的分块，而降级过程本身会移动该入口点；此外，预测也无法看到另一个循环分块急切调用的 `var` 形式互操作包装器定义。
+- **入口触发门面**：内联入口触发器会在其分块被求值时触发，因此，如果某个入口的分块能够加载任何其他内容——无论是经过顺序包装还是互操作包装，且无论处于哪种严格模式——都会将其触发器移动到一个门面中。这个问题是通过针对完全降级后的顺序状态（`lowered_static_import_edges`）运行真实的跨分块链接计算来回答的，而不是通过预测；因此，如果入口的分块只能由该入口加载，就会保留其内联触发器，不产生额外文件。"加载"涵盖来自其他分块的静态导入，以及跨分块动态导入入口分块中托管的任何其他模块——例如，将动态目标与入口放在一起的手动分组，此时 `import()` 会对入口分块求值。对入口模块本身的动态导入必须运行其程序，而已消除的动态导入会降级为空操作存根，因此二者都不会强制拆分；任何其他仍然存在的记录都算作可能的加载，即使它从未被执行。
+  当每个存活的 `import()` 调用点都能携带触发器时，纯动态入口是一个例外：实现分块会成为一个公共分块，而每个调用点会重写为 `Promise.resolve().then(() => (init_*()..., namespace))` 或 `import(host).then(n => (n.init_*()..., n.namespace))`。激活内容通常是一个模块包装器；对于消费者本地命名空间，则是该路由完整的叶节点/CJS 承载目标列表，绝不会是有意为空的共享桶包装器。这同时适用于被分块优化器移除的门面，以及严格降级本来会创建的门面。对于此前恢复的空门面、已输出/用户入口、受 TLA 污染的目标、可能暴露可调用 `then` 的跨分块宿主命名空间，或——在创建路径上——直接或传递性导出星号链能够到达外部模块的情况，该方案会被拒绝。入口级外部合并在所有格式下都渲染到门面分块上，而模块本地的模拟命名空间无法复现其特定于格式的行为。外部星号保护仅适用于创建路径：恢复路径改为依赖分块优化器的模拟命名空间处理，其对外部星号的保留会单独处理。
+- **严格模式下会跳过 CJS 命名空间合并**（`determine_safely_merge_cjs_ns`）：合并会将仍被包含的 `require` 调用移动到某条语句上——同一函数体内的移动无法通过包装修复。每个导入方的调用点都会增加字节数；包装器则会进行记忆化。
+- **`expected ∖ actual` 种子**：预测顺序中不可见的、对顺序敏感的模块（树摇认为其无副作用）会被包装，而不是被信任。
 
 ## 触发器放置
 
 每个可以运行包装模块的站点，集中放在一个位置：
 
-| Trigger                                                                           | Lives in                                                                                 | Owner                                                                               |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `init_*()` for an order-wrapped importee of a live statement                      | importer body, statement position                                                        | finalizer via the shared init-target view                                           |
-| `init_*()` / `require_*()` obligations of removed statements                      | importer body, removed statement's position                                              | `OrderImportOverlay` / transitive init targets                                      |
-| user or dynamic entry activation, unless every live `import()` rewrite carries it | entry chunk prologue (a facade only when other chunks can load the implementation chunk) | `create_order_wrap_entry_facades` / `restore_order_wrap_entry_facades`              |
-| collapsible dynamic entry activation                                              | importer body, the rewritten `import()` call site                                        | finalizer `rewrite_dynamic_import_for_merged_entry` via the shared init-target view |
-| interop `require_*()` of an eager importer                                        | importer body (its carrier)                                                              | flag-off interop machinery, order-analysis carrier rule                             |
+| 触发器                                                                             | 所在位置                                                                                 | 所有者                                                                                              |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `init_*()` for an order-wrapped importee of a live statement                      | 导入器主体，语句位置                                                                     | 通过共享的 init-target 视图由终结器负责                                                             |
+| `init_*()` / `require_*()` obligations of removed statements                      | 导入器主体，被移除语句的位置                                                             | `OrderImportOverlay` / 传递性 init 目标                                                             |
+| generated CJS re-export interop from a consumer-local barrel                    | 导入器主体，路由后的语句位置；声明位于 CJS 被导入项旁边                              | 每个导入记录对应的 `OrderCjsCarrier`                                                                |
+| user or dynamic entry activation, unless every live `import()` rewrite carries it | 入口 chunk 前导部分（仅当其他 chunk 能加载实现 chunk 时才使用 facade）                  | `create_order_wrap_entry_facades` / `restore_order_wrap_entry_facades`                             |
+| collapsible dynamic entry activation                                              | 导入器主体，重写后的 `import()` 调用位置                                                  | 终结器 `rewrite_dynamic_import_for_merged_entry`，通过共享的模块或命名空间目标视图负责             |
+| interop `require_*()` of an eager importer                                        | 导入器主体（其载体）                                                                     | 关闭标志时的 interop 机制，顺序分析载体规则                                                         |
 
 触发器绝不能内联放在某个 chunk 的主体中，而该 chunk 还会被其他 chunk 作为依赖来求值；这就是 facade 规则的内容。
 
 将动态入口触发器移动到 promise continuation，刻意让它比宿主 chunk 结算晚一个微任务。导入的 promise 仍然只会在 `init_*()` 运行之后才解析，但在宿主求值期间排入队列的微任务可以在初始化之前观察到目标。两种严格模式都采用这一策略；`m4_dynamic_facade_race` 对其进行了固定。
 
-## Thenable chunk namespaces
+## Thenable chunk 命名空间
 
 `import()` 通过 promise 解析过程进行解析，因此携带可调用 `then` 导出的 chunk 命名空间会被同化：promise 会以该 `then` 产生的结果完成，而调用处改写的提取回调永远收不到这个命名空间。对于合并的动态入口，这会让某个 chunk 伙伴的导出改变导入目标时所观察到的内容——这在源代码中是不可能的，因为导入一个模块时，绝不会暴露兄弟模块的导出。
 
 防御措施按导出名的所有者分开处理：
 
-- **打包器拥有的名称绝不会是 `then`。** `deconflict_exported_names` 会在命名内部导出之前预留它——源符号名为 `then` 会像任何冲突一样被去重为 `then$1`——而且最小化名称生成器会跳过字面量 `then`（否则它会出现在数值 443,179 处）。只有当 `then` 本身就是被承诺的名称时，`emitFile` 承诺的导出才会保留 `then`；#10500 跟踪将这些导出改走预定义名称路径，这样就会移除这个特例。
-- **用户可见的名称不能被重命名，因此改为拒绝这种合并**：入口自身的公共导出、`emitFile` 承诺的名称，以及运行时由 `export * from` 链最终从外部模块提供的任何内容。`order_wrap_host_can_expose_then_export` 负责保护恢复路径，而入口外观（entry-facade）决策负责保护创建路径——见上面的入口触发外观要点。
+- **Bundler 所有的名称绝不会是 `then`。** `deconflict_exported_names` 会在为内部导出命名之前保留它——名为 `then` 的源符号会像其他冲突一样被消歧为 `then$1`——并且压缩名称生成器会跳过字面量 `then`（否则它会出现在值 443,179 处）。`emitFile` 承诺的导出只有在 `then` 本身就是承诺名称时才会保留 `then`；#10500 追踪了将这些名称转入预定义名称路径的工作，完成后将移除这一特例。
+- **用户可观察的名称无法重命名，因此会改为拒绝合并**：入口自身的公共导出、`emitFile` 承诺的名称，以及运行时由到达外部模块的 `export * from` 链提供的任何名称。`order_wrap_host_can_expose_then_export` 负责保护恢复路径，而入口 facade 决策负责保护创建路径——参见上面的入口触发 facade 条目。此外，`dynamic_entry_supports_namespace_extraction` 会将动态导入方重写为 `.then((n) => n.<ns>)`，从而避免将模块内联到动态入口中。请注意，只有在动态导入所使用的导出不是动态入口模块所导出导出的已知子集时，才需要这样做。如果它们是已知子集，那么我们无需生成这个中间命名空间，即使 `export * from` 存在 `then` 导出，也可以直接内联模块（参见 `dynamic_entry_partial_usage_allows_plain_merge`）。
 
 有意保留的情况：动态导入目标自身的 `then` 导出。对源模块的原生 `import()` 也会以同样方式同化，因此重命名它会偏离源语义，而不是保持语义一致。
 
@@ -74,9 +75,17 @@
 
 后置顺序下沉不能让被排除的 import 绑定或 re-export 变为存活。棘手的情况是一个被 wrap-all 选中的纯 re-export barrel：它的包装器确实存在，但若让这个共享包装器拥有每一个下游 `init_*`，就会初始化被无关消费者使用的叶子节点。这样的包装器在没有本地可执行主体、生成的 missing-export 赋值、无条件执行依赖或 `keepNames` 工作时，会被标记为 re-export-transparent。随后，每个消费者只会通过它路由到该消费者保留的那些叶子绑定。
 
-路由证据是按消费者局部决定的。具名导入使用其本地 facade 的链接阶段活性，包括通过导出链保留的 facade。命名空间持有者——既包括 `import * as ns`，也包括值为命名空间的具名导入——只检查已包含的语句：静态解析出的成员读取会路由该成员，而不透明用法则会展开非歧义命名空间。一个将被常量内联阶段替换掉的已解析成员，会使用与 tree shaking 相同的常量元数据和 inline 模式被跳过。模块全局的叶子或命名空间活性故意不够，因为另一个导入者可以让同一个规范化符号存活，而无需为这个消费者保留它。
+直接的 CJS re-export 曾经会使一个原本纯粹的 barrel 失去资格，因为普通的 CJS finalizer 会在共享的 barrel 包装器内部生成 `namespace = __toESM(require_cjs())`。严格下沉现在将生成的主体表示为每个 import record 一个 `OrderCjsCarrier`。barrel 包装器变成一个空的路由中转点；`cn` 的消费者只会到达 `cn`，而 `cloneDeep` 的消费者还会调用与该 CJS record 精确对应的 carrier。两个 CJS re-export record 绝不会共享一个单体 init，即使它们指向同一个 CJS 模块。carrier 声明会放置在其 CJS importee 旁边，直到调用其记忆化 init 之前都不会产生作用，并拥有原始 record 的命名空间转换和 Node 互操作模式。
 
-仅为替换折叠后的动态入口 facade 而合成出的命名空间，不属于不透明命名空间消费者。它的 getter 仅限于链接时 `import()` 消费者已经保留的导出接口，并且其合成语句会引用这些 getter 背后所有未内联的绑定，从而在 entry chunk 变为公共 chunk 后，跨 chunk 链接不会留下悬空 getter。这里的限制按导出名而不是仅按规范化符号来计算：另一个消费者即使通过不同别名保留了同一个绑定，也不能扩大这个动态入口接口。如果模块命名空间同时还有一个真实的语义消费者，那么完整的语义接口会胜出。否则，被排除的 re-export init 路由会继续使用动态消费者记录的路径。将合成命名空间视为不透明会丢弃这些路径，并且可能在一个 re-export 环中跳过所需的叶子初始化器（`retained_star_renamed_cycle`）。
+只有当 barrel 自身的副作用契约无条件保留该 record 时，有副作用的 CJS re-export 才会成为每次该 barrel 路由求值时的 eager 义务。一个 `moduleSideEffects: false` 的 barrel 可以为了一个 lazy binding 消费者而在全局保留一个 CJS record，却不会让该 record 对无关消费者变成 eager。同一边界也适用于经过嵌套 consumer-local barrel 的每一跳：即使每个内部 barrel 都保留副作用，外层的 `moduleSideEffects: false` barrel 仍会阻止更深层的 carrier 变成无条件义务。resolver 会递归收集完整转发路径保留副作用的 carrier，然后按照完整 source-record 路径与选中的叶子节点一起排序，保留 `effect-before`、leaf、`effect-after` 的顺序。裸 import 没有绑定路由，但仍会接收真正 eager 的 carrier。保留路径遍历会将同一权限传递过每一个选中的跳转点：由绑定需求显式选中的 carrier 仍可跨越纯边界，但不在路径上的 eager carrier 则不能。
+
+路由证据是 consumer-local 的。具名 import 使用其本地 facade 的 link-stage 存活性，包括通过 export chain 保留的 facade。命名空间持有者——包括 `import * as ns` 以及值为命名空间的具名 import——只检查已包含的语句：静态解析的成员读取会路由到该成员，而不透明的使用则会展开无歧义的命名空间。对于将由常量内联 pass 替换的已解析成员，会使用与 tree shaking 相同的常量元数据和内联模式将其跳过。模块全局的叶子或命名空间存活性被有意视为不足，因为另一个 importer 可能让同一个规范符号存活，却没有为当前消费者保留它。
+
+该优化有意限制在主体完全由直接 re-export 组成的源模块上。必须启用 tree shaking，并且该模块不能处于同步的 `import`/`require` SCC 中，不能是一个不透明 CommonJS `require()` 的目标，不能包含顶层 await 或 TLA 依赖，不能暴露动态 exports，不能需要 missing-export shim，也不能是拼接后的包装器。CJS `export *` 同样被排除，因为其命名空间是动态的。这些形态会保留现有的单体初始化路径。拒绝同步 SCC 是首要的循环安全规则：它会在依赖遍历和本地主体之间保留一个模块的 evaluating guard，而不是将循环展平为按不同顺序调用的叶子节点。直接的 `require()` 目标也会保持单体形式。当该单体包装器（或任何其他非路由包装器）保留一个指向 consumer-local 路由的 `export *` 并物化生成的命名空间时，其受保护的 record 位置会在暴露命名空间 getter 之前初始化该路由完整的叶子节点/carrier 目标列表。
+
+代码拆分的放置会在 chunk 存在之前作出同样的 consumer-local 决策。系统会根据 wrap-all 结构计划构建一个探测用的 `OrderWrapState`，入口可达性则通过共享 resolver 路由传入的 record。一旦到达一个非入口的 consumer-local barrel，就不会遍历其模块范围的 `load_dependencies` 并集；只有递归 eager 的 carrier 和 consumer-local 中转模块是无条件的。具名叶子节点和纯 carrier 只会从选择它们的传入消费者那里获得 bits。保留中转模块可以让每个已包含的路由 barrel 保持可达，而不重新打开其包含无关叶子节点的并集。一个 barrel 如果自身是用户入口或动态入口，就会暴露其完整命名空间，因此采用保守的完整遍历，并在入口前导中包含每个静态已知的目标。
+
+仅为替换一个已折叠的动态入口 facade 而合成的命名空间，不属于不透明命名空间消费者。它的 getter 被限制为 link-time `import()` 消费者已经保留的 export 接口，并且其合成语句会引用这些 getter 背后的每个未内联绑定，从而使跨 chunk 链接不会在入口 chunk 变为公共 chunk 后留下悬空 getter。限制依据是 export name，而不仅仅是规范符号：另一个消费者若以不同别名保留同一绑定，不得扩大这个动态入口接口。如果模块命名空间还拥有一个真实的语义消费者，则该完整语义接口优先。被排除的 re-export init 路由会继续使用动态消费者记录的路径。将合成命名空间视为不透明命名空间会丢弃这些路径，并可能在 re-export 循环中跳过必需的叶子初始化。`cross_chunk_dynamic_importer_uses_call_site_trigger` 会独立固定这个缩小后的模拟 facade，而不受保留 star fixture 的路由拓扑影响。
 
 ## 审计决策
 
@@ -156,6 +165,14 @@ Rolldown 可以独立模拟最终执行，并在模拟结果与源代码顺序�
 ```rust
 pub struct OrderWrapState {
   modules: FxHashMap<ModuleIdx, OrderWrappedModule>,
+  reexport_init_transparent: FxHashSet<ModuleIdx>,
+  consumer_local_reexport_routes: FxHashSet<ModuleIdx>,
+  consumer_local_namespace_targets: FxHashMap<ModuleIdx, Vec<WrappedEsmInitTarget>>,
+  cjs_carriers: FxHashMap<OrderCjsCarrierKey, OrderCjsCarrier>,
+  cjs_carriers_by_importee: FxHashMap<ModuleIdx, Vec<OrderCjsCarrierKey>>,
+  cjs_carriers_by_symbol: FxHashMap<SymbolRef, Vec<OrderCjsCarrierKey>>,
+  cjs_carrier_by_namespace: FxHashMap<SymbolRef, OrderCjsCarrierKey>,
+  cjs_carrier_wrapper_refs: FxHashSet<SymbolRef>,
   synthetic_statements: IndexVec<OrderSyntheticStmtIdx, OrderSyntheticStmt>,
   synthetic_statements_by_chunk: FxHashMap<ChunkIdx, Vec<OrderSyntheticStmtIdx>>,
   import_overlays: FxHashMap<OrderImportKey, OrderImportOverlay>,
@@ -171,11 +188,25 @@ pub struct OrderWrappedModule {
   pub wrapper_ref: SymbolRef,
   pub wrapper_statement: Option<OrderSyntheticStmtIdx>,
   pub chunk: Option<ChunkIdx>,
-  pub reexport_init_transparent: bool,
+}
+
+pub struct OrderCjsCarrierKey {
+  pub importer: ModuleIdx,
+  pub record: ImportRecordIdx,
+}
+
+pub struct OrderCjsCarrier {
+  pub importee: ModuleIdx,
+  pub wrapper_ref: SymbolRef,
+  pub namespace_ref: SymbolRef,
+  pub wrapper_statement: Option<OrderSyntheticStmtIdx>,
+  pub chunk: Option<ChunkIdx>,
+  pub eager: bool,
+  pub needs_to_esm: bool,
+  pub is_node_mode: bool,
 }
 
 pub struct OrderSyntheticStmt {
-  pub owner: ModuleIdx,
   pub declared_symbols: Vec<TaggedSymbolRef>,
   pub referenced_symbols: Vec<SymbolRef>,
   pub runtime_helpers: RuntimeHelper,
@@ -200,13 +231,14 @@ pub struct OrderImportOverlay {
 
 `OrderWrapState` 是这些顺序下推字段的唯一拥有者。辅助视图可以借用它，但数据不会镜像到 `LinkingMetadata` 中。
 
-- 顺序包装器符号和位置归属于顺序状态，而不是 `LinkingMetadata`；
+- 顺序包装器的符号和放置属于顺序状态，而非 `LinkingMetadata`；
+- 每个导入记录的 CJS carrier、其命名空间符号以及其 importee 所在 chunk 的放置属于顺序状态；
 - 顺序状态不包含可变的用户语句包含关系；
-- 与 importer 相关的引用和运行时辅助工具归属于 `import_overlays`，而不是原始 `StmtInfo`；
-- 通过显式的合成语句 API 参与 chunk 分配和冲突消解，合成声明带有用于 chunk 渲染的二级索引；
-- entry facade 是调用方在下推后显式做出的 chunk 图更改，而所需的运行时符号则从合成语句和 import overlay 中推导；
-- 命名空间需求会保留当前仍然需要各命名空间的活跃 importer 模块，因此一个失活的 overlay 不会让命名空间继续存活；
-- 嵌套 re-export 记录和已消费 facade 保留了用于 re-export 初始化路由的冻结 tree-shaking 决策；
+- 面向特定 importer 的引用和运行时辅助工具属于 `import_overlays`，而非原始的 `StmtInfo`；
+- 合成声明通过显式的合成语句 API 参与 chunk 分配和冲突消解，并通过用于 chunk 渲染的辅助索引进行管理；声明不必与其符号所有者的模块共用同一个模块 chunk，因为 CJS carrier 符号会被有意地放置在 CJS importee 旁边；
+- entry facade 是调用方在下推后显式进行的 chunk 图变更，而所需的运行时符号则从合成语句和 import overlay 中推导；
+- 命名空间需求会保留需要每个命名空间的存活 importer 模块，因此已死亡的 overlay 不会使命名空间保持存活；
+- 嵌套 re-export 记录和已消费的 facade 会保留 re-export 初始化路由所使用的冻结 tree-shaking 决策；
 - 当不需要包装器或 import overlay 时，该表保持为空。
 
 ### 下推 API 边界
@@ -225,6 +257,8 @@ pub struct OrderLoweringInput<'a> {
   pub star_reexport_records_by_imported_symbol:
     &'a FxHashMap<SymbolRef, Vec<Vec<(ModuleIdx, ImportRecordIdx)>>>,
   pub used_symbols: &'a UsedSymbolRefsBuilder,
+  pub cyclic_modules: &'a FxHashSet<ModuleIdx>,
+  pub tree_shaking: bool,
 }
 
 pub struct OrderLoweringOutput<'a> {
@@ -248,7 +282,7 @@ pub struct FinalEsmInitMetadata {
 
 struct ModuleEsmInitMetadata {
   init_is_noop: bool,
-  transitive_init_targets: FxHashMap<StmtInfoIdx, Vec<ModuleIdx>>,
+  transitive_init_targets: FxHashMap<StmtInfoIdx, Vec<WrappedEsmInitTarget>>,
 }
 
 fn compute_wrapped_esm_init_metadata(/* ... */) -> Sealed<FinalEsmInitMetadata>;
@@ -260,10 +294,11 @@ fn compute_wrapped_esm_init_metadata(/* ... */) -> Sealed<FinalEsmInitMetadata>;
 
 ### 共享初始化目标视图
 
-最终化和跨 chunk 链接需要处理两种懒初始化来源：
+最终化和跨 chunk 链接需要处理三种延迟初始化来源：
 
 1. 来自 `LinkingMetadata` 的 interop ESM 包装器；
-2. 来自 `OrderWrapState` 的顺序包装器。
+2. 来自 `OrderWrapState` 的顺序包装器；
+3. 来自 `OrderWrapState` 为每个记录生成的 CJS carrier。
 
 它们使用只读视图，而不是测试一个有效的 `WrapKind`：
 
@@ -278,9 +313,14 @@ pub enum EsmInitOrigin {
   Interop,
   ExecutionOrder,
 }
+
+pub enum WrappedEsmInitTarget {
+  Module(ModuleIdx),
+  CjsCarrier(OrderCjsCarrierKey),
+}
 ```
 
-访问器对某个模块至多解析一个 ESM 初始化目标。interop ESM 包装具有优先级，因为一个已经被 interop 包装的模块会由那个已有包装器来表示；顺序规划器会选择一个可用承载者，而不是再添加第二个包装器。该视图只携带结构性的包装器身份；最终的 no-op 和被排除语句事实来自 `FinalEsmInitMetadata`。
+一个访问器至多为一个模块解析出一个 ESM 初始化目标。interop ESM 包装优先，因为已经经过 interop 包装的模块由现有包装器表示；顺序规划器会选择一个符合条件的 carrier，而不是再添加第二个包装器。记录路由返回 `WrappedEsmInitTarget`，因此 Emit、Register、Project 和预 chunk 放置会一致地判断一项义务指向模块包装器还是 CJS carrier。模块视图只携带结构性的包装器身份；最终的 no-op 和被排除语句事实来自 `FinalEsmInitMetadata`。
 
 ### 合成符号包含
 
@@ -300,7 +340,8 @@ pub enum EsmInitOrigin {
 - importer 和 importee 的命名空间需求；
 - 直接和传递性的初始化义务。
 
-最终化和跨 chunk 链接会结合不可变的原始 import 记录读取 overlay。tree shaking 和用户语句包含关系从不读取它。
+最终化和跨 chunk 链接会将 overlay 与不可变的原始导入记录一同读取。Tree shaking 和用户语句包含逻辑永远不会读取它。
+对于非空的保留路径，overlay 只保留命名空间/运行时粘合逻辑，不会单独引用直接包装器；共享的已解析目标列表是生成调用和跨 chunk 注册的唯一来源。
 
 ### 最终化器
 
@@ -314,9 +355,9 @@ pub enum EsmInitOrigin {
 
 被移除的用户 import/re-export 语句会和任何匹配的 `OrderImportOverlay` 一起最终化。最终化器可能会在被移除语句的源码位置发出一个合成初始化或 re-export 表达式，但不会恢复原始语句。
 
-### 入口序言
+### 完整的消费者本地命名空间和 entry 前导代码
 
-入口渲染使用与模块最终化相同的初始化目标视图。顺序包装的入口会发出显式的初始化调用。内部使用的 interop 入口也会在其公开 facade 后保留一个无作用的实现 chunk。
+下推会为每条消费者本地路由预先计算完整且按源码顺序排列的命名空间目标列表。被包含的 import/re-export 记录会通过 importer 本地解析器进行路由，即使该路由同时具有链接阶段的 interop 包装器；对于命名空间已物化的被排除 `export *` 记录，则使用最终元数据中的缓存完整列表。两条路径都会让调用保持在消费方单体包装器的执行守卫内，并处于 re-export 记录的源码位置。entry 渲染和折叠的动态 entry 调用点激活会使用同一列表：消费者本地的 barrel entry 不能调用其有意为空的共享包装器，因此其前导代码或重写后的 `import()` 调用会改为调用每个命名空间目标。对于跨 chunk 重写，宿主 chunk 会在模拟命名空间旁导入并重新导出每个目标包装器/carrier；回调会按列表顺序调用它们，然后返回该命名空间。其他顺序包装的 entry 会发出显式初始化调用，而内部使用的 interop entry 则会在其公共 facade 后保留一个惰性的实现 chunk。
 
 ### 拓扑
 
@@ -325,32 +366,35 @@ pub enum EsmInitOrigin {
 ## 数据流
 
 ```text
-链接 + tree shaking
+链接 + 树摇
   -> 不可变的 LinkingMetadata 和执行依赖
+  -> chunk 前消费者本地探测 + 导入者本地 entry 位传播
   -> 临时 ChunkGraph
   -> OrderAnalysis / OrderWrapPlan
   -> 将计划降级为 OrderWrapState + 最终 ChunkGraph
   -> 使用 LinkingMetadata + OrderWrapState 计算 Sealed<FinalEsmInitMetadata>
   -> 使用 EsmInitTarget + Sealed<FinalEsmInitMetadata> 计算跨 chunk 链接
-  -> 使用显式 interop/order wrapper 情况 + Sealed<FinalEsmInitMetadata> 完成模块最终化
-  -> 使用共享的 EsmInitTarget 视图渲染入口 prologue
+  -> 使用显式互操作/顺序包装情况 + Sealed<FinalEsmInitMetadata> 完成模块最终化
+  -> 使用共享的 EsmInitTarget 视图渲染入口序言
 ```
 
 ## 不变式
 
-- 任何生成阶段调用都不能更改 `LinkingMetadata::wrap_kind()`。
-- 任何顺序下调调用都不能设置用户语句包含位。
-- 每个顺序包装器恰好有一个符号所有者和一个渲染块。
-- 每个合成声明都参与符号到块的分配和去冲突。
-- 每个导入叠层都由不可变的链接阶段执行依赖或保留的重新导出契约提供支持。
-- 每个合成的 init 调用都引用一个可达的互操作或顺序包装器。
-- 计划中的静态块 SCC 包含该 SCC 中每个符合条件的顺序敏感模块。
-- 每个普通导入 init 义务都对应一个链接阶段执行依赖。
-- 每个被排除语句的 init 义务要么是保留的重新导出义务，要么是由执行依赖支持的合成义务。
-- 最终的跨块注册和最终化器发射要求相同的 `Sealed<FinalEsmInitMetadata>` 类型；预最终投影不能提供该类型，也不会消耗最终元数据。
-- wrap-all 和 on-demand 保持相同的链接阶段语句和绑定活性；只有它们的包装器计划可能不同。
-- 每个顺序包装的入口都具有显式的入口触发器。
-- 关闭标志的构建不会创建任何顺序包装器或仅严格模式的入口面板。
+- 没有任何 generate 阶段调用可以改变 `LinkingMetadata::wrap_kind()`。
+- 没有任何 order-lowering 调用可以设置用户语句包含位。
+- 每个 order wrapper 恰好有一个符号所有者和一个渲染块。
+- 每个 CJS 重新导出载体都由一个导入器记录作为键，并渲染在其 CJS 被导入模块所在的块中。
+- 每个合成声明都参与符号到块的分配和消歧。
+- 每个导入覆盖层都有不可变的 link 阶段执行依赖或保留的重新导出契约作为支撑。
+- 每个合成的初始化调用都引用一个可达的互操作包装器或 order wrapper。
+- 规划中的静态块 SCC 包含该 SCC 中每个符合条件的顺序敏感模块。
+- 每个普通导入初始化义务都对应一个 link 阶段执行依赖。
+- 每个被排除语句的初始化义务，要么是保留的重新导出义务，要么是由执行依赖支撑的合成义务。
+- 跨块最终注册和终结器发射要求使用相同的 `Sealed<FinalEsmInitMetadata>` 类型；预最终投影无法提供该类型，也不会消费最终元数据。
+- wrap-all 和按需模式保留相同的 link 阶段语句和绑定存活性；只有它们的包装器计划可以不同。
+- Emit、Register、Project 和 pre-chunk 放置通过相同的目标模型解析使用者本地记录。
+- 每个被 order-wrapped 的入口都有显式的入口触发器。
+- 关闭标志的构建不会创建任何 order wrapper 或仅限严格模式的入口外观。
 
 ## 验证
 
