@@ -19,3 +19,57 @@ return {
   map: null,
 };
 ```
+
+## 转换代码块
+
+要转换代码块，可以使用 [`renderChunk`](/reference/Interface.Plugin#renderchunk)。如果返回所应用转换的源映射，Rolldown 会将该映射与之前的转换组合起来，并根据以下选项重新构建 `x_google_ignoreList` 字段：
+
+```js
+import MagicString from 'magic-string';
+
+export default function myPlugin() {
+  return {
+    name: 'example',
+    renderChunk(code) {
+      const s = new MagicString(code);
+      s.prepend('/* banner */\n');
+      return { code: s.toString(), map: s.generateMap({ hires: 'boundary' }) };
+    },
+  };
+}
+```
+
+我们不建议在 [`generateBundle`](/reference/Interface.Plugin#generatebundle) 中进行转换。它在哈希处理之后运行，因此输出文件名会保留未转换代码的哈希值。它也在构建 `.map` 资源之后运行，因此编辑 `chunk.map` 不会更改该文件。话虽如此，如果必须在那里进行转换，请组合源映射并自行写入资源：
+
+```js
+import remapping from '@jridgewell/remapping';
+import MagicString from 'magic-string';
+
+export default function myPlugin() {
+  return {
+    name: 'example',
+    generateBundle(options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== 'chunk') continue;
+
+        const s = new MagicString(chunk.code);
+        // ...你的转换...
+        if (!s.hasChanged()) continue;
+
+        // 低分辨率映射可能会组合为空，因此请保留边界处的映射。
+        const step = s.generateMap({ source: chunk.fileName, hires: 'boundary' });
+        chunk.code = s.toString();
+
+        if (chunk.map) {
+          // 组合源映射
+          chunk.map = remapping([step, chunk.map], () => null);
+
+          // 输出文件来自此资源，而不是来自 `chunk.map`。
+          const asset = bundle[`${chunk.fileName}.map`];
+          if (asset) asset.source = chunk.map.toString();
+        }
+      }
+    },
+  };
+}
+```

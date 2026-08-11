@@ -53,9 +53,9 @@ export default defineConfig({
 
 :::
 
-::: warning Hook Filters
+::: warning 钩子过滤器
 
-为了简单起见，这个示例插件没有使用 [Hook Filters](/apis/plugin-api/hook-filters)。
+为了简单起见，这个示例插件没有使用 [钩子过滤器](/apis/plugin-api/hook-filters)。
 为了提升性能，建议在可能时使用它们。
 
 :::
@@ -281,4 +281,13 @@ Rollup 支持但 Rolldown 不支持的输出生成钩子如下：
 
 在 Rollup 中，某些钩子如 [`writeBundle`](/reference/Interface.FunctionPluginHooks#writebundle) 默认是“并行”的，这意味着它们会在多个插件之间并发运行。如果插件需要按顺序逐个执行这些钩子，就必须显式设置 `sequential: true`。
 
-在 Rolldown 中，[`writeBundle`](/reference/Interface.FunctionPluginHooks#writebundle) 钩子默认已经是顺序执行的，因此插件不需要为此钩子指定 `sequential: true`。
+在 Rolldown 中，[`writeBundle`](/reference/Interface.FunctionPluginHooks#writebundle) 钩子默认已经是顺序执行的，因此插件无需为此钩子指定 `sequential: true`。
+
+### Sourcemap 验证
+
+Rollup 不会根据插件 sourcemap 自身的 `sources` 和 `names` 对其进行检查。指向缺失源的映射会被丢弃。指向缺失名称的映射会被保留，但不包含该名称。Rolldown 在将映射转换为内部表示时会检查每个索引。因此，Rollup 可以接受的无效映射可能会导致此处构建失败。例如：
+
+```
+Failed to convert json sourcemap to struct
+Reference to non-existing source at position 1
+```

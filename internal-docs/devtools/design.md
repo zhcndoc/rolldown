@@ -172,12 +172,11 @@ tokio::spawn(sub_task);
 
 ## 未解决的问题
 
-- **输出位置：** 目前硬编码为相对于真实 `process.cwd()` 的 `node_modules/.rolldown/`，而不是 `InputOptions.cwd`。这意味着如果 cwd 不同，devtools 输出可能不会落在预期位置。
-- **增量/监听模式：** devtools 系统同时适用于 `ClassicBundler`（一次性）和核心 `Bundler`（增量），但在同一会话中的连续构建会追加到同一个 `logs.json`。目前还没有明确的“重建边界”动作。
-- **开发引擎集成：** `BindingDevEngine` 会创建一个 session，但使用的是 `Session::dummy()` —— devtools 目前还没有接入 dev/HMR 引擎。
+- **增量/监听模式：** devtools 系统同时适用于 `ClassicBundler`（一次性构建）和核心 `Bundler`（增量构建），但同一会话中的连续构建会追加到同一个 `logs.json`。目前还不存在明确的“重建边界”操作。
+- **开发引擎集成：** `BindingDevEngine` 创建了一个会话，但使用的是 `Session::dummy()` —— devtools 尚未接入开发/HMR 引擎。
 
 ## 相关内容
 
 - [implementation.md](./implementation.md) — devtools 实现映射
 - [rust-classic-bundler](../rust-classic-bundler/implementation.md) — ClassicBundler 设计，引用了 devtools 的 session/tracer 字段
-- [rust-bundler](../rust-bundler/implementation.md) — 核心 Bundler 设计，引用了 session 字段
+- [rust-bundler](../rust-bundler/implementation.md) — 核心 Bundler 设计，引用了 session 字段。
