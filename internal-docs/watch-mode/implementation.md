@@ -67,7 +67,7 @@ watcher.close().await?;  // 发送 Close，等待完成
 ### 与 Rollup 的已知差异
 
 | 方面               | Rollup                     | Rolldown               | 原因                                                              |
-| ------------------ | -------------------------- | ---------------------- | ------------------------------------------------------------------- |
+| ------------------ | -------------------------- | ---------------------- | ----------------------------------------------------------------- |
 | 每个 output 一个 bundler | 一个 build，多次写入 | 每个 output 一个 bundler | 架构约束 — Rolldown 的 bundler 拥有完整流水线 |
 | `buildStart` 调用   | 每个 config 一次           | 每个 output 一次        | 每个 output 一个 bundler 的结果                               |
 | 模块图共享         | 各 output 共享             | 每个 output 独立        | 未来可能会改变                                            |
@@ -86,13 +86,13 @@ Watcher（公共 API）
                                └── tasks: IndexVec<WatchTaskIdx, WatchTask>
                                     ├── WatchTask 0
                                     │   ├── bundler: Arc<TokioMutex<Bundler>>
-                                    │   ├── fs_watcher: DynFsWatcher（拥有，按 task）
+                                    │   ├── fs_watcher: FsWatcher (owned, per-task)
                                     │   ├── watched_files: FxDashSet<ArcStr>
                                     │   └── needs_rebuild: bool
                                     └── WatchTask N ...
 
-数据流：
-  DynFsWatcher ──(TaskFsEventHandler: 将 notify 事件映射为 FileChangeEvent)──→ WatcherMsg::FileChanges ──→ WatchCoordinator
+Data flow:
+  FsWatcher ──(TaskFsEventHandler: maps notify events → FileChangeEvent)──→ WatcherMsg::FileChanges ──→ WatchCoordinator
   WatchCoordinator ──→ dispatch_event / dispatch_change / dispatch_restart
                          └── await_handler_or_close()
                                ├── handler.on_*().await ──→ Consumer（NAPI/Rust）
@@ -101,10 +101,10 @@ Watcher（公共 API）
 
 **所有权规则：**
 
-- `Watcher` 只持有生命周期状态（`tx`、关闭信号和 `coordinator_state`）——轻量，不直接访问 bundler。
-- `WatchCoordinator` 拥有所有可变状态。没有外部修改。
-- 每个 `WatchTask` 都拥有自己的 `DynFsWatcher`。每个 task 独立的 watcher 集合意味着更清晰的所有权和更简单的设计。
-- Bundler 使用 `Arc<TokioMutex<>>`，因为事件数据结构会携带一个克隆供消费者访问（例如 `BUNDLE_END.result`）。
+- `Watcher` only holds lifecycle state (`tx`, the close signal, and `coordinator_state`) — lightweight, no bundler access.
+- `WatchCoordinator` owns ALL mutable state. No external mutation.
+- Each `WatchTask` owns its `FsWatcher`. Per-task watchers mean isolated watch sets and simpler ownership.
+- Bundler is `Arc<TokioMutex<>>` because event data structs carry a clone for consumer access (e.g. `BUNDLE_END.result`).
 
 ### 三层栈
 
@@ -135,7 +135,18 @@ rolldown_watcher/
 ├── event.rs                   // WatchEvent、BundleStartEventData、BundleEndEventData、WatchErrorEventData
 ├── file_change_event.rs       // FileChangeEvent（path + kind）
 ├── watcher_state.rs           // WatcherState enum + transitions
-└── watcher_msg.rs             // WatcherMsg enum（FileChanges、Close）
+└── watcher_msg.rs             // WatcherMsg enum (FileChanges, Close)
+
+rolldown_fs_watcher/
+├── lib.rs                     // 公共导出：FsWatcher、FsWatcherConfig、FsEvent*
+├── config.rs                  // FsWatcherConfig（enabled、use_polling、use_debounce、…）
+├── event.rs                   // FsEvent、FsEventHandler、FsEventResult
+├── watcher.rs                 // 公共 FsWatcher + 内部 WatcherBackend + PathsMut
+└── notify/
+    ├── mod.rs                 // create_backend() — 根据配置选择后端
+    ├── immediate.rs           // recommended / poll，无 debounce
+    ├── debounced.rs           // recommended / poll + notify-debouncer-full
+    └── noop.rs                // enabled: false 时的 no-op 后端
 ```
 
 ## 状态机
@@ -166,8 +177,8 @@ enum WatcherState {
 
 存在两种可能的去抖层：
 
-1. **协调器层**（`WatcherState::Debouncing`）——在触发重建之前，跨文件批量收集文件变更。由 `buildDelay` 控制。这是主要机制。
-2. **Fs-watcher 层**（`notify-debouncer-full`）——对同一文件的快速 OS 级事件进行去重（例如在一次保存中多次写入的编辑器）。可在 `rolldown_fs_watcher` 中使用，但 watcher 默认未启用。
+1. **Coordinator-level** (`WatcherState::Debouncing`) — 在触发重新构建前跨文件批处理文件变更。由 `buildDelay` 控制。这是主要机制。
+2. **Fs-watcher-level** (`notify-debouncer-full`) — 对同一文件的快速操作系统级事件进行去重（例如编辑器每次保存时多次写入）。默认关闭。Watch 模式通过 `watch.watcher.useDebounce`（`FsWatcherConfig.use_debounce`）启用它。
 
 默认情况下仅启用协调器层去抖。这与 Rollup 一致，后者在 chokidar 之上自行实现 `setTimeout`/`clearTimeout` 去抖（chokidar 没有 debounce 选项——只有用于写入完成检测的 `awaitWriteFinish`）。
 
@@ -206,7 +217,7 @@ this.buildTimeout = setTimeout(() => {
 
 这很重要，因为插件会在 `watchChange` 钩子中接收到 `WatcherChangeKind`，并且可能根据文件是“创建”还是“修改”而采取不同行为。
 
-Fs-watcher 层（`notify-debouncer-full`）也可作为需要 OS 级事件去重的用户选项（噪声较多的编辑器、网络驱动器），通过 `watch.watcher` 选项（`usePolling` / `pollInterval`）暴露。两层同时使用会增加延迟并使时序更难推理，因此默认不启用。
+Fs-watcher 层（`notify-debouncer-full`）可作为选项提供给需要操作系统级事件去重的用户（嘈杂的编辑器、网络驱动器），通过 `watch.watcher.useDebounce`（`debounceDelay` / `debounceTickRate`）暴露。Polling 是单独的后端选择（`usePolling` / `pollInterval`）。同时使用两层 debounce 会增加延迟，并使时序更难理解，因此 fs-level debounce 默认不启用。
 
 ### 默认延迟
 
@@ -296,12 +307,29 @@ watch 模式下的插件上下文新增：
 ## 文件监听
 
 - 每次构建后，`bundler.watch_files()` 返回当前集合。
-- `WatchTask::update_watch_files()` 与当前集合做 diff——新增文件会被加入到每个任务的 `DynFsWatcher`。
-- `include`/`exclude` 模式会过滤哪些文件会被监听（通过 `pattern_filter`）。
-- 文件监听是**非递归**的（逐个文件监听）。
+- `WatchTask::update_watch_files()` 会与当前集合进行差异比较——新文件会被添加到每个任务的 `FsWatcher` 中。
+- `include`/`exclude` 模式会过滤要监听的文件（通过 `pattern_filter`）。
+- 文件会以**非递归**方式监听（单独监听每个文件）。
 - 批量操作：`fs_watcher.paths_mut()` 返回一个用于批量添加的 guard，通过 `.commit()` 提交。
 
-### watch 模式下的分阶段构建
+### 后端选择
+
+每个 `WatchTask` 都会使用 `FsWatcher::new(handler, &config)` 创建自己的 watcher。
+`FsWatcher` 是一个具体类型；notify 的实现保持 crate 私有。
+`WatcherConfig::to_fs_watcher_config()` 会将 watch 选项映射到 `FsWatcherConfig`，
+构造时会选择对应后端：
+
+| `use_polling` | `use_debounce` | 后端                               |
+| ------------- | -------------- | ------------------------------------- |
+| false         | false          | notify `RecommendedWatcher`（默认） |
+| true          | false          | notify `PollWatcher`                  |
+| false         | true           | debounced `RecommendedWatcher`        |
+| true          | true           | debounced `PollWatcher`               |
+
+Watch 模式将 `enabled` 保持为默认值（`true`）。no-op 后端是 dev-engine
+关注的内容（`disable_watcher` → `FsWatcherConfig.enabled: false`）。
+
+### Watch 模式下的分阶段构建
 
 `Bundler::write()` 会原子地执行 scan → render → write。但 watcher 需要在 scan 和 write 之间为发现的文件注册文件系统监听——否则 render hooks 期间所做的更改（例如 `renderStart` 修改某个文件）会被遗漏，因为此时 FS watcher 还没开始监听。
 
@@ -320,6 +348,9 @@ watcher 使用 `Bundler::with_cached_bundle_experimental()` 获取 `&mut Bundle`
 当某个 import 解析到一个不存在的文件时，构建会报错。watch 模式依赖于在每次重新构建前清空 resolver 缓存（`bundler.clear_resolver_cache()`）。预期的恢复流程是：创建缺失文件，然后手动编辑一个已监听的文件（例如对 importer 做一次无操作编辑）以触发重新构建。resolver 会用新缓存重新评估该 import，并成功解析。这与 Rollup 的行为一致——Rollup 只监听已成功加载的模块。
 
 ### Notify 事件映射
+
+与 bundled dev 共享，通过 `rolldown_fs_watcher::map_notify_event` 实现。
+不要在 `rolldown_dev` 或 `rolldown_watcher` 中重新实现此表。
 
 ```
 notify::EventKind::Create(_)                              → WatcherChangeKind::Create
@@ -428,13 +459,16 @@ WatchCoordinator.run_build_sequence()
 
 ```typescript
 interface WatcherOptions {
-  skipWrite?: boolean; // 跳过 bundle.write()。默认值：false
-  buildDelay?: number; // 防抖延迟，单位毫秒。默认值：0
+  skipWrite?: boolean; // Skip bundle.write(). Default: false
+  buildDelay?: number; // Coordinator debounce ms. Default: 0
   watcher?: {
-    usePolling?: boolean; // 使用轮询后端。默认值：false
-    pollInterval?: number; // 轮询间隔，单位毫秒。默认值：100
+    usePolling?: boolean; // Use polling backend. Default: false
+    pollInterval?: number; // Polling interval ms. Default: 100
+    compareContentsForPolling?: boolean; // Default: false
+    useDebounce?: boolean; // FS-level debounce. Default: false
+    debounceDelay?: number; // FS-level debounce delay ms. Default: 10
+    debounceTickRate?: number; // Debouncer tick rate ms. Default: auto
   };
-  notify?: { ... }; // 已弃用 — 改用 `watcher`
   include?: StringOrRegExp | StringOrRegExp[];
   exclude?: StringOrRegExp | StringOrRegExp[];
   onInvalidate?: (id: string) => void;
@@ -477,12 +511,12 @@ ROLLDOWN_WATCH=true  // Rolldown 特有
 
 ## 相关
 
-- [design.md](./design.md) — 监视模式的设计原则和未解决问题
-- [rust-bundler](../rust-bundler/implementation.md) — 核心 Bundler 结构体和 `Bundle.close()` 设计
-- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — Rollup API 兼容性封装
-- [module-id](../module-id/implementation.md) — 模块 ID、路径标识和规范化
-- [#6482](https://github.com/rolldown/rolldown/issues/6482) — 监视模式问题集合（跟踪所有已知 bug）
+- [design.md](./design.md) — watch 模式设计原则和开放问题
+- [rust-bundler](../rust-bundler/implementation.md) — Core Bundler 结构和 `Bundle.close()` 设计
+- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — Rollup API 兼容性包装器
+- [module-id](../module-id/implementation.md) — Module ID、路径身份和规范化
+- [#6482](https://github.com/rolldown/rolldown/issues/6482) — Watch 模式问题集合（跟踪所有已知 bug）
 - `crates/rolldown_watcher/` — 实现
-- `crates/rolldown_fs_watcher/` — 基于 `notify` 的文件系统监视抽象
-- `crates/rolldown_dev/` — 开发模式，采用相同的 actor 模式作为参考
+- `crates/rolldown_fs_watcher/` — 一个公共的 `FsWatcher`；notify 后端保持私有
+- `crates/rolldown_dev/` — Dev 模式，使用相同的 actor 模式作为参考
 - `packages/rolldown/src/api/watch/` — TypeScript API 层

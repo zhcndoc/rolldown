@@ -726,6 +726,7 @@ impl GenerateStage<'_> {
     };
     let metas = &self.link_output.metas;
     let module_table = &self.link_output.module_table;
+    let merged: FxHashSet<ModuleIdx> = modules.iter().copied().collect();
 
     let entry_exports = &metas[entry_module_idx].resolved_exports;
 
@@ -742,6 +743,15 @@ impl GenerateStage<'_> {
       // 1. The module has no exports (empty resolved_exports)
       // 2. All of the module's exports point to symbols that the entry also exports
       module_meta.resolved_exports.iter().all(|(export_name, resolved_export)| {
+        // Judge by the symbol consumers are actually served: `canonical_ref_resolving_namespace`
+        // redirects a CJS re-export facade to the namespace it aliases. Stopping at
+        // `canonical_ref_for` would let an alias whose namespace lives inside the merged set slip
+        // past as "owned elsewhere" while the merge does move that namespace into the entry chunk.
+        let canonical_ref =
+          self.link_output.symbol_db.canonical_ref_resolving_namespace(resolved_export.symbol_ref);
+        if !merged.contains(&canonical_ref.owner) {
+          return true;
+        }
         // Check if the entry has an export with the same name that resolves to the same symbol
         entry_exports
           .get(export_name)
@@ -981,7 +991,7 @@ impl GenerateStage<'_> {
     input_base: &ArcStr,
     module_is_assigned: &mut IndexBitSet<ModuleIdx>,
     temp_chunk_opt_graph: &ChunkOptimizationGraph,
-    used_symbol_refs: &mut UsedSymbolRefsBuilder,
+    used_symbol_refs_builder: &mut UsedSymbolRefsBuilder,
   ) {
     // Find empty dynamic entry chunks that should be merged with their target common chunks
     let (mut facade_eliminations, common_chunk_merges, emitted_chunk_groups) =
@@ -1001,12 +1011,15 @@ impl GenerateStage<'_> {
     );
 
     for elimination in &facade_eliminations {
-      self.narrow_namespace_stmt_to_used_symbols(elimination.entry_module_idx, used_symbol_refs);
+      self.narrow_namespace_stmt_to_used_symbols(
+        elimination.entry_module_idx,
+        used_symbol_refs_builder,
+      );
     }
 
     let mut runtime_dependent_chunks = FxHashSet::default();
 
-    self.replay_link_stage_inclusion(used_symbol_refs, |context| {
+    self.replay_link_stage_inclusion(used_symbol_refs_builder, |context| {
       let mut needs_export_all_helper = false;
       for elimination in &facade_eliminations {
         let FacadeChunkElimination { reason, entry_module_idx, from_chunk_idx, to_chunk_idx } =

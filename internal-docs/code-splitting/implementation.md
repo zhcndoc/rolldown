@@ -144,7 +144,17 @@ entry_index 2  →  plugin.js       →  bit 2  →  ChunkIdx(2)
 
 该阶段会根据模块当前的依赖入口位集将模块分组成临时原子，计算每个入口静态加载的原子，然后对动态导入运行固定点传播。某个动态入口的已加载原子是所有能够到达其所包含动态导入者的入口的静态原子与已加载原子的交集。对于某个动态入口已加载的任何原子都可以移除该动态入口位，然后在正常 chunk 创建期间，模块会根据缩减后的位集重新分组。
 
-当缩减后的位集会将某个原子放入一个仅由动态导入的单一入口 chunk 时，缩减不会受到 `preserveEntrySignatures` 的限制。如果每个动态导入者都只从命名空间中读取静态已知的导出子集（`DynamicImportExportsUsage::Partial`），则额外的导出是不可观测的，该原子会原样合并，无需额外的中间命名空间。否则，由于我们控制该 chunk 的所有动态导入者，因此会在 chunk 内生成一个合成命名空间，并将其用作导入者代码中的“导入命名空间”（`import("./chunk.js").then((n) => n.<ns>)`）。如果存在 `then` 导出，或存在动态/外部的 `export * from`，则会放弃处理。该重写还要求由打包器控制导出命名，因此在 `preserveModules` 启用或 `minifyInternalExports` 关闭时会被禁用。
+入口可达性和无环性检查都根据静态导入发射将产生的预测来计算，但它们使用的是两个不同的图，其安全近似指向相反的方向。可达性图绝不能声称存在发射 chunk 中没有的边（否则可能会将副作用错误地跳过，认为其“已经加载”）；循环图则绝不能遗漏发射 chunk 中存在的边（否则折叠可能会发射出循环图）。二者共享的基础是 `predicted_static_import_targets`：被引用符号的所有者、有副作用的直接导入，以及有副作用的 runtime 标志。它会过滤通过 `sideEffects: false` 的 barrel 传播的传递性副作用依赖，因为这些依赖不会成为该 barrel chunk 的导入；保留它们会凭空制造循环（`optimization/chunk_merging/already_loaded_side_effectful_barrel`）。
+
+在此基础上，`entry_export_service_targets` 对 `register_entry_export_depended_symbols` 创建的导入进行建模：入口 chunk 会导入它所提供的每个存活的已解析导出的规范符号（以及重新导出的 ESM 包装器初始化），即使入口中没有任何包含的语句引用它——未使用的重新导出仍然通过对所有者 chunk 的真实导入来提供（`optimization/chunk_merging/already_loaded_entry_reexport_service_edge`）。两个图以不同方式附加这些目标。循环图会无条件地将它们附加到承载入口模块的原子上，而不设置活性门控：折叠之后 `used_symbol_refs` 仍会继续增长（namespace 提取和 facade 消除会重新执行），因此在此处已死亡的导出可能在发射时变为存活，而承载原子的归属只会造成过度近似。这种过度近似之所以成立，仅仅是因为下文所述的 facade 边：facade 依赖承载其入口模块的 chunk，而这正是服务边所附加到的同一个原子，因此 facade 上发出的每条服务边都会沿着 facade → host → target 保持可达。过去依赖的是 facade 具有零静态入度，但当折叠可以为 facade 提供模块后，这一条件就不再成立：将一个原子折叠进入口 chunk，而该入口模块位于共享 chunk 中，会填充该 facade，从而为它提供静态入度。因此，`reduced_atom_graph_has_static_cycle` 会在原子图上添加匹配的出边——每个入口模块由其他位置承载的入口 chunk 都依赖其承载 chunk，以便运行它并重新导出其接口；没有这条边，折叠可能会产生一个以错误顺序求值的 chunk 循环（[#10734](https://github.com/rolldown/rolldown/issues/10734)）。可达性图会根据决策时的活性附加这些目标——活性单调增长，因此在此处存活的导出一定会被发射——并且仅当入口模块的原子恰好属于它自己的入口时才附加，因为发射会将服务导入挂在入口（可能是 facade）chunk 上，而不是挂在承载该模块的共享 chunk 上；将其附加到共享原子会使这些边泄漏到其他入口的闭包中。
+
+`compute_cross_chunk_links` 中的调试断言会在每次构建中，根据该阶段推导出的边协调预测函数：发射的边必须被预测到（发射所拥有的 runtime-helper 请求除外），并且预测出的有副作用的 _service_ 边必须被发射——这些目标超出了 `load_dependencies`，因此只有它们的活性门控才能保持入口可达性的准确性，而断言会验证该门控与发射保持一致。基础预测的过度预测不受这一方向约束：它们过滤的是与预测前位可达性所信任的相同 `load_dependencies` 边，因此按构造与主分支保持一致——常量内联经常会在不触碰 `load_dependencies` 的情况下消除符号导入，甚至可能使一个带注释的有副作用 chunk 变成孤立状态（`rollup@chunking form@namespace-reexport-side-effect-cache`），在主分支中也是如此。没有模块的 chunk 不属于该契约——facade 消除或吸收留下的空壳不会获得任何发射边，而一个存活的空 facade 仅有的边是发射所拥有的 facade 和服务导入，位闭包不变量会使它们避开任何静态循环。
+
+有两个被接受的残余问题。未设置门控的循环图服务边意味着，一个已死亡的入口重新导出可能会保守地否决一个本来无环的折叠——这是以避免后折叠活性增长风险为代价放弃的一次优化；目前没有 fixture 对这一代价进行量化。基础预测中的歧义分支仍会根据决策时的语句包含情况过滤有副作用的依赖，而后折叠重新执行可能会超出这一范围——这是同一形式中更窄且既存的偏差，继承自原始预测。
+
+入口可达性会从入口自己的原子沿着该图传播。在 `strictExecutionOrder` 下不会尝试精确预测：顺序下沉可能会将已链接的导入记录重新变成 `init_*` 导入，因此原子边仍使用 `dependencies`——这对于循环检查来说是安全的过度近似，但对于可达性来说并不安全，因为额外的边会声称入口已经加载了它实际上没有导入的原子。因此，该模式下的入口可达性会回退到依赖入口位（即 `load_dependencies` 可达性），保留预测前的行为。
+
+当缩减后的位集会将某个原子放入一个仅由动态导入的入口 chunk 中时，该缩减不受 `preserveEntrySignatures` 限制。如果每个动态导入者只读取 namespace 中静态已知的导出子集（`DynamicImportExportsUsage::Partial`），额外导出就是不可观察的，因此原子会直接合并，不会增加额外的中间 namespace。否则，由于我们控制该 chunk 的所有动态导入者，会在 chunk 内生成一个合成 namespace，并在导入者代码中将其用作“导入的 namespace”（`import("./chunk.js").then((n) => n.<ns>)`）。如果存在 `then` 导出，或者存在动态/外部的 `export * from`，则会退出。该重写还要求由打包器控制导出命名，因此在 `preserveModules` 下以及 `minifyInternalExports` 关闭时会禁用。
 
 每一次被接受的缩减也必须保持重分组后的静态原子图无环。“已经加载”并不总是意味着“已经初始化”：如果一个被缩减的原子被移动到一个静态导入其某个消费者的 chunk 中，ES 模块循环可能会暴露未初始化的绑定，包括 CJS 包装函数。
 
@@ -191,9 +201,9 @@ chunk 优化器会在安全时通过把公共 chunk 合并回入口 chunk 来减
 
 对于每个公共 chunk，首先将其 `bits` 转换为 chunk 索引（比特位置会直接映射到 `ChunkIdx`），然后尝试将其合并到其中一个入口 chunk。若合并会导致以下情况，则会被跳过：
 
-- **在 chunk 之间创建循环依赖** —— 通过 `would_create_circular_dependency()` 中的 BFS 检查。这比 Rollup 更严格（Rollup 只会警告但允许循环），并且与 esbuild 对静态 chunk 图无环性的强制约束一致。
-- **改变入口的导出签名** —— 当 `preserveEntrySignatures: 'strict'` 时，将模块添加到入口 chunk 会暴露原始入口未导出的符号。
-- **污染动态导入命名空间** —— 对于形成静态循环的动态入口，当非目标的待处理入口模块具有可观察导出时，不会非对称地合并。该检查使用关联的导出元数据，因此仅重新导出条目（`export * from ...`）与直接命名导出被视为相同。
+- **在 chunk 之间创建循环依赖** —— 通过 `would_create_circular_dependency()` 中的 BFS 检查。这比 Rollup 更严格（Rollup 会发出警告但允许循环），并且符合 esbuild 对无环静态 chunk 图的强制要求。
+- **改变入口的导出签名** —— 当 `preserveEntrySignatures: 'strict'` 时，向入口 chunk 添加模块会暴露原始入口未导出的符号。只有其 _规范_ 符号由被合并模块之一拥有的导出才会计入：chunk 会导出它所声明的符号，因此，将名称解析到其他位置符号的重新导出 barrel 会由持有这些所有者的 chunk 提供，而折叠该 barrel 不会增加任何内容。
+- **污染动态导入 namespace** —— 当动态入口形成静态循环且某个非目标的待处理入口模块具有可观察导出时，不会以不对称方式合并这些动态入口。该检查使用链接后的导出元数据，因此仅重新导出的入口（`export * from ...`）与直接命名导出会被同等处理。
 
 合并的权衡在于：入口 chunk 可能会包含并非所有使用该入口的消费者都需要的模块。这会增加少量不必要的代码加载，但能显著减少 chunk 数量和 HTTP 请求数。
 

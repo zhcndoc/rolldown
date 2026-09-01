@@ -54,6 +54,7 @@ $ bun add -D rolldown
 - 其他
   - Linux arm64 musl (`aarch64-unknown-linux-musl`)
   - Android arm64 (`aarch64-linux-android`)
+  - Android armv7 (`armv7-linux-androideabi`)
   - Wasm + Wasi (`wasm32-wasip1-threads`)
 
 如果你正在使用一个没有提供预构建二进制文件的平台，你有以下选项：
@@ -230,17 +231,17 @@ export default defineConfig([
 ]);
 ```
 
-## Using Plugins
+## 使用插件
 
-Rolldown's plugin API is completely consistent with Rollup's, so when using Rolldown, you can reuse most existing Rollup plugins. That said, Rolldown provides many [built-in features](./notable-features), making plugins unnecessary in many cases.
+Rolldown 的插件 API 与 Rollup 的完全一致，因此使用 Rolldown 时，你可以复用大多数现有的 Rollup 插件。不过，Rolldown 提供了许多[内置功能](./notable-features)，因此在许多情况下不需要插件。
 
-In addition, Rolldown also provides some built-in plugins for specific use cases. For more information, see [Built-in Plugins](/builtin-plugins/).
+此外，Rolldown 还为特定使用场景提供了一些内置插件。有关更多信息，请参阅[内置插件](/builtin-plugins/)。
 
-Community plugins published to npm are listed in the [Vite Plugin Registry](https://registry.vite.dev/plugins).
+发布到 npm 的社区插件列在 [Vite 插件注册表](https://registry.vite.dev/plugins)中。
 
-## Using the API
+## 使用 API
 
-Rolldown provides a JavaScript API compatible with [Rollup’s](https://rollupjs.org/javascript-api/), which separates the `input` and `output` options:
+Rolldown 提供了与 [Rollup](https://rollupjs.org/javascript-api/) 兼容的 JavaScript API，将 `input` 和 `output` 选项分开：
 
 ```js
 import { rolldown } from 'rolldown';
@@ -266,7 +267,7 @@ await bundle.write({
 });
 ```
 
-Alternatively, you can use the more concise `build` API, which accepts the same options as a config file export:
+或者，你可以使用更简洁的 `build` API，它接受与配置文件导出相同的选项：
 
 ```js
 import { build } from 'rolldown';
@@ -282,7 +283,7 @@ await build({
 
 ## 使用监听器
 
-rolldown watcher api 与 rollup 的 [watch](https://rollupjs.org/javascript-api/#rollup-watch) 兼容。
+rolldown watcher API 与 rollup 的 [watch](https://rollupjs.org/javascript-api/#rollup-watch) 兼容。
 
 ```js
 import { watch } from 'rolldown';

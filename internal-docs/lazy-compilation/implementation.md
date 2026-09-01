@@ -93,7 +93,7 @@ Entry
 
 ### 链接阶段合成的导出（JSON、text、base64、dataurl）
 
-那些在链接时合成导出的模块在**懒加载 chunk 内部是坏掉的**（以及 HMR 补丁中也是如此）：JSON/text/base64/dataurl 模块会被扫描为一个裸表达式语句，`ExportsKind::None`，而 `export default` 仅由链接阶段的 `generate_lazy_export` 生成——但懒加载/HMR 渲染路径从不会执行这一步（它们渲染的是原始的扫描期 AST 克隆）。懒加载 chunk 会将它们注册为 `registerModule(id, {})`，因此导入者在**首次懒加载时会看到空导出**；而在后台重新构建 + 刷新页面之后，完整构建会应用该转换，同样的导入就能正常工作。目前还没有 playground fixture 覆盖这一点。
+在链接阶段合成导出的模块在懒 chunk（以及 HMR 补丁）中存在问题：JSON/text/base64/dataurl 模块会以 `ExportsKind::None` 作为裸表达式语句进行扫描，而 `export default` 仅由链接阶段的 `generate_lazy_export` 生成——但懒加载/HMR 渲染路径不会运行该阶段（它渲染的是扫描阶段 AST 的原始克隆）。懒 chunk 会以没有导出持有者的形式注册这些模块——`registerModule(id)`，运行时会将其填充为 `{ exports: {} }`——因此导入方在首次懒加载时看到的是**空导出**；后台重建并刷新页面后，完整构建会应用转换，同一个导入才会正常工作。目前还没有 playground fixture 覆盖这一情况。
 
 ### CSS
 
@@ -452,7 +452,7 @@ var __rolldown_exports__ = __rolldown_runtime__.__exportAll({
 
 **问题**：当懒编译模块初始化时抛出错误，该错误会作为未处理的 rejection 泄漏，而不是在消费者的 `await import(...)` 处暴露。
 
-**解决方案**：stub 模板等待的是**重新注册后的代理自身的 `'rolldown:exports'` Promise**（`return await loadExports($STABLE_PROXY_MODULE_ID)['rolldown:exports']`），而不是直接返回命名空间——因此链路中任意一处的 rejection 都会拒绝 `lazyExports` 和消费者的导入 Promise。由两个 lazy-init-error 规范（冷路径和热路径）固定。
+**解决方案**：stub 模板等待的是**重新注册后的代理自身的 `'rolldown:exports' Promise`**（`return await loadExports($STABLE_PROXY_MODULE_ID)['rolldown:exports']`），而不是直接返回命名空间——因此链路中任意一处的 rejection 都会拒绝 `lazyExports` 和消费者的导入 Promise。由两个 lazy-init-error 规范（冷路径和热路径）固定。
 
 ### 问题 11：`export * as ns from` 不是 `export * from`
 

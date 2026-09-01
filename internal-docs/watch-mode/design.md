@@ -22,7 +22,7 @@
 
 - **并行任务构建** —— `watch([configA, configB])` 会按顺序构建任务（与 Rollup 一致），而分别调用 `watch(configA); watch(configB)` 则会并行运行它们（不同的协调器）。这意味着顺序执行并不是一个有意义的保证——用户只需将调用拆开，就能轻易切换到并行模式。我们是否应该也在单个协调器内并行化任务？
 
-- **共享 vs 每任务一个 FsWatcher** —— 目前每个 `WatchTask` 都拥有自己的 `DynFsWatcher`。如果两个任务监视同一个文件，那么该文件会在 OS 层面被监视两次。若在协调器层面使用单个共享的 `DynFsWatcher`，则可以去重监视并减少 OS 资源占用。添加文件很直接。取消监视（尚未实现）则需要跨任务协调——只有当没有任何任务需要某个文件时，才能取消对它的监视（引用计数，或者跨任务监视集做并集检查）。由于取消监视尚未实现，共享 watcher 在当前阶段会明显更简单。
+- **共享的 FsWatcher 与每个任务独立的 FsWatcher** — 当前每个 `WatchTask` 都拥有自己的 `FsWatcher`。如果两个任务监视同一个文件，那么在操作系统层面会对它进行两次监视。协调器级别的单个共享 `FsWatcher` 可以对监视进行去重，并减少操作系统资源的使用。添加文件很简单。取消监视（尚未实现）则需要跨任务协调——只有在没有任务需要某个文件时，才能取消对它的监视（可以使用引用计数，或检查所有任务监视集的并集）。由于取消监视目前尚未实现，共享 watcher 在当前阶段实际上更简单。
 
 - **watch 文件不会在构建之间持久化** —— `bundler.watch_files()` 返回的是最近一次构建的监视集，但这个集合不会在构建之间持久保存。对于完整重建来说这没问题（每次构建都会生成完整集合）。但对于增量构建，只有部分模块会被重新处理，因此增量构建的 `watch_files()` 会是不完整的——它不会包含那些未被重新访问的模块中的文件。监视集合需要在构建之间累积/持久化，而不是每次都替换。
 
@@ -32,4 +32,4 @@
 - [rust-bundler](../rust-bundler/implementation.md) — Core Bundler 结构与 `Bundle.close()` 设计
 - [rust-classic-bundler](../rust-classic-bundler/implementation.md) — Rollup API 兼容封装
 - [module-id](../module-id/implementation.md) — Module ID、路径身份与规范化
-- [#6482](https://github.com/rolldown/rolldown/issues/6482) — 监听模式问题汇总（跟踪所有已知 bug）
+- [#6482](https://github.com/rolldown/rolldown/issues/6482) — 监听模式问题汇总（跟踪所有已知 bug）。

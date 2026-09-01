@@ -22,7 +22,7 @@
 
 ### 不支持插件 `sequential`
  - rollup@function@enforce-sequential-plugin-order: 允许对并行插件 hook 强制执行顺序化的插件 hook 顺序
- - rollup@hooks@allows to enforce sequential plugin hook order in watch mode
+ - rollup@hooks@允许在 watch 模式下强制执行顺序化插件 hook 顺序
 
 ### 不支持 `renderDynamicImport/resolveImportMeta/shouldTransformCachedModule` hooks
  - rollup@function@enforce-plugin-order: 允许强制执行插件 hook 顺序
@@ -39,8 +39,8 @@
  - rollup@function@plugin-cache@anonymous-has: 匿名插件检查缓存时会抛出错误
  - rollup@function@plugin-cache@anonymous-set: 匿名插件向缓存中添加内容时会抛出错误
  - rollup@function@plugin-cache@duplicate-names: 如果两个同名且没有 cache key 的插件访问缓存，则会抛出错误
- - rollup@hooks@Disables the default transform cache when using cache in transform only
- - rollup@hooks@opts-out transform hook cache for custom cache
+ - rollup@hooks@仅在 transform 中使用缓存时禁用默认的 transform 缓存
+ - rollup@hooks@为自定义缓存选择退出 transform hook 缓存
 
 ### `PluginContext.load` 并未完全支持
  - rollup@function@preload-cyclic-module: 在 resolveId hook 中预加载循环模块（在 resolveId hook 中加载入口模块）
@@ -73,7 +73,7 @@
  - rollup@function@emit-file@chunk-filename-not-available-renderStart: 在 renderStart 中访问文件名、但其尚未生成时抛出
  - rollup@function@emit-file@chunk-filename-not-available: 在文件名尚未生成时访问它会抛出错误
  - rollup@function@emit-file@file-references-in-bundle: 在 bundle 中列出被引用的文件
- - rollup@hooks@caches chunk emission in transform hook
+ - rollup@hooks@在 transform hook 中缓存 chunk 发出
 
 ### 不支持 `PluginContext.emitFile` 发出预构建 chunk
  - rollup@function@emit-file@prebuilt-chunk: 获取正确的预构建 chunk
@@ -89,7 +89,7 @@
  - rollup@function@emit-file@set-asset-source-twice2: 重复设置资源源时抛出
  - rollup@function@emit-file@set-asset-source-twice: 重复设置资源源时抛出
  - rollup@function@emit-file@invalid-set-asset-source-id: 对无效的资源 id 抛出错误
- - rollup@hooks@keeps emitted ids stable between runs
+ - rollup@hooks@在多次运行之间保持发出的 id 稳定
 
 ### `originalFileName` / `originalFileNames` 未得到妥善支持
 - rollup@function@deprecated@emit-file@original-file-name: 将原始文件名转发给其他 hook
@@ -243,7 +243,7 @@
 
 ### chunk 信息与 rollup 不兼容
  - rollup@form@addon-functions: 在添加 addon 时提供模块信息@generates es
- - rollup@hooks@supports generateBundle hook including reporting rendered exports and source length(`modules.dep.renderedExports/removedExports`)
+ - rollup@hooks@支持 generateBundle hook，包括报告已渲染的导出和源长度（`modules.dep.renderedExports/removedExports`）
 
 ## 功能
 
@@ -359,69 +359,70 @@
  - rollup@function@banner-and-footer: 添加 banner/footer（期望 `ADDON_ERROR` 但得到了 `PLUGIN_ERROR`）
  - rollup@function@conflicting-reexports@named-import: 当通过命名导入导入冲突绑定时抛出错误（期望 `AMBIGUOUS_EXTERNAL_NAMESPACES` 但得到了 `MISSING_EXPORT`）
  - rollup@function@logging@handle-logs-in-plugins: 允许插件读取和过滤日志
- - rollup@hooks@supports renderError hook
+ - rollup@hooks@支持 renderError hook
  - rollup@function@ast-validations@redeclare-catch-scope-parameter-var-outside-conflict: 当将 catch 作用域的参数重新声明为与外部绑定冲突的 var 时抛出错误（未知）
  - rollup@function@import-not-at-top-level-fails: 禁止非顶层导入（缺少 `cause` 属性）
  - rollup@function@export-not-at-top-level-fails: 禁止非顶层导出（缺少 `cause` 属性）
 
-### 未实现的错误/警告
- - rollup@hooks@Throws when using the "sourcemapFile" option for multiple chunks (`INVALID_OPTION` error)
- - rollup@function@non-function-hook-async: 在为异步函数 hook 提供值时抛出错误（期望 `INVALID_PLUGIN_HOOK` 错误，但得到 `PLUGIN_ERROR`）
- - rollup@function@non-function-hook-sync: 在为同步函数 hook 提供值时抛出错误（`INVALID_PLUGIN_HOOK` 错误）
- - rollup@function@export-type-mismatch-b: 导出类型必须为 auto、default、named 或 none（期望 `INVALID_EXPORT_OPTION` 错误，但得到 `InvalidArg`）
- - rollup@function@assign-namespace-to-var: 允许将命名空间赋值给变量（`EMPTY_BUNDLE` 警告）
- - rollup@function@can-import-self-treeshake: 直接自我导入（`EMPTY_BUNDLE` 警告）
- - rollup@function@external-conflict: 来自自定义解析器的外部路径保持为 external (#633)（`INVALID_EXTERNAL_ID` 错误）
- - rollup@function@shims-missing-exports: 为缺失的导出生成 shim（`SHIMMED_EXPORT` 警告）
- - rollup@function@conflicting-reexports@named-import-external: 当通过来自外部命名空间的命名导入导入冲突绑定时发出警告（`AMBIGUOUS_EXTERNAL_NAMESPACES` 警告）
- - rollup@function@cycles-pathological-2: 能更优雅地解析更复杂的循环依赖
- - rollup@function@circular-missed-reexports: 处理循环重导出（`MISSING_EXPORT` 应为警告而不是错误）
- - rollup@function@iife-code-splitting: 在 IIFE 构建中生成多个 chunk 时抛出错误（`INVALID_OPTION` 错误）
- - rollup@function@inline-imports-with-multiple-array: 在内联动态导入时，不支持数组形式的多个输入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
- - rollup@function@inline-imports-with-multiple-object: 在内联动态导入时，不支持对象形式的多个输入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
- - rollup@function@preserve-modules@inline-dynamic-imports: 在保留模块时不支持内联动态导入（期望 `INVALID_OPTION`，但得到 `GenericFailure`）
- - rollup@function@inline-imports-with-manual: 在内联动态导入时不支持手动分块（`INVALID_OPTION` 错误）
- - rollup@function@warning-low-resolution-location: 处理使用低分辨率 sourcemap 报告错误的情况（`THIS_IS_UNDEFINED` 警告）
- - rollup@function@warning-incorrect-sourcemap-location: 如果由于缺少 sourcemap 导致警告位置不正确，则不应失败（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED`）
- - rollup@function@paths-are-case-sensitive: 强制要求导入时的大小写正确
- - rollup@function@warnings-to-string: 为警告提供字符串转换（`EMPTY_BUNDLE` 警告）
- - rollup@function@warn-on-empty-bundle: 如果生成了空 bundle，则发出警告  (#444)（`EMPTY_BUNDLE` 警告）
- - rollup@function@warn-on-namespace-conflict: 对重复的 export * from 发出警告（`NAMESPACE_CONFLICT` 警告）
- - rollup@function@warn-on-unused-missing-imports: 对缺失但未使用的导入发出警告（`MISSING_EXPORT` 应为警告而不是错误）
- - rollup@function@warn-misplaced-annotations: 对放错位置的注解发出警告（`INVALID_ANNOTATION` 警告）
- - rollup@function@namespace-missing-export: 用 undefined 替换缺失的命名空间成员并对其发出警告（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED`）
- - rollup@function@transform-without-code-warn-ast: 当 transform hook 返回 map 但没有返回 code 时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
- - rollup@function@transform-without-code-warn-map: 当 transform hook 返回 map 但没有返回 code 时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
- - rollup@function@unknown-treeshake-value: 对 treeshake 选项中未知的字符串值抛出错误（`INVALID_OPTION` 错误）
- - rollup@function@warns-for-invalid-options: 对无效选项发出警告（`UNKNOWN_OPTION` 警告）
- - rollup@function@module-side-effects@invalid-option: 对无效选项发出警告（期望 `INVALID_OPTION` 错误，但得到 `InvalidArg`）
- - rollup@function@invalid-addon-hook: 在为 addon hook 提供非字符串值时抛出错误（期望 `ADDON_ERROR` 错误，但得到 `unreachable: Invalid hook type`）
- - rollup@function@invalid-ignore-list-function: 如果 sourcemapIgnoreList 函数没有返回布尔值，则抛出描述性错误（期望 `VALIDATION_ERROR` 错误，但得到 `InvalidArg`）
- - rollup@function@invalid-transform-source-function: 如果 sourcemapPathTransform 函数没有返回字符串，则抛出描述性错误 (#3484)（期望 `VALIDATION_ERROR` 错误，但得到 `GenericFailure`）
- - rollup@function@invalid-pattern-replacement: 对模式中的无效占位符抛出错误（`VALIDATION_ERROR` 错误）
- - rollup@function@invalid-pattern: 对无效模式抛出错误（期望 `VALIDATION_ERROR` 错误，但得到 `INVALID_OPTION`）
- - rollup@function@invalid-top-level-await: 对无效的 top-level-await 格式抛出错误（期望 `INVALID_TLA_FORMAT` 错误，但得到 `UNSUPPORTED_FEATURE`）
- - rollup@function@load-returns-string-or-null: 如果 load 返回了奇怪的内容则抛出错误（期望 `BAD_LOADER` 错误，但得到 `InvalidArg`）
- - rollup@function@vars-with-init-in-dead-branch: 处理死分支中带初始值的变量 (#1198)（`EMPTY_BUNDLE` 警告）
- - rollup@function@module-level-directive: 模块级指令应产生警告（`MODULE_LEVEL_DIRECTIVE` 警告）
- - rollup@function@hashing@maximum-hash-size: 当超过最大 hash 大小时抛出错误（`VALIDATION_ERROR` 错误）
- - rollup@function@hashing@minimum-hash-size: 当超过最大 hash 大小时抛出错误（`VALIDATION_ERROR` 错误）
- - rollup@function@hashing@length-at-non-hash: 在为非 "hash" 占位符配置长度时抛出错误（`VALIDATION_ERROR` 错误）
- - rollup@function@emit-file@invalid-file-type: 对无效文件类型抛出错误（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
- - rollup@function@emit-file@emit-same-file: 如果发出了多个同名文件则发出警告（`FILE_NAME_CONFLICT` 错误）
- - rollup@function@emit-file@emit-from-output-options: 当尝试从 outputOptions hook 中发出文件时抛出错误（`CANNOT_EMIT_FROM_OPTIONS_HOOK` 错误）
- - rollup@function@conflicting-reexports@namespace-import: 当通过命名空间导入导入冲突绑定时发出警告（`MISSING_EXPORT` 警告）
- - rollup@function@cannot-resolve-sourcemap-warning: 处理无法解析 sourcemap 的警告（`SOURCEMAP_ERROR` 警告）
- - rollup@function@adds-json-hint-for-missing-export-if-is-json-file: 在导入一个没有导出的 json 文件时应提供 json 提示（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
- - rollup@function@emit-file@asset-source-invalid: 设置空的 asset source 时抛出错误（期望 `pluginCode":"VALIDATION_ERROR"`，但得到 `pluginCode:"InvalidArg"`）
- - rollup@function@emit-file@asset-source-missing3: 在设置 asset source 之前访问文件名时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing4: 在设置 asset source 之前访问文件名时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing2: 未设置 asset source 时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing5: 未设置 asset source 且访问 asset URL 时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
- - rollup@function@emit-file@asset-source-missing: 未设置 asset source 时抛出错误（预期 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
- - rollup@form@cycles-dependency-with-TLA-await-import: 当检测到包含顶层 await 导入的循环时抛出警告（`CIRCULAR_DEPENDENCY` 警告）
- - rollup@function@optional-chaining-namespace: 处理带命名空间的可选链（期望 `MISSING_EXPORT` 警告，但得到 `IMPORT_IS_UNDEFINED` 警告）
- - rollup@function@ast-validations@redeclare-import-var: 通过 var 重新声明导入时抛出错误（https://github.com/oxc-project/oxc/issues/15961）
- - rollup@function@warn-on-top-level-this: 对顶层 this 发出警告 (#770)（`THIS_IS_UNDEFINED` 警告）
- - rollup@sourcemaps@warning-with-coarse-sourcemap: 在 coarse sourcemap@generates es 的情况下获得正确的映射位置（`THIS_IS_UNDEFINED` 警告）
- - rollup@function@circular-namespace-reexport-cache: 通过缓存的命名空间重导出处理多个导入者的循环重导出（`CYCLIC_CROSS_CHUNK_REEXPORT` 警告）
+### 未实现的错误/警告。
+ - rollup@hooks@Throws when using the "sourcemapFile" option for multiple chunks（`INVALID_OPTION` 错误）
+ - rollup@function@non-function-hook-async：提供异步函数钩子的值时抛出异常（预期为 `INVALID_PLUGIN_HOOK` 错误，但得到的是 `PLUGIN_ERROR`）
+ - rollup@function@non-function-hook-sync：提供同步函数钩子的值时抛出异常（`INVALID_PLUGIN_HOOK` 错误）
+ - rollup@function@export-type-mismatch-b：导出类型必须为 auto、default、named 或 none（预期为 `INVALID_EXPORT_OPTION` 错误，但得到的是 `InvalidArg`）
+ - rollup@function@assign-namespace-to-var：允许将命名空间赋值给变量（`EMPTY_BUNDLE` 警告）
+ - rollup@function@can-import-self-treeshake：直接导入自身（`EMPTY_BUNDLE` 警告）
+ - rollup@function@external-conflict：自定义解析器返回的外部路径仍保持为外部路径（#633）（`INVALID_EXTERNAL_ID` 错误）
+ - rollup@function@shims-missing-exports：为缺失的导出添加垫片（`SHIMMED_EXPORT` 警告）
+ - rollup@function@conflicting-reexports@named-import-external：通过命名导入从外部命名空间导入冲突绑定时发出警告（`AMBIGUOUS_EXTERNAL_NAMESPACES` 警告）
+ - rollup@function@cycles-pathological-2：优雅地解析更加极端的循环依赖
+ - rollup@function@circular-missed-reexports：处理循环再导出（`MISSING_EXPORT` 应为警告而不是错误）
+ - rollup@function@iife-code-splitting：为 IIFE 构建生成多个代码块时抛出异常（`INVALID_OPTION` 错误）
+ - rollup@function@inline-imports-with-multiple-array：内联动态导入时不支持数组中包含多个输入（预期为 `INVALID_OPTION`，但得到的是 `GenericFailure`）
+ - rollup@function@inline-imports-with-multiple-object：内联动态导入时不支持对象中包含多个输入（预期为 `INVALID_OPTION`，但得到的是 `GenericFailure`）
+ - rollup@function@preserve-modules@inline-dynamic-imports：保留模块时不支持内联动态导入（预期为 `INVALID_OPTION`，但得到的是 `GenericFailure`）
+ - rollup@function@inline-imports-with-manual：内联动态导入时不支持手动代码块（`INVALID_OPTION` 错误）
+ - rollup@function@warning-low-resolution-location：使用低分辨率 sourcemap 报告错误时能够正常处理（`THIS_IS_UNDEFINED` 警告）
+ - rollup@function@warning-incorrect-sourcemap-location：由于缺少 sourcemap 导致警告位置不正确时不会失败（预期为 `MISSING_EXPORT` 警告，但得到的是 `IMPORT_IS_UNDEFINED`）
+ - rollup@function@paths-are-case-sensitive：要求导入路径使用正确的大小写
+ - rollup@function@warnings-to-string：为警告提供字符串转换（`EMPTY_BUNDLE` 警告）
+ - rollup@function@warn-on-empty-bundle：生成空代码包时发出警告（#444）（`EMPTY_BUNDLE` 警告）
+ - rollup@function@warn-on-namespace-conflict：对重复的 export * from 发出警告（`NAMESPACE_CONFLICT` 警告）
+ - rollup@function@warn-on-unused-missing-imports：对缺失但未使用的导入发出警告（`MISSING_EXPORT` 应为警告而不是错误）
+ - rollup@function@warn-misplaced-annotations：对位置错误的注释发出警告（`INVALID_ANNOTATION` 警告）
+ - rollup@function@namespace-missing-export：将缺失的命名空间成员替换为 undefined，并对其发出警告（预期为 `MISSING_EXPORT` 警告，但得到的是 `IMPORT_IS_UNDEFINED`）
+ - rollup@function@transform-without-code-warn-ast：从 transform 钩子返回 map 但未返回代码时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
+ - rollup@function@transform-without-code-warn-map：从 transform 钩子返回 map 但未返回代码时发出警告（`NO_TRANSFORM_MAP_OR_AST_WITHOUT_CODE` 警告）
+ - rollup@function@unknown-treeshake-value：treeshake 选项使用未知字符串值时抛出异常（`INVALID_OPTION` 错误）
+ - rollup@function@warns-for-invalid-options：对无效选项发出警告（`UNKNOWN_OPTION` 警告）
+ - rollup@function@module-side-effects@invalid-option：对无效选项发出警告（预期为 `INVALID_OPTION` 错误，但得到的是 `InvalidArg`）
+ - rollup@function@invalid-addon-hook：为 addon 钩子提供非字符串值时抛出异常（预期为 `ADDON_ERROR` 错误，但得到的是 `unreachable: Invalid hook type`）
+ - rollup@function@invalid-ignore-list-function：当 sourcemapIgnoreList-function 未返回布尔值时抛出描述性错误（预期为 `VALIDATION_ERROR` 错误，但得到的是 `InvalidArg`）
+ - rollup@function@invalid-transform-source-function：当 sourcemapPathTransform-function 未返回字符串时抛出描述性错误（#3484）（预期为 `VALIDATION_ERROR` 错误，但得到的是 `GenericFailure`）
+ - rollup@function@invalid-pattern-replacement：模式中包含无效占位符时抛出异常（`VALIDATION_ERROR` 错误）
+ - rollup@function@invalid-pattern：模式无效时抛出异常（预期为 `VALIDATION_ERROR` 错误，但得到的是 `INVALID_OPTION`）
+ - rollup@function@invalid-top-level-await：顶层 await 格式无效时抛出异常（预期为 `INVALID_TLA_FORMAT` 错误，但得到的是 `UNSUPPORTED_FEATURE`）
+ - rollup@function@load-returns-string-or-null：load 返回异常内容时抛出错误（预期为 `BAD_LOADER` 错误，但得到的是 `InvalidArg`）
+ - rollup@function@vars-with-init-in-dead-branch：处理死分支中带有初始化的变量（#1198）（`EMPTY_BUNDLE` 警告）
+ - rollup@function@module-level-directive：模块级指令应产生警告（`MODULE_LEVEL_DIRECTIVE` 警告）
+ - rollup@function@hashing@maximum-hash-size：超过最大哈希大小时抛出异常（`VALIDATION_ERROR` 错误）
+ - rollup@function@hashing@minimum-hash-size：超过最大哈希大小时抛出异常（`VALIDATION_ERROR` 错误）
+ - rollup@function@hashing@length-at-non-hash：为非 "hash" 占位符配置长度时抛出异常（`VALIDATION_ERROR` 错误）
+ - rollup@function@emit-file@invalid-file-type：文件类型无效时抛出异常（预期为 `pluginCode":"VALIDATION_ERROR"`，但得到的是 `pluginCode:"InvalidArg"`）
+ - rollup@function@emit-file@emit-same-file：多个文件使用相同名称时发出警告（`FILE_NAME_CONFLICT` 错误）
+ - rollup@function@emit-file@emit-from-output-options：尝试从 outputOptions 钩子中发出文件时抛出异常（`CANNOT_EMIT_FROM_OPTIONS_HOOK` 错误）
+ - rollup@function@conflicting-reexports@namespace-import：通过命名空间导入导入冲突绑定时发出警告（`MISSING_EXPORT` 警告）
+ - rollup@function@cannot-resolve-sourcemap-warning：警告中的 sourcemap 无法解析时能够正常处理（`SOURCEMAP_ERROR` 警告）
+ - rollup@function@adds-json-hint-for-missing-export-if-is-json-file：导入没有导出的 json 文件时应提供 json 提示（预期为 `pluginCode":"VALIDATION_ERROR"`，但得到的是 `pluginCode:"InvalidArg"`）
+ - rollup@function@emit-file@asset-source-invalid：设置空资源源时抛出异常（预期为 `pluginCode":"VALIDATION_ERROR"`，但得到的是 `pluginCode:"InvalidArg"`）
+ - rollup@function@emit-file@asset-source-missing3：在设置资源源之前访问文件名时抛出异常（预期为 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing4：在设置资源源之前访问文件名时抛出异常（预期为 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing2：未设置资源源时抛出异常（预期为 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing5：未设置资源源并访问资源 URL 时抛出异常（预期为 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@function@emit-file@asset-source-missing：未设置资源源时抛出异常（预期为 `ASSET_SOURCE_MISSING` 错误，但抛出的是 `PLUGIN_ERROR`）
+ - rollup@form@cycles-dependency-with-TLA-await-import：检测到包含顶层 await 导入的循环时发出警告（`CIRCULAR_DEPENDENCY` 警告）
+ - rollup@function@optional-chaining-namespace：处理带命名空间的可选链（预期为 `MISSING_EXPORT` 警告，但得到的是 `IMPORT_IS_UNDEFINED` 警告）
+ - rollup@function@ast-validations@redeclare-import-var：使用 var 重新声明导入时抛出异常（https://github.com/oxc-project/oxc/issues/15961）
+ - rollup@function@warn-on-top-level-this：对顶层 this 发出警告（#770）（`THIS_IS_UNDEFINED` 警告）
+ - rollup@sourcemaps@warning-with-coarse-sourcemap：使用粗略 sourcemap 时获取正确的映射位置@generates es（`THIS_IS_UNDEFINED` 警告）
+ - rollup@function@export-default-this-without-semicolon：重写顶层 "this" 的默认导出末尾没有分号时，添加缺失的分号（`THIS_IS_UNDEFINED` 警告）
+ - rollup@function@circular-namespace-reexport-cache：通过缓存的命名空间再导出处理多个导入方之间的循环再导出（`CYCLIC_CROSS_CHUNK_REEXPORT` 警告）

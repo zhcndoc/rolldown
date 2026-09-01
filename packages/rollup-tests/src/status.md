@@ -1,9 +1,9 @@
 |  | 数量 |
 |----| ---- |
-| failed | 0 |
+| 失败 | 0 |
 | skipFailed | 296 |
-| ignored | 106 |
-| ignored(unsupported features) | 321 |
-| ignored(treeshaking) | 327 |
-| ignored(behavior passed, snapshot different) | 163 |
-| passed | 1212 |
+| 已忽略 | 106 |
+| 已忽略（不支持的特性） | 322 |
+| 已忽略（treeshaking） | 327 |
+| 已忽略（行为通过，快照不同） | 163 |
+| 通过 | 1213 |
