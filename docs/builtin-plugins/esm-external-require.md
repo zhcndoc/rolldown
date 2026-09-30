@@ -83,14 +83,14 @@ Found 2 duplicate external: `react`, `vue`. Remove them from top-level `external
 
 - 解析现在基于 `import` 行为，而不是 `require` 行为
   - 例如，会使用 `import` 条件而不是 `require` 条件
-- 返回值可能与原始的 `require()` 调用不同，尤其是对于具有默认导出的模块。
+- 返回值可能与原始的 `require()` 调用不同，尤其是对于具有默认导出但没有 `'module.exports'` 命名导出的模块。
 
 ## 工作原理
 
 该插件会拦截选项中指定的依赖的 `require()` 调用，并创建虚拟门面模块，这些模块会：
 
 1. 使用 ESM `import * as m from '...'` 导入依赖
-2. 使用 `module.exports = m` 将其重新导出，以兼容 CommonJS
+2. 如果依赖提供了 `'module.exports'` 命名导出，则使用该导出；否则回退为复制其命名空间
 3. 用虚拟模块引用替换原始的 `require()`
 
 对于非外部的 `require()` 调用，Rolldown 会自动包裹它们并将其转换为 ESM 导入。
@@ -104,5 +104,9 @@ const react = require('builtin:esm-external-require-react');
 
 // 虚拟模块：builtin:esm-external-require-react
 import * as m from 'react';
-module.exports = m;
+module.exports = Object.prototype.hasOwnProperty.call(m, 'module.exports')
+  ? m['module.exports']
+  : { ...m };
 ```
+
+`'module.exports'` 命名导出遵循 [Node.js CommonJS 命名空间语义](https://nodejs.org/api/esm.html#commonjs-namespaces)。从 Node.js v23.0.0 开始，每个 CommonJS 模块的命名空间都会包含此导出，因此 `require()` 会收到准确的 `module.exports` 值，包括可调用函数、`null` 和 `undefined`。没有此导出的模块会回退为普通的命名空间副本。Node.js 内置模块则直接使用其默认导出。

@@ -1,50 +1,58 @@
-# 缓存 — 实现
+# Cache — Implementation
 
-> 缓存完整性契约和开放问题位于 [design.md](./design.md)。
+> The cache-integrity contract and open questions live in [design.md](./design.md).
 
-## 摘要
+## Summary
 
-Rolldown 有几种不同的缓存机制。其中架构上最核心的是 **`ScanStageCache`** —— 这是 bundler 级别的已解析模块图快照，使增量构建和 HMR 成为可能。其他缓存包括构建内记忆化、插件临时状态，以及一个 JS 侧存储。
+Rolldown has several distinct cache mechanisms. The architecturally central
+one is **`ScanStageCache`** — the bundler-level snapshot of the parsed module
+graph that makes incremental builds and HMR possible. The others are
+within-build memoization, plugin scratch state, and a JS-side store.
 
-本文先梳理所有缓存，然后详细介绍 `ScanStageCache`：它的数据、所依赖的模块身份模型（`ModuleId` / `ModuleIdx` / `module_id_to_idx`）、`ScanStageCache::merge` 如何将部分扫描结果拼接进快照，以及完整的读取者和写入者列表。
+This doc inventories every cache, then details `ScanStageCache`: its data, the
+module-identity model it depends on (`ModuleId` / `ModuleIdx` /
+`module_id_to_idx`), how `ScanStageCache::merge` splices a partial scan into the
+snapshot, and the complete list of readers and writers.
 
-文中的所有文件/行号引用均以写作时的工作区为准，之后可能会变化；请将它们视为起点。
+All file/line references are against the working tree at the time of writing
+and will drift; treat them as starting points.
 
-## 缓存清单
+## Cache inventory
 
-按字面上名为 `*Cache` 的类型计数，共有 14 个。按用途分组如下：
+Counting types literally named `*Cache`, there are 13. Grouped by purpose:
 
-### 1. 增量构建缓存
+### 1. Incremental-build cache
 
 | Type             | Location                                           | Stores                                                                   |
 | ---------------- | -------------------------------------------------- | ------------------------------------------------------------------------ |
-| `ScanStageCache` | `crates/rolldown/src/types/scan_stage_cache.rs:23` | 模块图快照 + 模块索引映射。参见本文档其余部分。 |
+| `ScanStageCache` | `crates/rolldown/src/types/scan_stage_cache.rs:23` | The module-graph snapshot + module index maps. See the rest of this doc. |
 
-### 2. 跨构建失效状态
+### 2. Cross-build invalidation state
 
-这不是结果缓存；它们与 `ScanStageCache` 一起持久化，以便下一次增量构建知道要使哪些内容失效 / 能回答插件查询。
+Not result-caches; they persist alongside `ScanStageCache` so the next
+incremental build knows what to invalidate / can answer plugin queries.
 
-| 数据                     | 位置                                     | 说明                                                                                                   |
-| ------------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `transform_dependencies` | `crates/rolldown_plugin/src/plugin_driver/` | `addWatchFile()` 依赖；模块 → 它依赖的文件。文档见 `bundler-data-lifecycle.md`。                      |
-| `module_infos`           | `crates/rolldown_plugin/src/plugin_driver/` | 由插件填充的模块元数据，用于 `this.getModuleInfo`。文档见 `bundler-data-lifecycle.md`。               |
+| Data                     | Location                                    | Notes                                                                                                 |
+| ------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `transform_dependencies` | `crates/rolldown_plugin/src/plugin_driver/` | `addWatchFile()` deps; module → files it depends on. Documented in `bundler-data-lifecycle.md`.       |
+| `module_infos`           | `crates/rolldown_plugin/src/plugin_driver/` | Plugin-populated module metadata for `this.getModuleInfo`. Documented in `bundler-data-lifecycle.md`. |
 
-### 3. 构建内记忆化
+### 3. Within-build memoization
 
-| 类型                                | 位置                                                                          | 存储内容                                                                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `SideEffectCache`（枚举）            | `crates/rolldown/src/stages/link_stage/tree_shaking/determine_side_effects.rs:9` | `None` / `Visited` / `Cache(DeterminedSideEffects)`；在 link 阶段副作用遍历期间使用的临时局部记忆。              |
-| `PackageJsonCache`                  | `crates/rolldown_plugin_vite_resolve/src/package_json_cache.rs:9`                | `side_effects_cache: FxDashMap<PathBuf, Arc<PackageJson>>`，`optional_peer_dep_cache: FxDashMap<PathBuf, Arc<…>>`。 |
-| `ResolverCaches`                    | `crates/rolldown_plugin_vite_resolve/src/resolver.rs:77`                         | `package_json: PackageJsonCache`，`importer_exists: FxDashSet<String>`。                                          |
-| `TsconfigCache`                     | `crates/rolldown_binding/src/transform_cache.rs:12`                              | `resolver: Arc<Resolver>`，`cache: FxDashMap<PathBuf, Arc<TsConfig>>`。NAPI 暴露（`#[napi]`）。                    |
-| `RawTransformOptions` 的 `cache` 字段 | `crates/rolldown_common/src/inner_bundler_options/types/transform_options.rs`    | tsconfig → 编译后的 Oxc transform 选项。                                                                          |
-| oxc_resolver 内部缓存               | 外部 crate，由 bundler 级别的 `SharedResolver` 持有                               | 文件系统/路径元数据。                                                                                            |
+| Type                                | Location                                                                      | Stores                                                                                                             |
+| ----------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `PackageJsonCache`                  | `crates/rolldown_plugin_vite_resolve/src/package_json_cache.rs:9`             | `side_effects_cache: FxDashMap<PathBuf, Arc<PackageJson>>`, `optional_peer_dep_cache: FxDashMap<PathBuf, Arc<…>>`. |
+| `ResolverCaches`                    | `crates/rolldown_plugin_vite_resolve/src/resolver.rs:77`                      | `package_json: PackageJsonCache`, `importer_exists: FxDashSet<String>`.                                            |
+| `TsconfigCache`                     | `crates/rolldown_binding/src/transform_cache.rs:12`                           | `resolver: Arc<Resolver>`, `cache: FxDashMap<PathBuf, Arc<TsConfig>>`. NAPI-exposed (`#[napi]`).                   |
+| `RawTransformOptions` `cache` field | `crates/rolldown_common/src/inner_bundler_options/types/transform_options.rs` | tsconfig → compiled Oxc transform options.                                                                         |
+| oxc_resolver internal cache         | external crate, held by the bundler-level `SharedResolver`                    | filesystem/path metadata.                                                                                          |
 
-### 4. 插件临时状态（位于 `PluginContext.meta()` 中）
+### 4. Plugin scratch state (in `PluginContext.meta()`)
 
-名字带 `*Cache`，但功能上是按构建共享的 map，用于在插件 hook 调用之间传递数据。都位于 `crates/rolldown_plugin_utils/src/`。
+Named `*Cache` but functionally per-build shared maps that pass data between
+plugin hook invocations. All in `crates/rolldown_plugin_utils/src/`.
 
-| 类型                       | 位置                            | 存储内容                                       |
+| Type                       | Location                        | Stores                                         |
 | -------------------------- | ------------------------------- | ---------------------------------------------- |
 | `AssetCache`               | `file_to_url.rs:24`             | `FxDashMap<String, String>`                    |
 | `PublicAssetUrlCache`      | `public_file_to_built_url.rs:5` | `FxDashMap<String, String>`                    |
@@ -54,39 +62,44 @@ Rolldown 有几种不同的缓存机制。其中架构上最核心的是 **`Scan
 | `RemovedPureCSSFilesCache` | `constants.rs:90`               | `FxDashMap<ArcStr, Arc<OutputChunk>>`          |
 | `CSSUrlCache`              | `constants.rs:95`               | `FxDashMap<String, String>`                    |
 
-同一文件中相关但不以 `Cache` 命名的结构还有：`ViteMetadata`、`HTMLProxyResult`、`HTMLProxyMap`、`CSSStyles`、`PureCSSChunks`。
+Related non-`Cache`-named structures in the same file: `ViteMetadata`,
+`HTMLProxyResult`, `HTMLProxyMap`, `CSSStyles`, `PureCSSChunks`.
 
-### 5. JS 侧缓存
+### 5. JS-side cache
 
-| 类型                    | 位置                                                                                | 存储内容                                                                                                                                    |
-| ----------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PluginContextData`     | `packages/rolldown/src/plugin/plugin-context-data.ts:18`                                | `moduleOptionMap`、`resolveOptionsMap`、`loadModulePromiseMap`、`renderedChunkMeta`、`normalizedInputOptions`、`normalizedOutputOptions`。 |
-| `InvalidateJsSideCache` | `crates/rolldown_common/src/inner_bundler_options/types/invalidate_js_side_cache.rs:11` | `Arc<InvalidateJsSideCacheFn>` —— 一个 Rust 持有的回调，调用回 JS。                                                                          |
-| `FilterExprCache`       | `crates/rolldown_binding/src/options/plugin/binding_plugin_options.rs:218`              | 预编译的插件 hook 过滤表达式（NAPI binding，每个插件一个）。                                                                                 |
+| Type                    | Location                                                                                | Stores                                                                                                                                    |
+| ----------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `PluginContextData`     | `packages/rolldown/src/plugin/plugin-context-data.ts:18`                                | `moduleOptionMap`, `resolveOptionsMap`, `loadModulePromiseMap`, `renderedChunkMeta`, `normalizedInputOptions`, `normalizedOutputOptions`. |
+| `InvalidateJsSideCache` | `crates/rolldown_common/src/inner_bundler_options/types/invalidate_js_side_cache.rs:11` | `Arc<InvalidateJsSideCacheFn>` — a Rust-held callback into JS.                                                                            |
+| `FilterExprCache`       | `crates/rolldown_binding/src/options/plugin/binding_plugin_options.rs:218`              | Pre-compiled plugin-hook filter expressions (NAPI binding, per-plugin).                                                                   |
 
-`InvalidateJsSideCache` 在 `crates/rolldown_binding/src/utils/normalize_binding_options.rs` 中接线；在 JS 侧
-（`packages/rolldown/src/utils/bindingify-input-options.ts`）它绑定到
-`PluginContextData.clear`。调用它会清空 JS 侧的 `PluginContextData`。
+`InvalidateJsSideCache` is wired in `crates/rolldown_binding/src/utils/normalize_binding_options.rs`; on the JS side
+(`packages/rolldown/src/utils/bindingify-input-options.ts`) it is bound to
+`PluginContextData.clear`. Calling it clears the JS-side `PluginContextData`.
 
-### 6. watch 模式文件系统缓存
+### 6. Watch-mode filesystem cache
 
-`notify` crate 的 `RecommendedCache` 保存在
-`crates/rolldown_fs_watcher/src/` 中的 debouncer 内部，用于跟踪事件防抖所需的文件系统元数据。
+The `notify` crate's `RecommendedCache` is held inside the debouncer in
+`crates/rolldown_fs_watcher/src/` and tracks filesystem metadata for event
+debouncing.
 
 ---
 
-## `ScanStageCache` —— 增量构建缓存
+## `ScanStageCache` — the incremental-build cache
 
-### 所在位置
+### Where it lives
 
-`ScanStageCache` 是 **bundler 级别** 数据（跨构建保留）。在一次构建期间，它会临时移动到每次构建对应的 `Bundle` 中，然后再移回去。这个来回移动由
-`crates/rolldown/src/bundler/impl_bundler_incremental_build.rs:9` / `:27` 中的 `with_cached_bundle` /
-`with_cached_bundle_experimental` 完成。
+`ScanStageCache` is **bundler-level** data (it survives across builds). During
+a build it is temporarily moved into the per-build `Bundle`, then moved back.
+The move in/out is done by `with_cached_bundle` /
+`with_cached_bundle_experimental` in
+`crates/rolldown/src/bundler/impl_bundler_incremental_build.rs:9` / `:27`.
 
-两层模型（bundler 级别 vs bundle 级别）记录在
-[bundler-data-lifecycle.md](../bundler-data-lifecycle/implementation.md) 中；该文档也涵盖了构建失败时的缓存完整性。
+The two-tier model (bundler-level vs bundle-level) is documented in
+[bundler-data-lifecycle.md](../bundler-data-lifecycle/implementation.md); that doc also covers cache integrity
+on a failed build.
 
-### 结构体
+### The struct
 
 `crates/rolldown/src/types/scan_stage_cache.rs:23`:
 
@@ -104,243 +117,284 @@ pub struct ScanStageCache {
 }
 ```
 
-| 字段                            | 用途                                                                                                                                                                               |
+| Field                            | Purpose                                                                                                                                                                               |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `snapshot`                       | 完整的模块图。`None` 是合法的临时状态；它是 `private`，只能通过下面的方法访问。                                                                                                        |
-| `barrel_state`                   | Barrel 重导出解析状态（`BarrelState`）。                                                                                                                                            |
-| `module_id_to_idx`               | `ModuleId` → `ModuleIdx` 的注册表/分配器（参见“模块身份模型”）。                                                                                                                    |
-| `importers`                      | 反向依赖图：每个模块都记录谁导入了它。                                                                                                                                                 |
-| `modules_with_changed_importers` | 其 `importers` 记录被部分扫描修改过的模块；`merge` 会清空它，并重新推导这些模块物化后的 importer 集合（见下文）。                                                                     |
-| `pending_rescans`                | 工作队列：被中止的部分扫描所涉及的文件，其修改已被回滚（`ModuleLoader::revert_partial_scan`）；下一次部分扫描会重试它们，以便错误继续显现。                                           |
-| `user_defined_entry`             | 已配置的根入口 `ModuleId` 集合。                                                                                                                                                       |
-| `module_idx_by_abs_path`         | 绝对路径 → `ModuleIdx`，供 watcher 使用。路径已做斜杠规范化。                                                                                                                         |
-| `module_idx_by_stable_id`        | `StableModuleId` → `ModuleIdx`，供 HMR 使用。                                                                                                                                         |
+| `snapshot`                       | The full module graph. `None` is a legal transient state; it is `private` and accessed only through the methods below.                                                                |
+| `barrel_state`                   | Barrel re-export resolution state (`BarrelState`).                                                                                                                                    |
+| `module_id_to_idx`               | The `ModuleId` → `ModuleIdx` registry/allocator (see "Module identity model").                                                                                                        |
+| `importers`                      | Reverse dependency graph: per module, who imports it.                                                                                                                                 |
+| `modules_with_changed_importers` | Modules whose `importers` records were mutated by a partial scan; `merge` drains it to re-derive their materialized importer sets (see below).                                        |
+| `pending_rescans`                | Work queue: files of an aborted partial scan, whose mutations were reverted (`ModuleLoader::revert_partial_scan`); the next partial scan retries them so their errors keep surfacing. |
+| `user_defined_entry`             | The set of configured root entry `ModuleId`s.                                                                                                                                         |
+| `module_idx_by_abs_path`         | Absolute-path → `ModuleIdx`, used by the watcher. Paths are slash-normalized.                                                                                                         |
+| `module_idx_by_stable_id`        | `StableModuleId` → `ModuleIdx`, used by HMR.                                                                                                                                          |
 
-`module_idx_by_abs_path` 和 `module_idx_by_stable_id` 是**派生**得到的——
-`build_module_index_maps`（`scan_stage_cache.rs:297`）会在每次 `set_snapshot` 运行时，
-基于 snapshot 清空并重建这两个映射。
+`module_idx_by_abs_path` and `module_idx_by_stable_id` are **derived** —
+`build_module_index_maps` (`scan_stage_cache.rs:297`) clears and rebuilds both
+from the snapshot whenever `set_snapshot` runs.
 
-snapshot 访问器（`scan_stage_cache.rs`）：
+Snapshot accessors (`scan_stage_cache.rs`):
 
-- `set_snapshot` (`:44`) — 安装一个 snapshot 并重建索引映射。
-- `get_snapshot` (`:76`) — `&NormalizedScanStageOutput`；**如果 `snapshot` 为 `None` 会 panic**。
-- `get_snapshot_mut` (`:51`) — `&mut`；**如果为 `None` 会 panic**。
-- `take_snapshot` (`:56`) — 将 snapshot 移出，留下 `None`。
-- `update_defer_sync_data` (`:60`) — 取出 snapshot，运行 `defer_sync_scan_data`，在所有结果上都恢复它，然后再向外传播任何错误。
-- `merge` (`:80`) — 将一次 scan 输出拼接进 snapshot（见下文）。
-- `create_output` (`:313`) — 产出供构建消费的 `NormalizedScanStageOutput`。
+- `set_snapshot` (`:44`) — installs a snapshot and rebuilds the index maps.
+- `get_snapshot` (`:76`) — `&NormalizedScanStageOutput`; **panics if `snapshot` is `None`**.
+- `get_snapshot_mut` (`:51`) — `&mut`; **panics if `None`**.
+- `take_snapshot` (`:56`) — moves the snapshot out, leaving `None`.
+- `update_defer_sync_data` (`:60`) — takes the snapshot, runs `defer_sync_scan_data`, restores it on every outcome, then propagates any error.
+- `merge` (`:80`) — splices a scan output into the snapshot (see below).
+- `create_output` (`:313`) — produces a `NormalizedScanStageOutput` for the build to consume.
 
 ### `BundleMode`
 
-`crates/rolldown_common/src/types/bundle_mode.rs` —— 决定缓存是创建、保留还是复用：
+`crates/rolldown_common/src/types/bundle_mode.rs` — decides whether the cache
+is created, kept, or reused:
 
-| 模式                     | 缓存进入 | 缓存输出 | 使用场景                                     |
-| ---------------------- | -------- | --------- | -------------------------------------------- |
-| `FullBuild`            | 无       | 丢弃      | 一次性构建，非增量 watch                      |
-| `IncrementalFullBuild` | 新建     | 保存      | 首次增量构建，或开发模式下构建失败后的恢复    |
-| `IncrementalBuild`     | 现有     | 更新      | 后续增量构建                                 |
+| Mode                   | Cache in | Cache out | Use case                                                           |
+| ---------------------- | -------- | --------- | ------------------------------------------------------------------ |
+| `FullBuild`            | None     | discarded | one-shot build, non-incremental watch                              |
+| `IncrementalFullBuild` | fresh    | saved     | first incremental build, or dev-mode recovery after a failed build |
+| `IncrementalBuild`     | existing | updated   | subsequent incremental builds                                      |
 
-`is_full_build()` 对 `FullBuild` 和 `IncrementalFullBuild` 返回 true；
-`is_incremental()` 对 `IncrementalFullBuild` 和 `IncrementalBuild` 返回 true。
+`is_full_build()` is true for `FullBuild` and `IncrementalFullBuild`;
+`is_incremental()` is true for `IncrementalFullBuild` and `IncrementalBuild`.
 
-### snapshot：`NormalizedScanStageOutput`
+### The snapshot: `NormalizedScanStageOutput`
 
-`crates/rolldown/src/stages/scan_stage.rs:41`。字段包括 `module_table`、`index_ecma_ast`（每个模块的解析 AST）、`stmt_infos`、`entry_points`、`symbol_ref_db`、`runtime`、`dynamic_import_exports_usage_map`、`user_defined_entry_modules`、`tla_module_count`、`tla_keyword_span_map`。
+`crates/rolldown/src/stages/scan_stage.rs:41`. Fields include `module_table`,
+`index_ecma_ast` (parsed AST per module), `stmt_infos`, `entry_points`,
+`symbol_ref_db`, `runtime`, `dynamic_import_exports_usage_map`,
+`user_defined_entry_modules`, `tla_module_count`, `tla_keyword_span_map`.
 
-`make_copy`（`scan_stage.rs:65`）会克隆 snapshot，但通过 `clone_without_scoping` 克隆 `symbol_ref_db`（一种性能优化——构建结束后会恢复 scoping）。
+`make_copy` (`scan_stage.rs:65`) clones the snapshot but clones
+`symbol_ref_db` via `clone_without_scoping` (a performance optimization —
+scoping is reinstated after the build).
 
-### `ScanStageOutput` 与 `NormalizedScanStageOutput`
+### `ScanStageOutput` vs `NormalizedScanStageOutput`
 
-`ScanStageOutput`（`scan_stage.rs:131`）是 scan 阶段的产物。它的 `module_table`、`index_ecma_ast` 和 `stmt_infos` 是 `HybridIndexVec`，而 snapshot 中对应的是基于稠密 `IndexVec` 的结构。转换发生在 `merge`（部分扫描）或 `try_into`（完整扫描）中。
+`ScanStageOutput` (`scan_stage.rs:131`) is what the scan produces. Its
+`module_table`, `index_ecma_ast`, and `stmt_infos` are `HybridIndexVec`, while
+the snapshot's are dense `IndexVec`-based. The conversion happens in `merge`
+(partial scan) or `try_into` (full scan).
 
-## 模块身份模型
+---
 
-如果不了解这个模型，就无法理解 `ScanStageCache::merge`。
+## Module identity model
+
+`ScanStageCache::merge` cannot be understood without this model.
 
 ### `ModuleId` vs `ModuleIdx`
 
-一个模块有两个身份：
+A module has two identities:
 
-- **`ModuleId`** — 解析后的文件路径（+ query）。稳定；模块的名称。
-- **`ModuleIdx`** — 一个小整数（`u32` 的 newtype）。一个槽位编号 / 数组
-  索引。在 bundler 会话期间保持不变。
+- **`ModuleId`** — the resolved file path (+ query). Stable; the module's name.
+- **`ModuleIdx`** — a small integer (newtype over `u32`). A slot number / array
+  index. Permanent for the bundler session.
 
-`Module::id()`（`crates/rolldown_common/src/module/mod.rs:33`）返回
-`&ModuleId`；`Module::idx()`（`:18`）返回存储在模块结构体 `idx` 字段中的
-`ModuleIdx`。
+`Module::id()` (`crates/rolldown_common/src/module/mod.rs:33`) returns
+`&ModuleId`; `Module::idx()` (`:18`) returns the `ModuleIdx` stored in the
+module struct's `idx` field.
 
-### `module_id_to_idx` — 注册表 / 分配器
+### `module_id_to_idx` — the registry / allocator
 
-`module_id_to_idx: FxHashMap<ModuleId, VisitState>` 是将模块名称映射到其槽位
-的唯一事实来源。它是单调递增的：新模块总是分配
-`idx = module_id_to_idx.len()`。槽位按 `0, 1, 2, …` 顺序发放，没有空洞，
-且永不复用。
+`module_id_to_idx: FxHashMap<ModuleId, VisitState>` is the single source of
+truth mapping a module's name to its slot. It is monotonic: a new module is
+always assigned `idx = module_id_to_idx.len()`. Slots are handed out
+`0, 1, 2, …` with no gaps, and are never reused.
 
 ### `VisitState`
 
-`crates/rolldown/src/module_loader/module_loader.rs:96`：
+`crates/rolldown/src/module_loader/module_loader.rs:96`:
 
 ```rust
 pub enum VisitState { Seen(ModuleIdx), Invalidate(ModuleIdx) }
 ```
 
-两个变体都携带 idx。变体本身是“新鲜度”标记：
+Both variants carry the idx. The variant is a freshness flag:
 
-- `Seen(i)` — 模块是最新的；loader 跳过它（不重新扫描）。
-- `Invalidate(i)` — 模块已过期；loader 重新扫描它，并复用 `i`。
+- `Seen(i)` — module is up to date; the loader skips it (no re-scan).
+- `Invalidate(i)` — module is stale; the loader re-scans it, reusing `i`.
 
 ### `IndexVec` / `Map` / `HybridIndexVec`
 
-- `IndexVec<ModuleIdx, T>` — 以 `ModuleIdx` 为索引的 `Vec`。**稠密**：对于
-  每个 `i in 0..len`，槽位 `i` 都存在。
-- `FxHashMap<ModuleIdx, T>` — **稀疏**：只保存插入过的键。
-- `HybridIndexVec<ModuleIdx, T>`（`crates/rolldown_common/src/types/hybrid_index_vec.rs`）
-  — 一个枚举，要么是 `IndexVec(..)`，要么是 `Map(..)`。`Default` 是
-  `IndexVec` 变体。
+- `IndexVec<ModuleIdx, T>` — a `Vec` indexed by `ModuleIdx`. **Dense**: slot `i`
+  exists for every `i` in `0..len`.
+- `FxHashMap<ModuleIdx, T>` — **sparse**: holds only the keys inserted.
+- `HybridIndexVec<ModuleIdx, T>` (`crates/rolldown_common/src/types/hybrid_index_vec.rs`)
+  — an enum that is either `IndexVec(..)` or `Map(..)`. `Default` is the
+  `IndexVec` variant.
 
-**全量扫描**会产生所有模块 → 稠密的 `IndexVec`。**部分扫描**只会产生已
-变更 + 新发现的模块 → 稀疏的 `Map`。
+A **full scan** produces all modules → dense `IndexVec`. A **partial scan**
+produces only the changed + newly discovered modules → sparse `Map`.
 
-### 不变量
+### Invariants
 
-1. 一个模块的 `ModuleIdx` 只分配一次（在首次解析时），并且永远不会改变
-   或被复用。
-2. idx 从 0 开始按稠密方式分配；已分配集合恰好是
-   `0..module_id_to_idx.len()`。
-3. 缓存快照是稠密且完整的：`module_table` 以及每个并行 side-table
-  （`index_ecma_ast`、`stmt_infos`、`symbol_ref_db` 的本地 DB）都对每个已
-   分配的 idx 有一个槽位。
-4. 部分扫描输出是稀疏的：它只包含 {已变更} ∪ {新建} 模块。未变更模块不
-   会出现。
-5. 对于部分扫描输出中的某个模块，“新建” ⇔ 其 idx ≥ 发生 merge 时缓存中
-   当前的模块数量。
-6. 模块 loader 为每个模块分配一个单独的 `ModuleIdx`，并将同一个值同时用作
-   扫描输出 `Map` 的 key、`Module.idx` 字段，以及
-   `module_id_to_idx` 的 value（见 `try_spawn_new_task`）。因此，对任意给定
-   模块，这三者相等。
+1. A module's `ModuleIdx` is assigned exactly once (at first resolution) and
+   never changes or gets reused.
+2. Idxs are allocated densely from 0; the allocated set is exactly
+   `0..module_id_to_idx.len()`.
+3. The cache snapshot is dense and total: `module_table` and every parallel
+   side-table (`index_ecma_ast`, `stmt_infos`, `symbol_ref_db` local DBs) have
+   a slot for every allocated idx.
+4. A partial-scan output is sparse: it contains exactly {changed} ∪ {new}
+   modules. Unchanged modules are absent.
+5. For a module in a partial-scan output, "new" ⟺ its idx ≥ the cache's
+   current module count at merge time.
+6. The module loader assigns a single `ModuleIdx` per module and uses that
+   same value as the scan-output `Map` key, the `Module.idx` field, and the
+   `module_id_to_idx` value (see `try_spawn_new_task`). These three are
+   therefore equal for any given module.
 
 ---
 
-## `module_id_to_idx` — 更新生命周期
+## `module_id_to_idx` — update lifecycle
 
-`module_id_to_idx` 位于 `ScanStageCache` 中。`ModuleLoader` 持有对同一缓存的可
-变借用——`cache: &'a mut ScanStageCache`
-（`module_loader.rs:117`）——因此 loader 的写入会直接修改 bundler 的实际缓存。
-这里没有拷贝。
+`module_id_to_idx` lives in `ScanStageCache`. `ModuleLoader` holds a mutable
+borrow of the same cache — `cache: &'a mut ScanStageCache`
+(`module_loader.rs:117`) — so the loader's writes mutate the bundler's actual
+cache directly. There is no copy.
 
-`module_id_to_idx` 在 **扫描阶段期间** 由 loader **急切更新**。`merge` 在扫描结
-束后运行，并且**只读取** `module_id_to_idx`——它从不向其中插入。
+`module_id_to_idx` is updated **eagerly during the scan stage**, by the loader.
+`merge` runs after the scan and **only reads** `module_id_to_idx` — it never
+inserts into it.
 
-### 写入位置（都在 `module_loader.rs` 中，扫描期间）
+### Write sites (all in `module_loader.rs`, during the scan)
 
-| 位置                     | 位置说明                            | 作用                                                                                        |
+| Site                     | Location                            | Effect                                                                                        |
 | ------------------------ | ----------------------------------- | --------------------------------------------------------------------------------------------- |
-| Runtime module           | `fetch_modules`, `:304`–`:308`      | `Entry::Vacant` → 插入 `Seen(idx)`（一次）。                                                  |
-| 标记变更文件为失效       | `fetch_modules`, `:348`–`:350`      | 对每个 watcher 报告的文件：`Entry::Occupied` → `insert(Invalidate(idx))`。idx 不变。          |
-| `Seen(idx)` 分支         | `try_spawn_new_task`, `:230`–`:244` | 不写入；返回 idx，模块不重新扫描。                                                            |
-| `Invalidate(idx)` 分支   | `try_spawn_new_task`, `:246`–`:251` | `insert(Seen(idx))` — 模块正在被重新扫描。                                                    |
-| `None`，部分扫描         | `try_spawn_new_task`, `:252`–`:259` | 新模块：`insert(id, Seen(len))`，`len = module_id_to_idx.len()`。                             |
-| `None`，全量扫描         | `try_spawn_new_task`, `:260`–`:264` | 新模块：`insert(id, Seen(alloc()))`。                                                         |
+| Runtime module           | `fetch_modules`, `:304`–`:308`      | `Entry::Vacant` → insert `Seen(idx)` (once).                                                  |
+| Invalidate changed files | `fetch_modules`, `:348`–`:350`      | For each watcher-reported file: `Entry::Occupied` → `insert(Invalidate(idx))`. idx unchanged. |
+| `Seen(idx)` arm          | `try_spawn_new_task`, `:230`–`:244` | No write; returns idx, module not re-scanned.                                                 |
+| `Invalidate(idx)` arm    | `try_spawn_new_task`, `:246`–`:251` | `insert(Seen(idx))` — module is being re-scanned.                                             |
+| `None`, partial scan     | `try_spawn_new_task`, `:252`–`:259` | New module: `insert(id, Seen(len))`, `len = module_id_to_idx.len()`.                          |
+| `None`, full scan        | `try_spawn_new_task`, `:260`–`:264` | New module: `insert(id, Seen(alloc()))`.                                                      |
 
-### 每项状态机
+### Per-entry state machine
 
 ```
-   (absent) --首次解析--> Seen(idx) --文件变更--> Invalidate(idx)
+   (absent) --first resolution--> Seen(idx) --file changed--> Invalidate(idx)
                                      ^                              |
-                                     |  loader 重新扫描该模块       |
+                                     |  loader re-scans the module  |
                                      +------------------------------+
 ```
 
-idx 在出生时就固定了；后续转换只是在 `Seen` / `Invalidate` 标记之间切换。
+The idx is fixed at birth; later transitions only flip the `Seen`/`Invalidate`
+flag.
 
-### 构建内顺序
+### Within-build ordering
 
-在部分扫描中，`fetch_modules` 会先将每个 watcher 报告的文件置为
-`Invalidate`，然后调用 `try_spawn_new_task`，后者命中 `Invalidate` 分支，把它
-改回 `Seen` 并重新扫描。中间的 `Invalidate` 状态正是触发重新扫描的原因——如果是
-`Seen` 条目，`try_spawn_new_task` 会直接返回而不重新扫描。它也用于去重：一旦
-切回 `Seen`，之后才解析到同一模块的导入者只会直接返回 idx。
+In a partial scan, `fetch_modules` processes each watcher-reported file by
+first flipping it to `Invalidate`, then calling `try_spawn_new_task`, which
+hits the `Invalidate` arm, flips it back to `Seen`, and re-scans. The
+intermediate `Invalidate` state is what forces a re-scan — a `Seen` entry would
+make `try_spawn_new_task` return immediately without re-scanning. It also
+dedups: once flipped back to `Seen`, importers that later resolve the same
+module just return the idx.
 
-结论：扫描输出中出现的每个模块，在 `merge` 运行前都已由 loader 注册到
-`module_id_to_idx`。
-
----
-
-## `ScanStageCache::merge` — 写入路径
-
-`scan_stage_cache.rs:80`。签名：`merge(&mut self, scan_stage_output: ScanStageOutput, plugin_driver: &PluginDriver) -> BuildResult<()>`.
-
-### 调用者
-
-- `bundle.rs:256` — 在 `normalize_scan_stage_output_and_update_cache` 中，非全量扫描分支。
-- `hmr_stage.rs:299`, `:410` — HMR 更新和 lazy-compile 路径。
-
-全量扫描构建路径不会调用 `merge`；它使用 `set_snapshot`（`bundle.rs:250`）。
-当前所有调用者都传入部分扫描输出，其 `module_table` 为
-`HybridIndexVec::Map`；因此 `merge` 中的 `IndexVec` 匹配分支是
-`unreachable!()`。
-
-### 算法
-
-1. **首次构建逃生口**（`:91`–`:96`）— 如果 `snapshot` 为 `None`，
-   通过 `try_into` 转换整个输出并返回。
-2. **提取 `modules`**（`:97`–`:106`）— 对 `module_table` 进行匹配：`IndexVec` 分支为
-   `unreachable!()`；`Map` 分支收集到一个 `Vec` 中，并按 `idx` **排序**。该排序会使现有模块（`idx < cache length`）
-   排在新模块（`idx ≥ cache length`）之前，并让新模块按升序排列，从而使 `push` 能将每个模块放到其分配好的槽位中。
-3. **逐模块循环**（`:108`–`:172`）：
-   - `new_idx` 是 `Map` 的键（用于索引扫描输出）；`idx` 是
-     `module_id_to_idx[new_module.id()].idx()`（用于索引缓存）。根据不变量 6，它们相等。
-   - 更新 `module_idx_by_abs_path`（仅普通模块，且对斜杠进行规范化）和
-     `module_idx_by_stable_id`。
-   - **新模块**（`new_idx ≥ cache.module_table.modules.len()`）：将模块 / AST / stmt infos / local symbol DB 推入并行集合；
-     调整 `tla_module_count` 和 `tla_keyword_span_map`。
-   - **已有模块**：在 `idx` 处覆盖相同集合；根据旧↔新差值调整 TLA 计数；替换或移除 TLA span。
-   - 所有负载都从扫描输出中被移动出去（`mem::take` / `take` / `mem::replace` / `mem::swap`）——从不克隆。
-4. **重新推导受影响缓存模块的 importer 集合**（`:171`–`:182`）—
-   drain `modules_with_changed_importers`（该集合由 `ModuleLoader::mark_module_importers_changed` 在每次 `importers` 边列表变动旁边填充），并通过 `EcmaView::rebuild_importer_sets` 从边列表为每个列出的模块重建其物化后的 `importers`/`importers_idx`/`dynamic_importers` 集合。扫描只会对其生成的模块执行这一步；对于某个缓存模块，如果其 importer 对它的 import 进行了添加/删除/重新分类，这里会刷新它（issue #7416）。
-5. **合并入口点** — 对于匹配的已有入口点，删除被重新扫描模块的 `related_stmt_infos` 并追加新的条目；否则推入新的入口点。
-6. **修补 barrel 模块** — drain `barrel_state.resolved_barrel_modules`，并将解析后的 import 记录写回缓存模块。
-7. **重新计算用户定义入口** — 从扫描输出的集合开始，加入仍能解析到存活模块的持久配置根节点
-   (`self.user_defined_entry`)。这样每次构建都会重建该集合，而不是单调扩展。
-8. **刷新面向插件的 `ModuleInfo`** — 对在步骤 4 中重新推导的模块，重新运行 `to_module_info` 和 `plugin_driver.set_module_info`，使 `this.getModuleInfo(id).importers` 与合并后的图一致（扫描只会为其生成的模块刷新这一点）。
-
-`merge` 有两个 panic 点：`module_id_to_idx[new_module.id()]` 这个索引表达式（在缺失键时 panic——只有当不变量 6 被破坏时才会发生）以及 `unreachable!()` 分支。
-`Module::idx()` 返回的值与 `module_id_to_idx` 查找结果相同，并且是不会失败的。
+Consequence: every module present in a scan output was registered in
+`module_id_to_idx` by the loader before `merge` runs.
 
 ---
 
-## 读取者和写入者
+## `ScanStageCache::merge` — the write path
 
-### `ScanStageCache` 的写入者
+`scan_stage_cache.rs:80`. Signature: `merge(&mut self, scan_stage_output: ScanStageOutput, plugin_driver: &PluginDriver) -> BuildResult<()>`.
 
-| 写入者                                                   | 位置                                                                                    | 写入内容                                                                                                                                                                                                                                         |
+### Callers
+
+- `bundle.rs:256` — in `normalize_scan_stage_output_and_update_cache`, the
+  non-full-scan branch.
+- `hmr_stage.rs:299`, `:410` — the HMR update and lazy-compile paths.
+
+The full-scan build path does not call `merge`; it uses `set_snapshot` instead
+(`bundle.rs:250`). All current callers pass a partial-scan output, whose
+`module_table` is `HybridIndexVec::Map`; that is why `merge`'s `IndexVec` match
+arm is `unreachable!()`.
+
+### Algorithm
+
+1. **First-build escape hatch** (`:91`–`:96`) — if `snapshot` is `None`,
+   convert the whole output via `try_into` and return.
+2. **Extract `modules`** (`:97`–`:106`) — the `module_table` is matched: the
+   `IndexVec` arm is `unreachable!()`; the `Map` arm is collected into a `Vec`
+   and **sorted by idx**. The sort places existing modules (idx < cache length)
+   before new ones (idx ≥ cache length), and orders new modules ascending so
+   that `push` lands each at its allocated slot.
+3. **Per-module loop** (`:108`–`:172`):
+   - `new_idx` is the `Map` key (indexes the scan output); `idx` is
+     `module_id_to_idx[new_module.id()].idx()` (indexes the cache). By
+     invariant 6 they are equal.
+   - Update `module_idx_by_abs_path` (normal modules only, slash-normalized)
+     and `module_idx_by_stable_id`.
+   - **New module** (`new_idx ≥ cache.module_table.modules.len()`): push the
+     module / AST / stmt infos / local symbol DB onto the parallel collections;
+     adjust `tla_module_count` and `tla_keyword_span_map`.
+   - **Existing module**: overwrite the same collections at `idx`; adjust TLA
+     count by the old↔new delta; replace or remove the TLA span.
+   - All payload is moved (`mem::take` / `take` / `mem::replace` / `mem::swap`)
+     out of the scan output — never cloned.
+4. **Re-derive importer sets of affected cached modules** (`:171`–`:182`) —
+   drain `modules_with_changed_importers` (filled by
+   `ModuleLoader::mark_module_importers_changed` next to every mutation of the
+   `importers` edge list) and rebuild each listed module's materialized
+   `importers`/`importers_idx`/`dynamic_importers` sets from the edge list via
+   `EcmaView::rebuild_importer_sets`. The scan does this only for modules it
+   produced; a cached module whose importer added/removed/re-kinded an import
+   of it is refreshed here (issue #7416).
+5. **Merge entry points** — collect every module present in the partial scan,
+   remove those modules' references from every cached dynamic entry, then merge
+   the new rows. The cleanup is global because deleting or retargeting an import
+   produces no row for the old target. Drop stale entries left without call
+   sites; the merge can re-add an unspanned import with empty `related_stmt_infos`.
+6. **Patch barrel modules** — drain
+   `barrel_state.resolved_barrel_modules` and write the resolved import records
+   back into the cached modules.
+7. **Recompute user-defined entries** — start from the scan
+   output's set, add back persistent configured roots
+   (`self.user_defined_entry`) that still resolve to a live module. This
+   rebuilds the set each build rather than extending it monotonically.
+8. **Refresh plugin-facing `ModuleInfo`** — for the modules re-derived in
+   step 4, re-run `to_module_info` and `plugin_driver.set_module_info` so
+   `this.getModuleInfo(id).importers` matches the merged graph (the scan
+   refreshes it only for modules it produced).
+
+`merge` has two panic surfaces: the `module_id_to_idx[new_module.id()]` index
+expression (panics on a missing key — reachable only if invariant 6 is
+violated) and the `unreachable!()` arm. `Module::idx()` returns the same value
+as the `module_id_to_idx` lookup and is infallible.
+
+---
+
+## Readers and writers
+
+### Writers of `ScanStageCache`
+
+| Writer                                                   | Location                                                                                | What it writes                                                                                                                                                                                                                                         |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ScanStage::scan(scan_mode, &mut self.cache)`            | 在 `bundle.rs:104` 调用                                                               | 通过加载器写入非快照字段。                                                                                                                                                                                                                    |
-| `ModuleLoader` (`cache: &'a mut ScanStageCache`)         | `module_loader.rs:117` 和相关方法                                                      | `module_id_to_idx`、`barrel_state`（例如在失效时移除 `barrel_infos`）、`importers`、`modules_with_changed_importers`、`user_defined_entry`（完整增量扫描）。                                                                           |
-| `ScanStageCache::merge`                                  | `scan_stage_cache.rs:80`；在 `bundle.rs:256`、`hmr_stage.rs:299/410` 中调用             | `snapshot`、`module_idx_by_abs_path`、`module_idx_by_stable_id`、`barrel_state.resolved_barrel_modules`（被 drain）、`modules_with_changed_importers`（被 drain）、快照中的 `tla_*` 字段；为重新推导出的模块刷新插件 `module_infos`。 |
-| `ModuleLoader::revert_partial_scan`                      | `module_loader.rs` 扫描错误退出                                                      | 将 `module_id_to_idx` / `importers` / `barrel_state` / importer 标记恢复到扫描前状态，并填充 `pending_rescans`。                                                                                                                       |
-| `ScanStageCache::set_snapshot`                           | `scan_stage_cache.rs:44`；在 `bundle.rs:250` 以及 `update_defer_sync_data` 内部调用 | `snapshot` + 重建 `module_idx_by_abs_path` / `module_idx_by_stable_id`。                                                                                                                                                                            |
-| `ScanStageCache::update_defer_sync_data`                 | `scan_stage_cache.rs:60`；在 `bundle.rs:257`、`hmr_stage.rs:302/414` 中调用             | 取出并恢复 `snapshot`；`defer_sync_scan_data` 在其中修改每个模块的 `side_effects`。                                                                                                                                                     |
-| `ScanStageCache::create_output`                          | `scan_stage_cache.rs:313`；在 `bundle.rs:258` 中调用                                    | 修改 `snapshot.symbol_ref_db`（克隆后不带作用域，进行交换）；返回一个 `NormalizedScanStageOutput`。                                                                                                                                            |
-| `merge_immutable_fields_for_cache`                       | `bundle.rs:315`，在 `bundle.rs:279` 中调用                                              | `get_snapshot_mut()`；在 link 阶段后恢复符号表作用域。                                                                                                                                                                            |
-| `with_cached_bundle` / `with_cached_bundle_experimental` | `impl_bundler_incremental_build.rs:9` / `:27`                                           | 在 `Bundler` 和 `Bundle` 之间移动整个 `ScanStageCache`。                                                                                                                                                                                       |
+| `ScanStage::scan(scan_mode, &mut self.cache)`            | called at `bundle.rs:104`                                                               | Non-snapshot fields via the loader.                                                                                                                                                                                                                    |
+| `ModuleLoader` (`cache: &'a mut ScanStageCache`)         | `module_loader.rs:117` and methods                                                      | `module_id_to_idx`, `barrel_state` (e.g. removes `barrel_infos` on invalidate), `importers`, `modules_with_changed_importers`, `user_defined_entry` (full incremental scan).                                                                           |
+| `ScanStageCache::merge`                                  | `scan_stage_cache.rs:80`; called at `bundle.rs:256`, `hmr_stage.rs:299/410`             | `snapshot`, `module_idx_by_abs_path`, `module_idx_by_stable_id`, `barrel_state.resolved_barrel_modules` (drained), `modules_with_changed_importers` (drained), `tla_*` fields in the snapshot; refreshes plugin `module_infos` for re-derived modules. |
+| `ModuleLoader::revert_partial_scan`                      | `module_loader.rs` scan error exit                                                      | Restores `module_id_to_idx` / `importers` / `barrel_state` / importer marks to their pre-scan state and fills `pending_rescans`.                                                                                                                       |
+| `ScanStageCache::set_snapshot`                           | `scan_stage_cache.rs:44`; called at `bundle.rs:250` and inside `update_defer_sync_data` | `snapshot` + rebuilds `module_idx_by_abs_path` / `module_idx_by_stable_id`.                                                                                                                                                                            |
+| `ScanStageCache::update_defer_sync_data`                 | `scan_stage_cache.rs:60`; called at `bundle.rs:257`, `hmr_stage.rs:302/414`             | Takes and restores `snapshot`; `defer_sync_scan_data` mutates per-module `side_effects` inside it.                                                                                                                                                     |
+| `ScanStageCache::create_output`                          | `scan_stage_cache.rs:313`; called at `bundle.rs:258`                                    | Mutates `snapshot.symbol_ref_db` (clones it without scoping, swaps); returns a `NormalizedScanStageOutput`.                                                                                                                                            |
+| `merge_immutable_fields_for_cache`                       | `bundle.rs:315`, called at `bundle.rs:279`                                              | `get_snapshot_mut()`; reinstates symbol-table scoping after the link stage.                                                                                                                                                                            |
+| `with_cached_bundle` / `with_cached_bundle_experimental` | `impl_bundler_incremental_build.rs:9` / `:27`                                           | Moves the whole `ScanStageCache` between `Bundler` and `Bundle`.                                                                                                                                                                                       |
 
-### `ScanStageCache` 的读取者
+### Readers of `ScanStageCache`
 
-| 读取者                 | 位置                              | 读取内容                                                                                                                                                        |
+| Reader                 | Location                              | What it reads                                                                                                                                                        |
 | ---------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HmrStage`             | `hmr_stage.rs:48`、`:52`              | `get_snapshot().module_table`、`get_snapshot().index_ecma_ast`；也使用模块索引映射。HMR 也是写入者（它会调用 `merge` / `update_defer_sync_data`）。 |
-| `ModuleLoader`         | `module_loader.rs:410`、`:983`        | `get_snapshot()`（例如 `module_table.modules.get(..)`）。另外还读取 `module_id_to_idx`（`:229`、`:869`）、`barrel_state`、`user_defined_entry`。                        |
-| `defer_sync_scan_data` | `module_loader/deferred_scan_data.rs` | 读取 `module_id_to_idx`（作为 `&FxHashMap<ModuleId, VisitState>` 传入）；修改快照中每个模块的副作用。                                             |
-| `merge`                | `scan_stage_cache.rs:80`              | 读取 `module_id_to_idx`、`user_defined_entry` 和 `importers`（重新推导 importer 集合）。                                                                          |
+| `HmrStage`             | `hmr_stage.rs:48`, `:52`              | `get_snapshot().module_table`, `get_snapshot().index_ecma_ast`; also uses the module index maps. HMR is also a writer (it calls `merge` / `update_defer_sync_data`). |
+| `ModuleLoader`         | `module_loader.rs:410`, `:983`        | `get_snapshot()` (e.g. `module_table.modules.get(..)`). Also reads `module_id_to_idx` (`:229`, `:869`), `barrel_state`, `user_defined_entry`.                        |
+| `defer_sync_scan_data` | `module_loader/deferred_scan_data.rs` | Reads `module_id_to_idx` (passed as `&FxHashMap<ModuleId, VisitState>`); mutates the snapshot's per-module side effects.                                             |
+| `merge`                | `scan_stage_cache.rs:80`              | Reads `module_id_to_idx`, `user_defined_entry`, and `importers` (re-derives importer sets).                                                                          |
 
 ---
 
-## 相关内容
+## Related
 
-- [design.md](./design.md) — 缓存完整性契约与未决问题
-- [bundler-data-lifecycle](../bundler-data-lifecycle/implementation.md) — bundler 级与
-  bundle 级数据、`BundleMode`、构建失败时的缓存完整性。
-- [module-id](../module-id/implementation.md) — `ModuleId` 设计。
-- [rust-bundler](../rust-bundler/implementation.md) — `Bundler` 结构体与构建生命周期。
-- [watch-mode](../watch-mode/implementation.md) — 由部分扫描驱动的 watch 模式。
+- [design.md](./design.md) — cache-integrity contract and open questions
+- [bundler-data-lifecycle](../bundler-data-lifecycle/implementation.md) — bundler-level vs
+  bundle-level data, `BundleMode`, cache integrity on a failed build.
+- [module-id](../module-id/implementation.md) — `ModuleId` design.
+- [rust-bundler](../rust-bundler/implementation.md) — `Bundler` struct and build lifecycle.
+- [watch-mode](../watch-mode/implementation.md) — watch mode, which drives partial scans.

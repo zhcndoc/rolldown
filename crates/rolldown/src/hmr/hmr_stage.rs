@@ -1,5 +1,6 @@
 use std::{
   ops::{Deref, DerefMut},
+  path::Path,
   sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -91,7 +92,9 @@ impl<'a, Fs: FileSystem + Clone + 'static> HmrStage<'a, Fs> {
     Self { input }
   }
 
-  /// Stage order is documented in `internal-docs/dev-engine/implementation.md`
+  /// See `internal-docs/hmr/design.md` for the principles and invariants this
+  /// stage implements. Stage order is documented in
+  /// `internal-docs/dev-engine/implementation.md`
   /// ("Inside `compute_hmr_update_for_file_changes`").
   #[expect(clippy::too_many_lines)]
   pub async fn compute_hmr_update_for_file_changes(
@@ -100,6 +103,7 @@ impl<'a, Fs: FileSystem + Clone + 'static> HmrStage<'a, Fs> {
     clients: &[ClientHmrInput<'_>],
     stamp_table: &mut HmrStampTable,
     last_build_errored: bool,
+    hot_update_hook_enabled: bool,
   ) -> BuildResult<Vec<ClientHmrUpdate>> {
     tracing::trace!(
       changed_files = %changed_file_paths
@@ -111,8 +115,11 @@ impl<'a, Fs: FileSystem + Clone + 'static> HmrStage<'a, Fs> {
     );
 
     // 1. Identify changed modules — per changed file: compute the default affected set, then (if
-    // any plugin registered `hotUpdate`) let the plugin replace-chain edit it before re-fetching.
-    let hot_update_hook_registered = self.plugin_driver.has_hot_update_hook();
+    // the hook is enabled and any plugin registered `hotUpdate`) let the plugin replace-chain
+    // edit it before re-fetching. `hot_update_hook_enabled` is the `hot_update` dev option,
+    // off by default — see `DevOptions::hot_update`.
+    let hot_update_hook_registered =
+      hot_update_hook_enabled && self.plugin_driver.has_hot_update_hook();
     let mut changed_modules = FxIndexSet::default();
     // Modules a `hotUpdate` hook explicitly selected (a plugin returned a replacement set).
     // They are exempt from the unchanged-output suppression below — like `last_build_errored`,
@@ -122,6 +129,7 @@ impl<'a, Fs: FileSystem + Clone + 'static> HmrStage<'a, Fs> {
     // the update empty. Vite ships hook-returned modules unconditionally.
     let mut hook_selected_modules = FxHashSet::default();
     for (changed_file_path, event) in changed_file_paths {
+      let changed_path = Path::new(changed_file_path);
       let changed_file_path = ArcStr::from(changed_file_path.to_slash());
 
       // Default affected set: the file's own module (kept even for deletes — the hook contract
@@ -139,7 +147,12 @@ impl<'a, Fs: FileSystem + Clone + 'static> HmrStage<'a, Fs> {
         .plugin_driver
         .transform_dependencies
         .iter()
-        .filter_map(|entry| entry.value().contains(&changed_file_path).then_some(*entry.key()))
+        .filter_map(|entry| {
+          changed_path
+            .ancestors()
+            .any(|ancestor| entry.value().contains(ancestor))
+            .then_some(*entry.key())
+        })
         .collect::<Vec<_>>();
       transform_dep_modules
         .sort_unstable_by_key(|module_idx| self.module_table().modules[*module_idx].stable_id());
@@ -503,8 +516,8 @@ impl<'a, Fs: FileSystem + Clone + 'static> HmrStage<'a, Fs> {
   /// entry-chunk execution; `initModule` returns them without a factory). Both are
   /// server-derived; selection never reads client-reported runtime state. Contrast
   /// with HMR patches, whose affected set must re-run and therefore subtracts the
-  /// ship map only. The ship map itself is written only when the serving middleware
-  /// observes the response complete.
+  /// ship map only. The ship map itself is written only by the delivery notification
+  /// (`DevEngine::notify_payload_delivered`).
   pub async fn compile_lazy_entry(
     &mut self,
     module_id: &str,

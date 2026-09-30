@@ -200,3 +200,71 @@ console.log(bar());
 这个错误意味着 Node.js 找到了 `rolldown` 包，但没有找到与平台相关的原生包。它通常是由一个已知的 npm 可选依赖 bug 引起的（[npm/cli#4828](https://github.com/npm/cli/issues/4828)）；如果你是用 npm 安装的，删除 `node_modules` 和 `package-lock.json` 后重新安装即可修复。
 
 当配置文件位于一个符号链接目录中，而该目录又指向另一个项目时，也可能出现这种情况，例如 Windows 和 WSL 之间共享的目录（[#9854](https://github.com/rolldown/rolldown/issues/9854)）。Node.js 在解析导入之前会先将配置解析到其真实路径，因此 `import ... from 'rolldown'` 可能会加载到为其他平台安装的 `node_modules`。请将配置文件放在符号链接目录之外，或者在运行时设置 `NODE_OPTIONS=--preserve-symlinks` 环境变量（这与 pnpm 不兼容，因为 pnpm 的 `node_modules` 布局依赖符号链接）。
+
+## 错误："Rolldown 发生 panic" {#panic-debug-info}
+
+panic 始终是 Rolldown 的 bug。请使用 [panic 报告模板](https://github.com/rolldown/rolldown/issues/new?template=panic_report.yml)提交问题。
+
+发布构建会从发布的 binding 中剥离调试信息，因此回溯中不会显示文件名和行号。设置 `RUST_BACKTRACE=1` 也无法补上这些信息：
+
+```text
+Rolldown panicked. This is a bug in Rolldown, not your code.
+
+thread '<unnamed>' panicked at crates/rolldown/src/some_file.rs:42:5:
+called `Option::unwrap()` on a `None` value
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+```
+
+每个版本都会将 binding 的调试信息作为单独的归档文件附上。将该归档解压到 `.node` 文件所在目录后，回溯便会显示缺失的栈帧。Rust 会自动查找解压后的文件，无需设置其他选项。
+
+以下三个平台提供了调试信息归档：
+
+| 平台              | Binding package                    | 归档文件                                                 |
+| ----------------- | ---------------------------------- | -------------------------------------------------------- |
+| Linux x64 (glibc) | `@rolldown/binding-linux-x64-gnu`  | `rolldown-binding.linux-x64-gnu.node.debuginfo.tar.zst`  |
+| macOS arm64       | `@rolldown/binding-darwin-arm64`   | `rolldown-binding.darwin-arm64.node.debuginfo.tar.zst`   |
+| Windows x64       | `@rolldown/binding-win32-x64-msvc` | `rolldown-binding.win32-x64-msvc.node.debuginfo.tar.zst` |
+
+以下步骤以 macOS arm64 为例。请根据你的平台替换对应名称。
+
+```sh
+# 1. Read the installed version.
+node -p "require('rolldown/package.json').version"
+
+# 2. Download the archive from the release with that version.
+gh release download v1.2.3 --repo rolldown/rolldown \
+  --pattern 'rolldown-binding.darwin-arm64.node.debuginfo.tar.zst'
+
+# 3. Decompress the archive, then unpack it into the binding package.
+zstd -d rolldown-binding.darwin-arm64.node.debuginfo.tar.zst
+tar -xf rolldown-binding.darwin-arm64.node.debuginfo.tar \
+  -C node_modules/@rolldown/binding-darwin-arm64/
+
+# 4. Run the build again.
+RUST_BACKTRACE=1 npx rolldown -c
+```
+
+第 3 步需要使用 `zstd` 命令。大多数包管理器都提供该工具，例如 `brew install zstd` 或 `apt install zstd`。
+
+你也可以在浏览器中完成第 2 步：
+
+1. 打开[发布页面](https://github.com/rolldown/rolldown/releases)。
+2. 找到版本号相同的标签。
+3. 从该标签的资源中下载归档文件。
+
+此时每个栈帧都会显示源文件和行号。请将此回溯粘贴到问题报告中：
+
+```text
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/<hash>/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/<hash>/library/core/src/panicking.rs:80:14
+   2: rolldown::some_module::some_function
+             at ./crates/rolldown/src/some_file.rs:42:5
+```
+
+::: tip
+下一次运行 `npm install` 时，binding 包会被替换，已解压的文件也会被删除。每次安装后都需要重新解压该归档。
+:::

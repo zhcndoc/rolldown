@@ -1,34 +1,34 @@
-# 懒加载编译 — 设计
+# Lazy Compilation — Design
 
-> 实现细节——数据生命周期、模块 ID 处理、端到端流程以及经验总结：参见 [implementation.md](./implementation.md)。
+> The implementation — data lifecycle, module-ID handling, end-to-end flow, and lessons learned: see [implementation.md](./implementation.md).
 
-## 关键要点（TL;DR）
+## Key Notes (TL;DR)
 
-1. **透明的 UX** - `import('./module')` 直接可用；插件会自动重写动态导入并解包代理导出
-2. **仅动态导入** - 静态导入总是会立即编译。边界创建与模块类型无关（见 Scope）
-3. **`rolldown:exports` 契约** - 代理模块导出这个命名导出；插件的 `transform_ast` 会在非代理模块中的每个动态导入后链式追加 `.then(__unwrap_lazy_compilation_entry)`
-4. **编译粒度** - 惰性模块 + 请求客户端尚未执行的同步依赖；嵌套的 `import()` 会变成新的惰性边界
-5. **开发服务器直接返回 JS** - `/@vite/lazy` 返回编译后的代码，作为单个 JS 字符串；浏览器将其作为 ES 模块加载（只有内联 sourcemap 会保留——见 implementation.md）
-6. **模块 ID** - 运行时模块映射查询使用**稳定 ID**（相对于 cwd）；绝对路径仅出现在 `/@vite/lazy?id=` 参数以及获取到的模板里的 `import($MODULE_ID)`
-7. **代理模块状态** - 代理有两种状态：**未获取**（stub 模板）和 **已获取**（导入真实模块）
-8. **构建输出刷新** - 在惰性编译后，开发引擎会触发后台重建以更新构建输出；该重建对已连接客户端是静默的
-9. **去重** - 服务器会从惰性补丁中剔除客户端已经执行过的模块，且惰性 chunk 初始化器携带运行时去重标志 —— 共享模块绝不会执行两次
-10. **错误处理** - 未知模块 id 会被拒绝（安全门，#9969）；惰性模块中的初始化错误会让消费者的 `await import()` 以可捕获的方式拒绝（#9981）
-11. **ClientId** - 浏览器为每个标签页生成的 UUID；用于选择每个客户端的 `executed_modules` 集合，以便对惰性补丁进行裁剪
+1. **Transparent UX** - `import('./module')` just works; the plugin rewrites dynamic imports and unwraps proxy exports automatically
+2. **Dynamic imports only** - static imports always compiled immediately. Boundary creation is module-type-blind (see Scope)
+3. **`rolldown:exports` contract** - proxy modules export this named export; the plugin's `transform_ast` chains `.then(__unwrap_lazy_compilation_entry)` onto every dynamic import in non-proxy modules
+4. **Compilation granularity** - lazy module + the sync deps whose current copy the requesting client does not already hold; nested `import()` become new lazy boundaries
+5. **Dev server returns JS directly** - `/@vite/lazy` returns the compiled code as a single JS string; the browser loads it as an ES module (only inline sourcemaps survive — see implementation.md)
+6. **Module IDs** - runtime module-map lookups use **stable IDs** (cwd-relative); absolute paths appear only in the `/@vite/lazy?id=` param and the fetched template's `import($MODULE_ID)`
+7. **Proxy module states** - proxies have two states: **not fetched** (stub template) and **fetched** (imports real module)
+8. **Build output refresh** - after lazy compilation, the dev engine triggers a background rebuild to update build output; the rebuild is silent to connected clients
+9. **Dedup** - the server skips modules whose current copy the client already holds (its ship map + boot-evaluated map, `HmrStage::compile_lazy_entry`); in the browser `initModule` runs a factory only when the module is not yet in the module cache — a shared module never executes twice
+10. **Error handling** - unknown module ids are rejected (security gate, #9969); init errors in lazy modules reject the consumer's `await import()` catchably (#9981)
+11. **ClientId** - browser-generated id per tab (Vite's `bundledDevClient.ts`); selects the per-client `ClientSession` (`crates/rolldown_dev/src/types/client_session.rs`) whose ship map and boot-evaluated map size the lazy chunk
 
-## 什么是懒加载编译？
+## What is Lazy Compilation?
 
-懒加载编译是一种**开发期优化**，它会将动态导入模块的编译推迟到运行时真正请求它们的时候。
+Lazy compilation is a **development optimization** that defers compilation of dynamically imported modules until they are actually requested at runtime.
 
-### 目标
+### Goals
 
-1. **更快的冷启动** - 启动时只编译入口点及其同步依赖
-2. **按需编译** - `import()` 后面的代码会在浏览器执行到它时即时编译
-3. **对用户透明** - 无需修改代码；`import('./foo')` 应该直接可用
+1. **Faster cold starts** - Only compile entry points and their synchronous dependencies on startup
+2. **On-demand compilation** - Code behind `import()` is compiled just-in-time when the browser executes it
+3. **Transparent to users** - No code changes required; `import('./foo')` should just work
 
-## 启用
+## Enabling
 
-懒加载编译是可选启用的，嵌套在开发模式中：
+Lazy compilation is opt-in, nested inside dev mode:
 
 ```js
 export default {
@@ -38,61 +38,61 @@ export default {
 };
 ```
 
-- 仅 `devMode` 就会启用 dev/HMR 机制（`HmrPlugin`）；`lazy: true` 会在用户插件之前额外前置 `LazyCompilationPlugin`（`crates/rolldown/src/utils/apply_inner_plugins.rs`）。
-- 该插件的 `context()` 会将共享的 `lazy_entries` / `fetched_entries` 集合暴露为 `LazyCompilationContext`，并传递给 `DevEngine`，以便它在每次懒加载编译之前调用 `mark_as_fetched`。
-- rolldown-vite 的打包开发模式默认启用 `lazy: true`。
+- `devMode` alone enables the dev/HMR machinery (`HmrPlugin`); `lazy: true` additionally prepends `LazyCompilationPlugin` before user plugins (`crates/rolldown/src/utils/apply_inner_plugins.rs`).
+- The plugin's `context()` exposes the shared `lazy_entries` / `fetched_entries` sets as a `LazyCompilationContext`, which is handed to the `DevEngine` so it can call `mark_as_fetched` before each lazy compile.
+- rolldown-vite's bundled dev mode enables `lazy: true` by default.
 
-## 范围
+## Scope
 
-- **仅动态导入**（`import()`）- 静态导入始终会被编译
-- **独立特性** - 复用 HMR 运行时/渲染路径来输出模块。`/@vite/lazy` 请求本身不会触发任何 HMR 更新——但一旦获取到，懒加载模块就会成为一个普通的、受监视的图模块，之后对它的编辑会通过正常的按客户端 HMR 管道流动（参见 implementation.md“编辑已获取的懒加载模块”）
-- **对模块类型不敏感的边界** - `resolve_id` 会代理 _每一个_ 动态导入，没有扩展名或模块类型过滤，因此真实目标直到第一次 `/@vite/lazy` 请求时才会被加载。编译单元中的所有内容都必须渲染为 ECMAScript AST：
-  - **CSS** - 在 rolldown 中不受支持（已移除，#4271）；懒加载编译会将这一硬错误从服务器启动时延后到第一次 `/lazy` 请求时（HTTP 500，在消费者的 `await import()` 处表现为可捕获的拒绝）
-  - **JSON / text / base64 / dataurl** - 目前在懒加载 chunk 中有问题：它们的导出是在链接时合成的，而懒加载渲染路径会跳过这一步，所以它们会注册为空导出，直到重新构建 + 页面刷新（参见 implementation.md 已知限制）
-  - **二进制资源** - 仅当插件在其 `load` 钩子中将它们转换为 JS 时才可用（例如 dev server 的 Vite 风格资源插件）；发出的字节通过 `onAdditionalAssets` 传递（#9815）
-- 编译单元包含懒加载模块的所有静态依赖，而 `new URL(...)` 引用也算作静态依赖
+- **Dynamic imports only** (`import()`) - static imports are always compiled
+- **Standalone feature** - Reuses the HMR runtime/rendering path for module output. The `/@vite/lazy` request itself emits no HMR update — but once fetched, the lazy module is an ordinary watched graph module, and later edits to it flow through the normal per-client HMR pipeline (see implementation.md "Editing a fetched lazy module")
+- **Module-type-blind boundary** - `resolve_id` proxies _every_ dynamic import, with no extension or module-type filter, so the real target is not loaded until the first `/@vite/lazy` request. Everything in the compiled unit must render as an ECMAScript AST:
+  - **CSS** - unsupported in rolldown (removed, #4271); lazy compilation _defers_ the hard error from server startup to the first `/lazy` request (HTTP 500, catchable rejection at the consumer's `await import()`)
+  - **JSON / text / base64 / dataurl** - currently broken inside lazy chunks: their exports are synthesized at link time, which the lazy render path skips, so they register empty exports until a rebuild + page refresh (see implementation.md Known Limitations)
+  - **Binary assets** - work only when a plugin converts them to JS in its `load` hook (e.g. the dev server's Vite-style asset plugin); emitted bytes are delivered via `onAdditionalAssets` (#9815)
+- The compiled unit includes all static deps of the lazy module, and `new URL(...)` references count as static
 
-## 编译粒度
+## Compilation Granularity
 
-当请求一个懒加载模块时：
+When a lazy module is requested:
 
-- 编译 **该模块 + 其同步依赖** —— 不包括请求方客户端已经执行过的任何模块（通过 `executed_modules` 进行按客户端裁剪）
-- 嵌套动态导入（懒加载模块中的 `import()`）**不会**被编译——它们会成为各自独立的懒加载边界
-- 这会在每个动态导入处形成一个自然的“懒加载边界”
+- Compile **that module + its synchronous dependencies** — minus any module whose current copy the requesting client already holds: its factory was shipped (the ship map `shipped[C]`) or the entry chunk ran it at top level (the boot-evaluated map). Both records live in the client's `ClientSession` (`crates/rolldown_dev/src/types/client_session.rs`); the HMR model behind them is in [hmr/design.md](../hmr/design.md)
+- Nested dynamic imports (`import()` within the lazy module) are **not** compiled - they become their own lazy boundaries
+- This creates a natural "lazy boundary" at each dynamic import
 
 ```
 Entry
-├── sync-dep-1 (立即编译)
-├── sync-dep-2 (立即编译)
-└── import('./lazy-a')  ← 懒加载边界
-    ├── sync-dep-3 (在请求 lazy-a 时编译)
-    ├── sync-dep-4 (在请求 lazy-a 时编译)
-    └── import('./lazy-b')  ← 另一个懒加载边界（尚未编译）
+├── sync-dep-1 (compiled immediately)
+├── sync-dep-2 (compiled immediately)
+└── import('./lazy-a')  ← lazy boundary
+    ├── sync-dep-3 (compiled when lazy-a is requested)
+    ├── sync-dep-4 (compiled when lazy-a is requested)
+    └── import('./lazy-b')  ← another lazy boundary (NOT compiled yet)
 ```
 
-在已渲染的懒加载 chunk（或 HMR patch）内部，另一个懒代理的嵌套 `import()` 会被 HMR finalizer 重写为获取 `/@vite/lazy?...`，然后通过 `loadExports(stableProxyId)` 读取该代理注册的导出——部分包没有单独打包的代理 chunk，因此否则代理的顶层导出会丢失（参见 implementation.md 中的 “Lazy chunk rendering”）。
+Inside a rendered lazy chunk (or HMR patch), a nested `import()` of another lazy proxy is rewritten by the HMR finalizer to fetch `/@vite/lazy?...` and then read the proxy's registered exports via `loadExports(stableProxyId)` — partial bundles have no separately bundled proxy chunk, so the proxy's top-level export would otherwise be lost (see implementation.md "Lazy chunk rendering").
 
-## 关键设计决策
+## Key Design Decisions
 
-### 1. 透明的用户体验
+### 1. Transparent User Experience
 
-用户不应该需要修改代码。`import('./module')` 直接可用。
+Users should not need to change their code. `import('./module')` just works.
 
-### 2. `rolldown:exports` 协议
+### 2. The `rolldown:exports` Contract
 
-代理模块导出一个特殊的命名导出 `'rolldown:exports'`——一个会解析为真实模块导出的 promise（如果真实模块在初始化过程中抛错，则会**拒绝**，这也是为什么初始化错误可以在消费者的 `await import()` 处被捕获，#9981）。
+Proxy modules export a special named export `'rolldown:exports'` — a promise that resolves to the real module's exports (and **rejects** if the real module throws during initialization, which is what makes init errors catchable at the consumer's `await import()`, #9981).
 
-Rolldown 的 `transform_ast` 钩子会自动用一个解包辅助函数包装动态导入：
+Rolldown's `transform_ast` hook automatically wraps dynamic imports with an unwrapping helper:
 
 ```js
-// 用户代码（未改动）
+// User code (unchanged)
 const mod = await import('./lazy.js');
 
-// 由 lazy compilation 插件转换后
+// Transformed by lazy compilation plugin
 const mod = await import('./lazy.js').then(__unwrap_lazy_compilation_entry);
 ```
 
-- 该辅助函数会被注入到每个至少有一个动态导入被包装的模块中（在任何 directive prologues 之后）：
+- The helper is injected (after any directive prologues) into each module where at least one dynamic import was wrapped:
 
   ```js
   function __unwrap_lazy_compilation_entry(m) {
@@ -101,43 +101,43 @@ const mod = await import('./lazy.js').then(__unwrap_lazy_compilation_entry);
   }
   ```
 
-- 这对所有动态导入都是安全的：lazy 代理会返回 promise，非 lazy 模块则原样透传
-- 代理模块本身（id 包含 `?rolldown-lazy=1`）是**例外**：`transform_ast` 会跳过它们，因此 stub 中的 `import('/@vite/lazy?...')` 和 fetched template 中的 `import($MODULE_ID)` 都不会被包装
+- This is safe for ALL dynamic imports: lazy proxies return the promise, non-lazy modules pass through unchanged
+- Proxy modules themselves (ids containing `?rolldown-lazy=1`) are **exempt**: `transform_ast` skips them, so the stub's `import('/@vite/lazy?...')` and the fetched template's `import($MODULE_ID)` are never wrapped
 
-代理模块有两种状态，用于决定 `LazyCompilationPlugin` 返回什么内容：
+### 3. Proxy Module States
 
-#### 未获取（初始状态）
+A proxy module has two states that determine what content the `LazyCompilationPlugin` returns:
 
 #### Not Fetched (Initial State)
 
-返回 **stub 模板**（`proxy-module-template.js`），它通过 `/@vite/lazy` 端点进行拉取：
+Returns the **stub template** (`proxy-module-template.js`), which fetches via the `/@vite/lazy` endpoint:
 
 ```js
 const lazyExports = (async () => {
-  // 从运行时模块映射中移除当前模块的缓存。
-  // 这个键为 $STABLE_PROXY_MODULE_ID 的模块会在懒加载 chunk 中再次被替换为带有真实模块的版本。
+  // Remove the cache of the current module from the runtime's module map.
+  // This module with key $STABLE_PROXY_MODULE_ID is swapped in the lazy loaded chunk again with the real module.
   delete __rolldown_runtime__.modules[$STABLE_PROXY_MODULE_ID];
-  // 开发服务器会拦截这个 import 并提供实际的模块代码。
-  // 我们发送代理模块 ID（带 ?rolldown-lazy=1），以便服务器可以将其标记为已获取。
+  // Dev server will intercept this import and serve the actual module code.
+  // We send the proxy module ID (with ?rolldown-lazy=1) so the server can mark it as fetched.
   await import(
     /* @vite-ignore */ `/@vite/lazy?id=${encodeURIComponent($PROXY_MODULE_ID)}&clientId=${__rolldown_runtime__.clientId}`
   );
-  // 加载 chunk 会重新注册这个代理 id，并将真实模块的
-  // 初始化器作为它自己的 `rolldown:exports` promise 暴露出来。等待该 promise（不要
-  // 只把命名空间直接返回），这样如果真实模块在
-  // 初始化时抛错，`lazyExports` 也会被拒绝，从而在消费者的
-  // `await import(...)` 处暴露为可捕获错误，而不是以未处理的 rejection 形式逃逸。
+  // Loading the chunk re-registers this proxy id, exposing the real module's
+  // initializer as its own `rolldown:exports` promise. Await that promise (don't
+  // just hand back the namespace) so an error thrown while the real module
+  // initializes rejects `lazyExports` too, surfacing at the consumer's
+  // `await import(...)` (catchable) instead of escaping as an unhandled rejection.
   return await __rolldown_runtime__.loadExports($STABLE_PROXY_MODULE_ID)['rolldown:exports'];
 })();
 
 export { lazyExports as 'rolldown:exports' };
 ```
 
-三个步骤：(1) 清除代理在运行时中陈旧的注册，以便 lazy chunk 可以用真实的初始化器重新注册相同的稳定代理 id；(2) 拉取 lazy chunk；(3) 通过**重新注册的代理自身的 `'rolldown:exports'` promise** 进行解析——这是一个两级 promise 链，其拒绝语义使初始化错误可被捕获。
+Three steps: (1) evict the proxy's stale runtime registration so the lazy chunk can re-register the same stable proxy id with the real initializer; (2) fetch the lazy chunk; (3) resolve through the **re-registered proxy's own `'rolldown:exports'` promise** — a two-level promise chain whose rejection semantics make init errors catchable.
 
-#### 已获取（首次请求后）
+#### Fetched (After First Request)
 
-返回 **fetched 模板**（`proxy-module-template-fetched.js`），它会导入真实模块：
+Returns the **fetched template** (`proxy-module-template-fetched.js`), which imports the real module:
 
 ```js
 const lazyExports = (async () => {
@@ -148,23 +148,24 @@ const lazyExports = (async () => {
 export { lazyExports as 'rolldown:exports' };
 ```
 
-导入结果（命名空间）会被刻意丢弃：导出会通过稳定 id 从运行时注册表中读取，因为当共享的 lazy 模块落入公共 chunk 时，chunk 级别的重命名可能会将导出名压缩掉（#9132）。`$MODULE_ID` 是绝对路径（仅用于解析）；`$STABLE_MODULE_ID` 是相对于当前工作目录的稳定 id。
+The import result (namespace) is deliberately discarded: exports are read from the runtime registry by stable id, because chunk-level renaming can minify export names when a shared lazy module lands in a common chunk (#9132). `$MODULE_ID` is the absolute path (used for resolution only); `$STABLE_MODULE_ID` is the cwd-relative stable id.
 
-状态转换由 `LazyCompilationContext.mark_as_fetched()` 管理。
+The state transition is managed by `LazyCompilationContext.mark_as_fetched()`.
 
-### 4. 开发服务器集成
+### 4. Dev Server Integration
 
-开发服务器处理 `/@vite/lazy?id=...&clientId=...` 请求：
+The dev server handles `/@vite/lazy?id=...&clientId=...` requests:
 
-1. 接收带有**代理模块 ID**（带 `?rolldown-lazy=1` 的绝对路径）以及客户端 UUID 的请求
-2. 调用 `DevEngine.compileEntry(moduleId, clientId)`（TS）/ `DevEngine::compile_lazy_entry`（Rust）
-3. DevEngine 查找该客户端的 `executed_modules` 并将该代理标记为已获取
-4. **安全门控**：该 id 只是构建缓存中的一个查找键——不在模块图中的 id 会被拒绝，并返回 `Lazy entry module not found in cache`（不会从文件系统解析，因此恶意请求无法打包任意文件；这与 Vite 的 `server.fs.strict` 类似，并由测试固定，#9969）
-5. 从代理模块进行部分扫描 - 插件返回 fetched 模板，而其中的 `import($MODULE_ID)` 会触发实际模块的编译
-6. 编译过程中生成的资源会在代码返回之前通过 `onAdditionalAssets` 回调交付，因此当 chunk 执行时它们已经可以被提供（#9815）
-7. **直接返回已编译的 JS**（`Content-Type: application/javascript`）——浏览器将其作为 ES module 加载；编译失败则返回 HTTP 500
-8. **通知协调器** - 触发后台重建，使未来的页面加载无需 `/lazy` 请求即可获得 fetched 模板
+1. Receive request with the **proxy module ID** (absolute path with `?rolldown-lazy=1`) and the client's UUID
+2. Call `DevEngine.compileEntry(moduleId, clientId)` (TS) / `DevEngine::compile_lazy_entry` (Rust)
+3. `DevEngine::compile_lazy_entry` copies that client's ship map and boot-evaluated map out of its `ClientSession` and marks the proxy as fetched
+4. **Security gate**: the id is only a lookup key into the build cache — an id not already in the module graph is rejected with `Lazy entry module not found in cache` (never resolved from the filesystem, so a malicious request cannot bundle arbitrary files; analogous to Vite's `server.fs.strict`, pinned by test, #9969)
+5. Partial scan from the proxy module - plugin returns the fetched template, whose `import($MODULE_ID)` triggers compilation of the actual module
+6. Assets emitted during the compile are delivered via the `onAdditionalAssets` callback **before** the code is returned, so they are servable when the chunk executes (#9815)
+7. **Return compiled JS directly** (`Content-Type: application/javascript`) - the browser loads it as an ES module; compile failures answer HTTP 500. Vite appends a `__rolldown_runtime__.payloadDelivered(filename)` line to the chunk (`payloadDeliveredAck` in `bundledDev.ts`); when the client runs it, `DevEngine::notify_payload_delivered` records the chunk's modules in that client's ship map
+8. **Notify coordinator** - trigger a background rebuild so future page loads get the fetched template without a `/lazy` request
 
-## 相关内容
+## Related
 
-- [implementation.md](./implementation.md) — 懒加载编译实现
+- [implementation.md](./implementation.md) — the lazy-compilation implementation
+- [hmr/design.md](../hmr/design.md) — the client-side HMR model; lazy chunk sizing reads its ship map and boot-evaluated map

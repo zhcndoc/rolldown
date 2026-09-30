@@ -283,6 +283,7 @@
   
 ### 不支持 Import attributes
  - rollup@form@import-attributes@attribute-shapes: 处理属性的特殊形状
+ - rollup@form@import-attributes@escapes-attribute-values: 将导入属性值中的引号、反斜杠和行终止符序列化
  - rollup@form@import-attributes@keep-dynamic-assertions: 保留动态导入的 import attributes@generates es
  - rollup@form@import-attributes@keep-dynamic-attributes: 保留动态导入的 import attributes@generates es
  - rollup@form@import-attributes@keeps-static-assertions: 保留输入中的任何 import assertions@generates es
@@ -403,7 +404,6 @@
  - rollup@function@invalid-top-level-await：顶层 await 格式无效时抛出异常（预期为 `INVALID_TLA_FORMAT` 错误，但得到的是 `UNSUPPORTED_FEATURE`）
  - rollup@function@load-returns-string-or-null：load 返回异常内容时抛出错误（预期为 `BAD_LOADER` 错误，但得到的是 `InvalidArg`）
  - rollup@function@vars-with-init-in-dead-branch：处理死分支中带有初始化的变量（#1198）（`EMPTY_BUNDLE` 警告）
- - rollup@function@module-level-directive：模块级指令应产生警告（`MODULE_LEVEL_DIRECTIVE` 警告）
  - rollup@function@hashing@maximum-hash-size：超过最大哈希大小时抛出异常（`VALIDATION_ERROR` 错误）
  - rollup@function@hashing@minimum-hash-size：超过最大哈希大小时抛出异常（`VALIDATION_ERROR` 错误）
  - rollup@function@hashing@length-at-non-hash：为非 "hash" 占位符配置长度时抛出异常（`VALIDATION_ERROR` 错误）

@@ -1,16 +1,16 @@
-# 模块 ID
+# Module ID
 
-## 概述
+## Summary
 
-模块 ID 是整个打包器的主键——模块图、缓存、插件 API、HMR、监听文件都依赖它。在 Rolldown 中，它们基于字符串（`ArcStr`），因此路径是否相同取决于字符串是否完全相等。本文档描述了路径如何在系统中流转、哪里可能发生不匹配，以及 Rollup 如何处理同样的问题。
+Module IDs are the primary keys for the entire bundler — module graph, caches, plugin APIs, HMR, watch files. In Rolldown they're string-based (`ArcStr`), so path identity depends on exact string equality. This doc describes how paths flow through the system, where mismatches can occur, and how Rollup handles the same problem.
 
-## Rollup 的做法
+## How Rollup Does It
 
-Rollup 采用的是**单一归一化点**设计。`resolveId` 钩子（以及通过 `path.resolve()` 的默认实现）是唯一进行路径归一化的地方。解析后的路径会成为到处使用的模块 ID——模块图、缓存、`graph.watchFiles`、插件钩子等。
+Rollup uses a **single normalization point** design. The `resolveId` hook (and its default implementation via `path.resolve()`) is the one place where paths are normalized. The resolved path becomes the module ID used everywhere — module graph, caches, `graph.watchFiles`, plugin hooks, etc.
 
-**模块 ID 使用原生操作系统分隔符。** 在 Windows 上，模块 ID 包含 `\` 分隔符（例如 `D:\project\src\main.js`）。`path.resolve()` 输出会按原样存储——不会对模块 ID 应用分隔符归一化。（[已在 Windows CI 上验证](https://github.com/hyf0-agent/rollup-win-test/actions/runs/22542074808)）
+**Module IDs use native OS separators.** On Windows, module IDs contain `\` separators (e.g. `D:\project\src\main.js`). The `path.resolve()` output is stored as-is — no separator normalization is applied to module IDs. ([Verified on Windows CI](https://github.com/hyf0-agent/rollup-win-test/actions/runs/22542074808))
 
-Rollup 确实有一个 `normalize` 函数，用于将 `\` 转换为 `/`：
+Rollup does have a `normalize` function that converts `\` to `/`:
 
 ```javascript
 // rollup/src/utils/path.ts
@@ -20,117 +20,117 @@ export function normalize(path) {
 }
 ```
 
-不过，这**仅用于下游/输出场景**，而不在核心模块 ID 管道中使用：
+However, this is **only used in downstream/output contexts**, not in the core module ID pipeline:
 
-- `pluginFilter.ts` — 在匹配包含/排除模式之前规范化 ID
-- `Chunk.ts` — 生成 preserveModules 块文件名
-- `renderChunks.ts` — 源映射源路径
-- `relativeId.ts` — 计算相对导入路径
-- `MetaProperty.ts` — import.meta 相对路径
+- `pluginFilter.ts` — normalizes IDs before matching include/exclude patterns
+- `Chunk.ts` — generating preserveModules chunk file names
+- `renderChunks.ts` — source map source paths
+- `relativeId.ts` — computing relative import paths
+- `MetaProperty.ts` — import.meta relative paths
 
-像 `addWatchFile()` 这样的插件 API **不会进行规范化**——它们信任调用方提供一个与模块 ID 约定一致的路径。
+Plugin APIs like `addWatchFile()` do **no normalization** — they trust the caller to provide a path consistent with the module ID convention.
 
-## Rolldown 目前如何处理
+## How Rolldown Does It Today
 
 ### ModuleId
 
-`ModuleId` 由 `ArcStr` 支持，并在构造时被归类为三种类型之一，因此路径操作只会在那些实际上是路径的 ID 上运行：
+`ModuleId` is backed by an `ArcStr`, classified at construction into one of three kinds so that path operations only run on ids that actually are paths:
 
 ```rust
 // rolldown_common/src/types/module_id.rs
 pub struct ModuleId { repr: Repr }
 
 enum Repr {
-  Path(ArcStr),    // 绝对文件系统路径 — 路径操作在这里有意义
-  Virtual(ArcStr), // 虚拟 id，以 `\0` 为前缀（Rollup 约定）
-  Bare(ArcStr),    // 裸说明符（`react`）、URL、data URI、相对说明符，……
+  Path(ArcStr),    // absolute filesystem path — path operations are meaningful
+  Virtual(ArcStr), // virtual id, prefixed with `\0` (Rollup convention)
+  Bare(ArcStr),    // bare specifier (`react`), URL, data URI, relative specifier, …
 }
 ```
 
-等价性、排序和哈希仍然只是针对 `as_str()` 的原始字符串比较（会忽略种类判别），因此路径身份仍然依赖于精确的字符串相等性，而且 `ModuleId` 的哈希与其字符串完全相同——对 `&str` 到 `HashMap<ModuleId, _>` 的查找仍然可用。该分类只会限制 _路径_ 逻辑：`as_path()` 仅在 `Path` 种类下返回 `Some(&Path)`，而像 `is_in_node_modules()` / `representative_name()` 这样的辅助函数也是建立在此之上，所以虚拟 id 和裸说明符不再通过 `Path` / `to_string_lossy` 进行往返转换。
+Equality, ordering, and hashing are still raw string comparison over `as_str()` (the kind discriminant is ignored), so path identity continues to depend on exact string equality, and a `ModuleId` hashes identically to its string — `&str` lookups into `HashMap<ModuleId, _>` keep working. The classification only gates _path_ logic: `as_path()` returns `Some(&Path)` only for the `Path` kind, and helpers like `is_in_node_modules()` / `representative_name()` build on it, so virtual ids and bare specifiers are no longer round-tripped through `Path` / `to_string_lossy`.
 
-解析器（`oxc_resolver`）返回一个 `PathBuf`。Rolldown 通过 `full_path().to_str()` 将其转换为字符串，并按原样存储——不会做分隔符归一化。在 Windows 上，模块 ID 包含原生的 `\` 分隔符，这类 id 会被归类为 `Path`。
+The resolver (`oxc_resolver`) returns a `PathBuf`. Rolldown converts it to a string via `full_path().to_str()` and stores it as-is — no separator normalization. On Windows, module IDs contain native `\` separators, and such ids classify as `Path`.
 
-### 与 Rollup 的对比
+### Comparison with Rollup
 
 |                      | Rollup                           | Rolldown                         |
 | -------------------- | -------------------------------- | -------------------------------- |
-| Windows 上的模块 ID | `C:\Users\project\src\file.js`   | `C:\Users\project\src\file.js`   |
-| Linux 上的模块 ID   | `/home/user/project/src/file.js` | `/home/user/project/src/file.js` |
-| 归一化              | 无（使用原生操作系统分隔符）      | 无（使用原生操作系统分隔符）      |
-| 是否依赖平台？      | 前缀 **和** 分隔符                | 前缀 **和** 分隔符                |
+| Module ID on Windows | `C:\Users\project\src\file.js`   | `C:\Users\project\src\file.js`   |
+| Module ID on Linux   | `/home/user/project/src/file.js` | `/home/user/project/src/file.js` |
+| Normalization        | None (native OS separators)      | None (native OS separators)      |
+| Platform-dependent?  | Prefix **and** separators        | Prefix **and** separators        |
 
-Rollup 和 Rolldown 在这里是**一致**的——两者都会按原样存储 `path.resolve()` / 解析器输出，并使用原生操作系统分隔符。Rollup 中的 `normalize` 函数只会应用于下游/输出场景（见上文），不会作用于模块 ID。
+Rollup and Rolldown are **aligned** here — both store `path.resolve()` / resolver output as-is, with native OS separators. The `normalize` function in Rollup only applies in downstream/output contexts (see above), not to module IDs.
 
-注意：某些插件在对模块 ID 进行字符串匹配时，可能会在内部假设使用 `/` 分隔符。这是插件层面的关注点，而不是 Rollup 与 Rolldown 之间的差异。
+Note: some plugins may internally assume `/` separators when doing string matching on module IDs. This is a plugin-level concern, not a Rollup-vs-Rolldown divergence.
 
 ### StableModuleId
 
-`StableModuleId` 是 `ModuleId` 的一个相对于 cwd、并以正斜杠规范化的版本。用于跨机器稳定性（源映射、HMR 客户端侧引用）。
+`StableModuleId` is a cwd-relative, forward-slash-normalized version of `ModuleId`. Used for cross-machine stability (source maps, HMR client-side references).
 
 ```rust
-// 绝对路径 → 相对于 cwd 的相对路径，使用正斜杠
-// "\0foo" → "\\0foo"（虚拟模块转义）
-// "fs" → "fs"（非路径说明符保持不变）
+// Absolute → relative from cwd, forward slashes
+// "\0foo" → "\\0foo" (virtual module escape)
+// "fs" → "fs" (non-path specifiers unchanged)
 ```
 
-### 路径标识重要的地方
+### Where Path Identity Matters
 
-| 子系统                  | 关键类型                  | 规范化                        | 风险                                              |
-| -------------------------- | ------------------------- | ------------------------------------ | ------------------------------------------------- |
-| 模块图查找        | `ModuleId` (ArcStr)       | 无                                 | 解析器输出必须保持一致                |
-| 扫描阶段缓存           | `ModuleId` → `VisitState` | 无                                 | 同一路径以不同方式解析 = 重复模块 |
-| `module_idx_by_abs_path`   | `ArcStr`                  | 插入时进行 `to_slash()`            | HMR 变更文件路径必须匹配                 |
-| 插件 `get_module_info()` | `&str` 查找             | 无                                 | 插件必须使用精确的模块 ID                   |
-| 插件 `add_watch_file()`  | `ArcStr` 到 `FxDashSet` 中 | 无                                 | 监听集使用原始字符串                        |
-| 监听文件比较      | `ArcStr` 相等               | `#[cfg(windows)]` 反斜杠回退 | 脆弱                                           |
-| 解析器包缓存     | `PathBuf`                 | 路径缓冲区组件比较         | 处理分隔符差异                     |
+| Subsystem                  | Key type                  | Normalization                                      | Risk                                              |
+| -------------------------- | ------------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| Module graph lookup        | `ModuleId` (ArcStr)       | None                                               | Resolver output must be consistent                |
+| Scan stage cache           | `ModuleId` → `VisitState` | None                                               | Same path resolved differently = duplicate module |
+| `module_idx_by_abs_path`   | `ArcStr`                  | `to_slash()` at insertion                          | HMR changed-file paths must match                 |
+| Plugin `get_module_info()` | `&str` lookup             | None                                               | Plugin must use exact module ID                   |
+| Plugin `add_watch_file()`  | `ArcStr` into `FxDashSet` | Resolved against `cwd` and normalized at insertion | Same form as the resolver output                  |
+| Watch file comparison      | `ArcStr` eq               | `#[cfg(windows)]` backslash fallback               | Fragile                                           |
+| Resolver package cache     | `PathBuf`                 | PathBuf component comparison                       | Handles separator differences                     |
 
-### 现有的规范化工具
+### Existing Normalization Utilities
 
-在 sugar_path 3 之后，使用 `rolldown_std_utils` 辅助函数（`relative_path_to_slash`、`relative_path_as_js_specifier`，……）。样式指南：[path-manipulation/style-guide.md](../path-manipulation/style-guide.md)。
+After sugar_path 3, use `rolldown_std_utils` helpers (`relative_path_to_slash`, `relative_path_as_js_specifier`, …). Style guide: [path-manipulation/style-guide.md](../path-manipulation/style-guide.md).
 
-## 核心问题
+## The Core Problem
 
-模块 ID 是字符串，而系统的不同部分会以不同方式生成路径字符串：
+Module IDs are strings, and different parts of the system produce path strings differently:
 
-1. **解析器** 生成绝对路径（使用平台原生分隔符）
-2. **插件** 通过 `addWatchFile()` 提供路径（不保证已规范化）
-3. **notify crate** 报告带有操作系统原生路径的文件变更事件
-4. **HMR client** 发送稳定的 ID（相对路径，使用正斜杠）
+1. **Resolver** produces absolute paths (platform-native separators)
+2. **Plugins** provide paths via `addWatchFile()`, resolved against `cwd` and normalized when they are added
+3. **notify crate** reports file change events with OS-native paths
+4. **HMR client** sends stable IDs (relative, forward slashes)
 
-如果这四者中任意两个对同一个文件的表示方式不一致，查找就会悄无声息地失败——模块找不到、缓存未命中、监视文件不匹配、HMR 更新被丢弃。
+If any two of these disagree on how to represent the same file, lookups silently fail — the module isn't found, the cache misses, the watch file isn't matched, the HMR update is dropped.
 
-目前之所以大体可用，是因为解析器对自身输出保持一致，而且大多数查找在两侧都使用了解析器的输出。真正脆弱的地方在 **边界**——也就是外部生成的路径（notify 事件、插件输入、HMR client）被拿去与解析器生成的模块 ID 比较的时候。
+Today this mostly works because the resolver is consistent with itself, and most lookups use the resolver's output on both sides. The fragile spots are at **boundaries** — where an externally-produced path (notify event, plugin input, HMR client) is compared against a resolver-produced module ID.
 
-## `PathBuf` 比较行为
+## `PathBuf` Comparison Behavior
 
-`Path`/`PathBuf` 比较是通过比较 [组件](https://doc.rust-lang.org/std/path/struct.Components.html) 来进行的，而不是比较原始字节。根据 [官方文档](https://doc.rust-lang.org/std/path/index.html)：规范化在迭代、检查和比较时会忽略“重复的分隔符、非开头的 `.` 组件，以及结尾的分隔符”。在 Windows 上，`/` 和 `\` 都被视为分隔符。
+`Path`/`PathBuf` comparison works by comparing [components](https://doc.rust-lang.org/std/path/struct.Components.html), not raw bytes. From the [official docs](https://doc.rust-lang.org/std/path/index.html): normalization disregards "repeated separators, non-leading `.` components, and trailing separators" for iteration, inspection, and comparisons. On Windows, both `/` and `\` are treated as separators.
 
-| 场景                               | `str` 相等 | `PathBuf` 相等           |
+| Scenario                               | `str` eq | `PathBuf` eq           |
 | -------------------------------------- | -------- | ---------------------- |
-| `/foo/bar` 与 `/foo/bar/`              | false    | **true**               |
-| `/foo//bar` 与 `/foo/bar`              | false    | **true**               |
-| `/foo/./bar` 与 `/foo/bar`             | false    | **true**               |
-| `/foo/../foo/bar` 与 `/foo/bar`        | false    | false                  |
-| （Windows）`C:\foo\bar` 与 `C:/foo/bar` | false    | **true**               |
-| `/foo/Bar` 与 `/foo/bar`               | false    | false（区分大小写） |
+| `/foo/bar` vs `/foo/bar/`              | false    | **true**               |
+| `/foo//bar` vs `/foo/bar`              | false    | **true**               |
+| `/foo/./bar` vs `/foo/bar`             | false    | **true**               |
+| `/foo/../foo/bar` vs `/foo/bar`        | false    | false                  |
+| (Windows) `C:\foo\bar` vs `C:/foo/bar` | false    | **true**               |
+| `/foo/Bar` vs `/foo/bar`               | false    | false (case sensitive) |
 
-哈希与相等性一致——可安全用于 `HashSet`/`HashMap`。
+Hash is consistent with equality — safe to use in `HashSet`/`HashMap`.
 
-**限制：** `PathBuf` 不会解析 `..` 或符号链接。对此你需要 `fs::canonicalize()`，但它也有自己的缺点（会解析符号链接，且对不存在的路径可能失败）。
+**Limitation:** `PathBuf` does not resolve `..` or symlinks. For that you need `fs::canonicalize()`, which has its own downsides (resolves symlinks, may fail for nonexistent paths).
 
-## 未解决的问题
+## Unresolved Questions
 
-- **模块 ID 是否应在创建时标准化？** Rollup 不会对模块 ID 分隔符进行 **标准化** —— 在 Windows 上，插件会在模块 ID 中看到 `\`。Rolldown 目前与此行为一致。Rolldown 是否应当有所不同，在 `/` 中将其标准化为 `ModuleId::new()`，以便实现更简单的跨平台逻辑？这会改变 Windows 上可观察到的模块 ID，但可能会简化插件过滤匹配和内部比较。
+- **Should module IDs be normalized at creation time?** Rollup does **not** normalize module ID separators — on Windows, plugins see `\` in module IDs. Rolldown currently matches this behavior. Should Rolldown diverge and normalize to `/` in `ModuleId::new()` for simpler cross-platform logic? This would change the observable module ID on Windows but could simplify plugin filter matching and internal comparisons.
 
-- **监听文件集合是否应使用 `PathBuf` 而不是 `ArcStr`？** `PathBuf` 可以处理末尾斜杠、双斜杠、`.` 段以及 Windows 分隔符。缺点是会失去廉价的 `ArcStr` 克隆和 `&str` 查找。有关监听模式的专门讨论，请参见 [watch-mode.md](../watch-mode/implementation.md)。
+- **Should the watch file set use `PathBuf` instead of `ArcStr`?** `PathBuf` handles trailing slashes, double slashes, `.` segments, and Windows separators. The downside is losing cheap `ArcStr` cloning and `&str` lookups. See [watch-mode.md](../watch-mode/implementation.md) for the watch-specific discussion.
 
-- **`..` 段和符号链接** —— 无论是 `PathBuf` 比较还是字符串比较，都无法处理这些情况。实际上，`..` 不应出现在解析器输出中（解析器会进行规范化），而符号链接是一个少见的边缘情况。Rolldown 是否应在这里作出任何保证？
+- **`..` segments and symlinks** — Neither `PathBuf` comparison nor string comparison handles these. In practice, `..` shouldn't appear in resolver output (resolvers canonicalize), and symlinks are a rare edge case. Should Rolldown guarantee anything here?
 
-## 相关内容
+## Related
 
-- [watch-mode](../watch-mode/implementation.md) — 监听文件集合路径匹配
-- `crates/rolldown_common/src/types/module_id.rs` — `ModuleId` 类型
-- `crates/rolldown_common/src/types/stable_module_id.rs` — `StableModuleId` 类型
-- `crates/rolldown_std_utils/src/path_ext.rs` — `expect_to_slash()` 工具
+- [watch-mode](../watch-mode/implementation.md) — Watch file set path matching
+- `crates/rolldown_common/src/types/module_id.rs` — `ModuleId` type
+- `crates/rolldown_common/src/types/stable_module_id.rs` — `StableModuleId` type
+- `crates/rolldown_std_utils/src/path_ext.rs` — `expect_to_slash()` utility
