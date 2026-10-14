@@ -1,27 +1,27 @@
-# Bundler 数据生命周期
+# Bundler Data Lifecycle
 
-## 总结
+## Summary
 
-Rolldown 数据分为两个生命周期层级：**bundler 级**（贯穿所有构建存在）和 **bundle 级**（作用域限定在单次构建）。如果搞错了，会引发真实 bug——例如 HMR 重建之间丢失插件状态、在非增量 watch 构建中不必要地物化 `ScanStageCache`、完整重建时模块元数据混杂。本文定义哪些数据属于哪里，以及原因。
+Rolldown data falls into two lifecycle tiers: **bundler-level** (lives across all builds) and **bundle-level** (scoped to a single build). Getting this wrong causes real bugs — lost plugin state between HMR rebuilds, unnecessary `ScanStageCache` materialization on non-incremental watch builds, mixed module metadata across full rebuilds. This doc defines which data belongs where and why.
 
-## 背景
+## Background
 
-最初的设计是让 `RolldownBuild` 在每次 `generate()`/`write()` 调用时都创建一个新的 `Bundler`。这意味着每次构建都是完全独立的会话——没有共享状态，也没有复用。这对于一次性构建没问题，但会让增量构建、HMR 和 watch 模式变得不可能或很脆弱。重构（rolldown/rolldown#6877 到 rolldown/rolldown#6896）引入了 `BundleFactory`/`Bundle` 拆分以及 `PluginDriverFactory`，为每一类数据赋予清晰的所有者和生命周期。
+The original design had `RolldownBuild` create a new `Bundler` for every `generate()`/`write()` call. This meant every build was a fully independent session — no shared state, no reuse. That's fine for one-shot builds, but makes incremental builds, HMR, and watch mode either impossible or fragile. The refactoring (rolldown/rolldown#6877 through rolldown/rolldown#6896) introduced the `BundleFactory`/`Bundle` split and `PluginDriverFactory` to give each piece of data a clear owner and lifetime.
 
-## 两个层级
+## The Two Tiers
 
 ```
-Bundler（长生命周期）
-  ├── BundleFactory（创建一次）
+Bundler (long-lived)
+  ├── BundleFactory (created once)
   │     ├── PluginDriverFactory
   │     ├── SharedResolver
   │     ├── SharedOptions
   │     ├── SharedFileEmitter
   │     ├── module_infos_for_incremental_build     ─┐
-  │     └── transform_dependencies_for_incremental_build ─┤ 通过 Arc 与 PluginDriver 共享
+  │     └── transform_dependencies_for_incremental_build ─┤ shared via Arc with PluginDriver
   │
-  ├── ScanStageCache（在每次构建时进出 Bundle）
-  │     ├── snapshot（NormalizedScanStageOutput）
+  ├── ScanStageCache (moves in/out of Bundle per build)
+  │     ├── snapshot (NormalizedScanStageOutput)
   │     ├── module_id_to_idx
   │     ├── importers
   │     ├── modules_with_changed_importers
@@ -30,156 +30,235 @@ Bundler（长生命周期）
   │     ├── module_idx_by_abs_path
   │     └── module_idx_by_stable_id
   │
-  └── Session（devtools tracing）
+  ├── lost_hmr_update
+  │
+  └── Session (devtools tracing)
 
-Bundle（按构建创建，使用后即消耗）
-  ├── PluginDriver（全新实例，由 PluginDriverFactory 创建）
-  │     ├── plugins / contexts（全新）
-  │     ├── watch_files（全新）
-  │     ├── module_infos（Arc → bundler 级）
-  │     └── transform_dependencies（Arc → bundler 级）
+Bundle (per-build, consumed after use)
+  ├── PluginDriver (fresh instance, created by PluginDriverFactory)
+  │     ├── plugins / contexts (fresh)
+  │     ├── watch_files (fresh)
+  │     ├── module_infos (Arc → bundler-level)
+  │     └── transform_dependencies (Arc → bundler-level)
   ├── warnings
   └── bundle_span
 ```
 
-### 层级 1：Bundler 级（持久）
+### Tier 1: Bundler-Level (Persistent)
 
-在所有构建之间持续存在的数据。它们要么是不可变配置，要么是可增量维护的共享状态。
+Data that survives across all builds. It is either immutable configuration or incrementally-maintained shared state.
 
-| 数据                                           | 为什么属于 bundler 级                                                                                                                                                                                                                                                                                    |
+| Data                                           | Why bundler-level                                                                                                                                                                                                                                                                                        |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SharedOptions`                                | 不可变配置。没有理由每次重建。                                                                                                                                                                                                                                                                           |
-| `SharedResolver`                               | 构建成本高；resolver 的内部缓存能提升重建速度。                                                                                                                                                                                                                                                           |
-| `SharedFileEmitter`                            | 文件发射状态必须在不同构建之间保持一致（例如已发射资源的去重）。                                                                                                                                                                                                                                          |
-| `PluginDriverFactory`                          | 插件定义在构建之间不会变化。变化的只是每次构建的插件 _实例_ 和 _上下文_。                                                                                                                                                                                                                                 |
-| `module_infos_for_incremental_build`           | 插件填充的模块元数据（通过 `this.getModuleInfo`）。必须在增量构建之间保留，以便插件可以查询它们未重新处理过的模块。                                                                                                                                                                                       |
-| `transform_dependencies_for_incremental_build` | 来自插件的 `addWatchFile()` 依赖。对 HMR 失效至关重要——必须持久保存，这样 HMR 阶段才能知道哪些文件影响哪些模块。                                                                                                                                                                                          |
-| `ScanStageCache`                               | 模块图快照、模块索引映射、barrel 状态。使增量构建成为可能——在 `IncrementalBuild` 中，只有变更的模块会被重新扫描，并通过 `ScanStageCache::merge()` 合并。构建期间会临时移动到 `Bundle` 中，然后再移回（见下文“ScanStageCache 所有权”）。 |
+| `SharedOptions`                                | Immutable config. No reason to recreate.                                                                                                                                                                                                                                                                 |
+| `SharedResolver`                               | Expensive to construct; the resolver's internal cache improves rebuild speed.                                                                                                                                                                                                                            |
+| `SharedFileEmitter`                            | File emission state must be consistent across builds (e.g. emitted asset dedup).                                                                                                                                                                                                                         |
+| `PluginDriverFactory`                          | Plugin definitions don't change between builds. Only the per-build plugin _instances_ and _contexts_ do.                                                                                                                                                                                                 |
+| `module_infos_for_incremental_build`           | Plugin-populated module metadata (via `this.getModuleInfo`). Must survive across incremental builds so plugins can query modules they didn't re-process.                                                                                                                                                 |
+| `transform_dependencies_for_incremental_build` | `addWatchFile()` dependencies from plugins. Critical for HMR invalidation — must persist so the HMR stage knows which files affect which modules.                                                                                                                                                        |
+| `ScanStageCache`                               | Module graph snapshot, module index maps, barrel state. Makes incremental builds possible — on `IncrementalBuild`, only changed modules are re-scanned and merged via `ScanStageCache::merge()`. Temporarily moved into `Bundle` during a build, then moved back (see "ScanStageCache Ownership" below). |
 
-**重置规则：** `module_infos` 和 `transform_dependencies` 会在 `FullBuild` 和 `IncrementalFullBuild` 时重置为新的 `Arc::default()`（通过 `BundleFactory::create_bundle`）。它们会在 `IncrementalBuild` 之间保留。
+**Reset rules:** `module_infos` and `transform_dependencies` are reset to fresh `Arc::default()` on `FullBuild` and `IncrementalFullBuild` (via `BundleFactory::create_bundle`). They are preserved across `IncrementalBuild`.
 
-### 层级 2：Bundle 级（每次构建）
+### Tier 2: Bundle-Level (Per-Build)
 
-每次构建都会新建，构建完成后被丢弃（或被消耗）的数据。
+Data created fresh for each build and discarded (or consumed) when the build completes.
 
-| 数据              | 为什么属于 bundle 级                                                                                                                                     |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PluginDriver`    | 插件 hook 携带每次构建的状态（例如累计的 `watch_files`、每个模块的 transform 上下文）。来自上一次构建的旧 driver 会泄漏状态。                             |
-| `watch_files`     | 一次构建触及的文件集合。必须是新的——某个不再被导入的文件不应触发重建。                                                                                     |
-| `warnings`        | 诊断信息是每次构建的输出。                                                                                                                                |
-| `bundle_span`     | 该次构建专用的 tracing span。                                                                                                                              |
-| 插件 `contexts` | `PluginContext` 实例携带每次构建的引用（resolver、file emitter 句柄）。                                                                                   |
+| Data              | Why bundle-level                                                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PluginDriver`    | Plugin hooks carry per-build state (e.g. accumulated `watch_files`, per-module transform context). A stale driver from a previous build would leak state. |
+| `watch_files`     | The set of files a build touched. Must be fresh — a file no longer imported shouldn't trigger rebuilds.                                                   |
+| `warnings`        | Diagnostics are per-build output.                                                                                                                         |
+| `bundle_span`     | Tracing span for this specific build.                                                                                                                     |
+| Plugin `contexts` | `PluginContext` instances carry per-build references (resolver, file emitter handles).                                                                    |
 
-### ScanStageCache 所有权
+### ScanStageCache Ownership
 
-`ScanStageCache` 是 bundler 级数据，但在构建期间，bundle 需要对它进行可变访问。这通过在 `Bundler` 和 `Bundle` 之间临时移动它来实现，然后再移回。由 `with_cached_bundle_experimental` 管理：
+`ScanStageCache` is bundler-level data, but bundles need mutable access to it during a build. This is handled by temporarily moving it out of `Bundler` into `Bundle`, then moving it back. Managed by `with_cached_bundle_experimental`:
 
 ```
-Bundler.cache（ScanStageCache） ──(move)──> Bundle.cache（临时持有者） ──(build)──> Bundle.cache ──(move)──> Bundler.cache
+Bundler.cache (ScanStageCache) ──(move)──> Bundle.cache (temporary holder) ──(build)──> Bundle.cache ──(move)──> Bundler.cache
 ```
 
-| `ScanStageCache` 字段           | 作用                                                                                       |
+| `ScanStageCache` field           | Purpose                                                                                       |
 | -------------------------------- | --------------------------------------------------------------------------------------------- |
-| `snapshot`                       | 完整的模块图（模块、AST、符号、入口）                                           |
-| `module_id_to_idx`               | 模块 ID 到索引的查找                                                                     |
-| `importers`                      | 反向依赖图                                                                      |
-| `modules_with_changed_importers` | 其 `importers` 记录在部分扫描中发生变更的模块；由 `merge` 清空                  |
-| `pending_rescans`                | 工作队列：被中止（并回滚）的部分扫描对应的文件；由下一次部分扫描重试 |
-| `barrel_state`                   | barrel 导出优化状态                                                              |
-| `module_idx_by_abs_path`         | 供 watcher 使用的基于路径的查找                                                                 |
-| `module_idx_by_stable_id`        | 供 HMR 使用的稳定 ID 查找                                                                      |
+| `snapshot`                       | Full module graph (modules, ASTs, symbols, entries)                                           |
+| `module_id_to_idx`               | Module ID to index lookup                                                                     |
+| `importers`                      | Reverse dependency graph                                                                      |
+| `modules_with_changed_importers` | Modules whose `importers` records a partial scan mutated; drained by `merge`                  |
+| `pending_rescans`                | Work queue: files of an aborted (and reverted) partial scan; retried by the next partial scan |
+| `barrel_state`                   | Barrel export optimization state                                                              |
+| `module_idx_by_abs_path`         | Path-based lookup for watcher                                                                 |
+| `module_idx_by_stable_id`        | Stable ID lookup for HMR                                                                      |
 
-### 构建失败时的缓存完整性
+`Bundler::lost_hmr_update` lives next to the cache, not in it. An HMR update
+sets it before it merges its rescan into the graph, and clears it when it
+returns its patches. If the update fails in between, no client ran an edit
+that the graph already has, and the next patch would not re-run it. The
+dev engine then reloads every client and runs a full build instead of the
+next task, whatever its kind (`BundlingTask::run_inner`). It lives outside
+the cache because a full scan drops the whole `ScanStageCache`
+(`ModuleLoader::new`), even when the scan fails.
 
-`ScanStageCache` 必须在 _失败的_ 构建之后仍然完整，而不仅仅是在成功构建后——否则下一次 HMR/增量构建会读取到损坏的缓存并 panic。其不变量是：**在构建之间，`Bundler::cache` 始终是完整的**——`snapshot` 为 `Some`，并且其中的 `symbol_ref_db` 具有真实的作用域信息。
+A successful full build clears it (`Bundler::incremental_bundle`). The task
+that started that build has already sent every client a `FullReload`, and
+Vite holds that reload until the build output arrives. So the tabs reload
+onto the new output, which has the lost edit. If the full build fails, Vite
+drops the pending reload, but the flag stays set, so the next task sends
+the reload again.
 
-一次构建会通过几个非原子性的“破坏 → 修复”步骤来修改缓存。过去，如果在破坏和修复之间发生早期 `?` 返回，缓存会永久损坏：
+The check covers `FullBuild` tasks too. After a failed full build, a file
+change queues a `FullBuild` (`FullBuildFailed` in `BundleCoordinator`). Vite
+does not reload after that build unless a reload is pending, so without the
+engine's `FullReload` the tabs would keep the code from before the lost
+edit. A `FullBuild` has no changed files, and Vite ignores an update whose
+`changedFiles` is empty, so the engine sends `["*"]` instead. `"*"` is not a
+path. It is a workaround until Vite delivers a `FullReload` with no changed
+files.
 
-| 步骤       | 破坏                                                                                         | 修复                                                                    |
-| ---------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 所有权     | `with_cached_bundle` 使用 `mem::take` 取走 `Bundler::cache`，留下 `default()`（`snapshot: None`） | 将 `Bundle::cache` 移回 `Bundler`                                        |
-| 作用域     | `create_output` / `make_copy` 克隆 `symbol_ref_db` 时 _不带_ 作用域（性能优化）                 | `merge_immutable_fields_for_cache` 从 link 阶段恢复作用域                 |
-| 延迟同步   | `ScanStageCache::update_defer_sync_data` `take`s 走 snapshot                                   | `set_snapshot` 将其放回                                                 |
+### Cache integrity on a failed build
 
-因此每个修复步骤都会**无条件**执行：
+`ScanStageCache` must survive a _failed_ build whole, not just a successful one
+— otherwise the next HMR/incremental build reads a broken cache and panics. The
+invariant is: **between builds, `Bundler::cache` is always whole** — `snapshot`
+is `Some` and its `symbol_ref_db` carries real scoping.
 
-- `with_cached_bundle` 在任何结果下都会把缓存移回——它不会 `?` 提前返回。
-- `bundle_up` 在 link 阶段之后、进入可失败的 `generate_bundle` / 文件名检查 / `invalidate_js_side_cache` 步骤之前，立即运行 `merge_immutable_fields_for_cache`。
-- `update_defer_sync_data` 会在向外传播错误之前恢复 snapshot。
+A build mutates the cache through several non-atomic "tear → repair" steps. An
+early `?` return landing between a tear and its repair used to leave the cache
+permanently broken:
 
-失败的扫描也绝不能让缓存处于 _不同步_ 状态。任务结果会在到达时就被应用，因此一次被中止的部分扫描，已经把重新扫描的模块在 `module_id_to_idx` 中标记为 `Seen`，并且可能已经变更了已完成任务的 `importers` 边列表，以及为新发现的模块分配了索引；而 snapshot 从未得到这些变化（`merge` 在错误路径上不会执行）。把下一次部分扫描接到那个状态上，会默默地沿用过时的模块代码，并把新的模块索引从其 snapshot 中对应的位置移开。
+| Step       | Tear                                                                                        | Repair                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Ownership  | `with_cached_bundle` `mem::take`s `Bundler::cache`, leaving `default()` (`snapshot: None`)  | moves `Bundle::cache` back into `Bundler`                                 |
+| Scoping    | `create_output` / `make_copy` clone `symbol_ref_db` _without_ scoping (a perf optimization) | `merge_immutable_fields_for_cache` reinstates scoping from the link stage |
+| Defer-sync | `ScanStageCache::update_defer_sync_data` `take`s the snapshot out                           | `set_snapshot` puts it back                                               |
 
-因此，`ModuleLoader::revert_partial_scan` 会在每次中止时恢复扫描前状态。snapshot 从不被扫描直接修改，所以它充当了干净的主副本，其他一切都从它恢复：
+Each repair therefore runs **unconditionally**:
 
-- 现有的 `module_id_to_idx` 条目会在扫描结束时回到扫描前的值（`Seen` -> `Invalidate` -> `Seen`）；只有为新发现模块插入的键会被移除；
-- `importers` 边列表会从 snapshot 重新推导（`ScanStageCache::derive_importers_from_snapshot`），因为每条边都是某个模块的已解析导入记录；
-- `modules_with_changed_importers` 会被清空，`barrel_state` 会从预先克隆的副本恢复（仅在启用 lazy barrel 时才会克隆）；
-- 新分配的（现在已释放的）模块索引中的 `transform_dependencies` 条目会被丢弃，因此之后复用该索引的模块不会继承它们；
-- 被扫描的文件会进入 `ScanStageCache::pending_rescans`，这是下一次部分扫描会清空的工作队列，因此它们的错误会持续暴露，直到文件被修复。只有图仍然需要的文件才会入队——即条目文件，或在最新边状态下仍被某些内容导入的文件。一个损坏文件如果它的最后一个导入恰好被这次扫描移除了，就会被丢弃；否则它的重试会导致之后每次构建都失败，而同一棵树的全新构建本应通过。
+- `with_cached_bundle` moves the cache back on every outcome — it never `?`-bails.
+- `bundle_up` runs `merge_immutable_fields_for_cache` right after the link
+  stage, _before_ the fallible `generate_bundle` / filename-check /
+  `invalidate_js_side_cache` steps.
+- `update_defer_sync_data` restores the snapshot before propagating an error.
 
-有两个消费者依赖这个队列的内容：
+A failed scan must also not leave the cache _out of sync_. Task results are
+applied as they arrive, so an aborted partial scan has already flipped
+re-scanned modules to `Seen` in `module_id_to_idx`, and may have mutated the
+`importers` edge list for completed tasks and allocated indices for newly
+discovered modules, while the snapshot never receives any of it (`merge` does
+not run on the error path). Splicing the next partial scan onto that state
+would serve stale module code silently and shift new module indices away from
+their snapshot positions.
 
-- `HmrStage::compute_hmr_update` 会在计算客户端边界之前，把待处理文件折叠进它的 stale 和 changed 集合，因此一次被失败扫描回滚的编辑，在重试成功后会进入客户端的补丁（不仅仅是服务端图）；
-- 错误增强（`trace_import_chain_from_modules`）会在 revert 之前运行，此时失败扫描的模块仍存在于 `module_id_to_idx` 和活动边列表中。
+`ModuleLoader::revert_partial_scan` therefore restores the pre-scan state on
+every abort. The snapshot is never touched by a scan, so it acts as the clean
+master copy everything else is recovered from:
 
-因此得到的不变量是：**在构建之间，缓存要么是空的
-（`snapshot` 为 `None`：全新 bundler，或一次失败的全量扫描已将其重置），要么就是一个任何部分扫描都可以继续构建的有效图。** `Bundler::incremental_bundle` 仅凭这个属性（`has_snapshot`）来决定扫描模式，其他消费者无需再推理失败构建。
+- existing `module_id_to_idx` entries end the scan at their pre-scan values
+  (`Seen` -> `Invalidate` -> `Seen`); only the keys inserted for newly
+  discovered modules are removed;
+- the `importers` edge list is re-derived from the snapshot
+  (`ScanStageCache::derive_importers_from_snapshot`), since every edge is a
+  resolved import record of some module;
+- `modules_with_changed_importers` is cleared, `barrel_state` is restored
+  from an upfront clone (taken only when lazy barrel is enabled);
+- `transform_dependencies` entries of the newly allocated (and now freed)
+  module indices are dropped, so a later module reusing an index does not
+  inherit them;
+- the scanned files go into `ScanStageCache::pending_rescans`, a work queue
+  the next partial scan drains, so their errors keep surfacing until the
+  files are fixed. Only files the graph still needs are queued — entries, or
+  files something still imports on the freshest edge state. A broken file
+  whose last import was removed by this very scan is dropped, otherwise its
+  retry would fail every later build that a fresh build of the same tree
+  would pass.
 
-**为什么还要保留失败构建的缓存？** 提交一个 _破损_ 的缓存比直接丢弃它更糟：空的 snapshot 会让下一次 `get_snapshot()` panic，而破损的作用域会让下一次 link 时 `oxc_semantic` 数组越界。一个完整但略微过时的缓存是可恢复的；损坏的则不行。恢复路径是 `BundleMode` 的 `IncrementalFullBuild`（见下表）——它会重新扫描所有内容，但仍依赖缓存结构本身是有效的，才能合并进去。
+Two consumers depend on that queue's contents:
 
-**存在不等于新鲜。** 恢复 snapshot 只能保证它是 _存在_ 且 _结构有效_ 的——不能保证每个字段都是最新的。`defer_sync_scan_data`（按模块进行副作用重新分析）故意采用 **best-effort**：无法重新分析的模块会被跳过——保留其先前的 `side_effects`——其错误会被收集，剩余模块仍会继续同步。因此，失败的构建可能会让某个模块保留过时的 `side_effects`。这只有在 `side_effects` 是一个独立的、没有跨模块不变量的按模块字段时才是安全的：过时的值仍然是一个有效值，而下一次成功构建会重新同步它。对于破损窗口修复的一般规则是：恢复一个 _结构一致_ 的缓存；当在部分失败下无法保证内容新鲜度时，把过时性限制在那些即使过时也安全的字段中。
+- `HmrStage::compute_hmr_update` folds the pending files into its stale and
+  changed sets before computing client boundaries, so an edit that was rolled
+  back by a failed scan reaches the clients' patches once the retry succeeds
+  (not only the server-side graph);
+- error enrichment (`trace_import_chain_from_modules`) runs **before** the
+  revert, while the failed scan's modules still exist in `module_id_to_idx`
+  and the live edge list.
+
+The invariant this buys: **between builds the cache is either empty
+(`snapshot` is `None`: fresh bundler, or a failed full scan reset it) or a
+valid graph any partial scan can build on.** `Bundler::incremental_bundle`
+picks the scan mode from that property alone (`has_snapshot`), and no other
+consumer needs to reason about failed builds.
+
+**Why keep a cache from a failed build at all?** Committing a _torn_ cache is
+worse than dropping it: an empty snapshot panics the next `get_snapshot()`, and
+torn scoping makes `oxc_semantic` index out of bounds during the next link. A
+whole-but-slightly-stale cache is recoverable; a broken one is not. The recovery
+`BundleMode` is `IncrementalFullBuild` (see the table below) — it re-scans
+everything, but still relies on the cache being structurally valid to merge into.
+
+**Presence is not freshness.** Restoring the snapshot guarantees it is _present_
+and _structurally valid_ — not that every field is current. `defer_sync_scan_data`
+(per-module side-effect re-analysis) is deliberately **best-effort**: a module
+that fails to re-analyze is skipped — it keeps its prior `side_effects` — its
+error is collected, and the remaining modules are still synced. So a failed
+build can leave a module with stale `side_effects`. That is safe _only_ because
+`side_effects` is an independent per-module field with no cross-module invariant:
+a stale value is still a valid value, and the next successful build re-syncs it.
+The general rule for a torn-window repair: restore a _structurally consistent_
+cache; where content freshness can't be guaranteed under partial failure,
+confine the staleness to fields that are safe to be stale.
 
 ## BundleMode
 
-`BundleMode` 使三个增量状态显式化。在这个枚举之前，代码使用 `ScanMode` + `is_incremental_build_enabled` 的组合，这些组合含义模糊，且容易出错。
+`BundleMode` makes the three incremental states explicit. Before this enum, the code used `ScanMode` + `is_incremental_build_enabled` combinations that were ambiguous and bug-prone.
 
 ```rust
 pub enum BundleMode {
-    FullBuild,              // 为本次构建创建全新的 ScanStageCache；随后丢弃。
-    IncrementalFullBuild,   // 为本次构建创建全新的 ScanStageCache；保留以供后续增量构建使用。
-    IncrementalBuild,       // 复用现有的 ScanStageCache；仅重新扫描发生变化的文件。
+    FullBuild,              // Fresh ScanStageCache for this build; discard it afterward.
+    IncrementalFullBuild,   // Fresh ScanStageCache for this build; retain it for later incremental builds.
+    IncrementalBuild,       // Reuse existing ScanStageCache; only rescan changed files.
 }
 ```
 
-| 模式                   | `ScanStageCache` 输入 | `ScanStageCache` 输出 | 共享状态重置 | 使用场景                                                                        |
+| Mode                   | `ScanStageCache` in | `ScanStageCache` out | Shared state reset | Use case                                                                        |
 | ---------------------- | ------------------- | -------------------- | ------------------ | ------------------------------------------------------------------------------- |
-| `FullBuild`            | 无                  | 丢弃                 | 是                | 一次性构建、非增量 watch                                                           |
-| `IncrementalFullBuild` | 全新                | 保存                 | 是                | `incremental: true` 的首次构建，或失败构建后的 dev 模式恢复                         |
-| `IncrementalBuild`     | 现有                | 更新                 | 否                | 后续的 `incremental: true` 构建                                                     |
+| `FullBuild`            | None                | Discarded            | Yes                | One-shot build, non-incremental watch                                           |
+| `IncrementalFullBuild` | Fresh               | Saved                | Yes                | First build with `incremental: true`, or dev-mode recovery after a failed build |
+| `IncrementalBuild`     | Existing            | Updated              | No                 | Subsequent builds with `incremental: true`                                      |
 
-**关键区别：** `IncrementalFullBuild` 与 `FullBuild` —— 两者都会执行完整扫描，但 `IncrementalFullBuild` 会保留生成的 `ScanStageCache`，以供后续增量构建使用。若没有这个区分，`incremental: false` 的 watch 模式在每次重建时都会默默承担物化并保留扫描阶段状态的成本，却得不到任何收益。
+**Key distinction:** `IncrementalFullBuild` vs `FullBuild` — both do a full scan, but `IncrementalFullBuild` retains the resulting `ScanStageCache` for later incremental builds. Without this distinction, watch mode with `incremental: false` was silently paying the cost of materializing and retaining scan-stage state on every rebuild for no benefit.
 
 ## PluginDriverFactory
 
-`PluginDriverFactory` 是让打包器层级 / bundle 层级拆分能够用于插件的关键。它持有插件的 _definitions_（打包器层级），并在每次构建时生成新的 `PluginDriver` _instances_（bundle 层级）。
+The `PluginDriverFactory` is what makes the bundler-level / bundle-level split work for plugins. It holds the plugin _definitions_ (bundler-level) and produces fresh `PluginDriver` _instances_ (bundle-level) for each build.
 
-这个工厂还持有 `module_infos` 和 `transform_dependencies` 的 `Arc`。当它创建 `PluginDriver` 时，会把这些 `Arc` 克隆到驱动中。这意味着：
+The factory also owns the `Arc`s for `module_infos` and `transform_dependencies`. When it creates a `PluginDriver`, it clones these Arcs into the driver. This means:
 
-- 每个 bundle 的 `PluginDriver` 都会写入**同一个**底层 `module_infos` 映射（用于增量构建）
-- 在完整构建时，工厂会在创建驱动之前把自己的 `Arc` 替换为新的实例，因此之前的数据会被丢弃
+- Each bundle's `PluginDriver` writes into the **same** underlying `module_infos` map (for incremental builds)
+- On full builds, the factory replaces its Arcs with fresh ones before creating the driver, so previous data is dropped
 
-这就是修复 `this.getModuleInfo()` 在第二次 HMR 重建时返回空值的原因——旧代码会创建完全独立的插件上下文，与上一次构建的模块信息没有任何关联。
+This is what fixed the bug where `this.getModuleInfo()` returned nothing on the second HMR rebuild — the old code created entirely new plugin contexts with no connection to the previous build's module info.
 
-## 通过这种拆分发现的 Bug
+## Bugs Found by This Separation
 
-1. **HMR 重建期间 `module_infos` 丢失**（rolldown/rolldown#6891）—— 每次构建都会创建完全独立的插件上下文。在第二次构建时，`transform` 中的 `this.getModuleInfo()` 返回空值，因为新上下文的模块信息映射是空的。修复：`module_infos` 变为打包器层级，并通过 `PluginDriverFactory` 以 `Arc` 共享。
+1. **Lost `module_infos` across HMR rebuilds** (rolldown/rolldown#6891) — Each build created fully independent plugin contexts. `this.getModuleInfo()` in `transform` returned nothing on the second build because the new context had an empty module info map. Fix: `module_infos` became bundler-level, shared via Arc through `PluginDriverFactory`.
 
-2. **首次增量构建没有 `ScanStageCache`**（rolldown/rolldown#6894）—— 使用 `incremental: true` 时，第一次 `generate()` 调用了 `create_bundle()`（即 `FullBuild`），而不是 `IncrementalFullBuild`，因此没有保留 `ScanStageCache`。第二次调用 `incremental_generate()` 时会 panic，因为它预期存在一个 `ScanStageCache`。修复：`BundleMode` 将这一差异显式化。
+2. **No `ScanStageCache` on first incremental build** (rolldown/rolldown#6894) — With `incremental: true`, the first `generate()` called `create_bundle()` (i.e. `FullBuild`) instead of `IncrementalFullBuild`, so no `ScanStageCache` was retained. The second call to `incremental_generate()` panicked because it expected an existing `ScanStageCache`. Fix: `BundleMode` makes the distinction explicit.
 
-3. **在 `IncrementalFullBuild` 调用之间混入了模块信息**（rolldown/rolldown#6894）—— 如果变更的文件过多，dev 模式会触发第二次 `IncrementalFullBuild`，但代码只在 `create_bundle()`（针对 `FullBuild`）中清空了 `module_infos`，而没有在增量 bundle 创建路径中清空。两个构建的元数据因此混在了一起。修复：使用统一的 `create_bundle(BundleMode, Option<ScanStageCache>)` 方法来处理所有模式。
+3. **Mixed module infos between IncrementalFullBuild calls** (rolldown/rolldown#6894) — If too many files changed, dev mode triggers a second `IncrementalFullBuild`, but the code only cleared `module_infos` in `create_bundle()` (for `FullBuild`), not in the incremental bundle creation path. Two builds' metadata got mixed. Fix: single `create_bundle(BundleMode, Option<ScanStageCache>)` method that handles all modes.
 
-4. **非增量 watch 模式中不必要的 `ScanStageCache` 物化**（rolldown/rolldown#6894）—— 早期版本即使在 watch 模式以 `incremental: false` 运行时也会物化扫描阶段状态，使得这个拆分问题暴露出来。`BundleMode` 将这一点显式化。当前代码在禁用增量构建时会重置 `ScanStageCache`（参见 `Bundle::scan_modules()`），因此它不会再在非增量构建之间被保留。
+4. **Unnecessary `ScanStageCache` materialization in non-incremental watch mode** (rolldown/rolldown#6894) — Earlier versions materialized scan-stage state even when watch mode ran with `incremental: false`, making the separation problem visible. `BundleMode` made this explicit. Current code resets `ScanStageCache` when incremental build is disabled (see `Bundle::scan_modules()`), so it is no longer retained across non-incremental builds.
 
-## 未解决的问题
+## Unresolved Questions
 
-- `Bundler::close()` 仍然存在 `closed` 标志，但 `closeBundle` 是每次构建的关注点。它应该移动到 `BundleHandle`——见 [rust-bundler.md](../rust-bundler/implementation.md)。
+- `Bundler::close()` still exists with a `closed` flag, but `closeBundle` is a per-build concern. It should move to `BundleHandle` — see [rust-bundler.md](../rust-bundler/implementation.md).
 
-## 相关
+## Related
 
-- [rust-bundler](../rust-bundler/implementation.md) — Bundler 结构体和构建生命周期
-- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — Rollup API 兼容包装器（无共享状态）
-- rolldown/rolldown#6877 — 引入 Build 抽象
-- rolldown/rolldown#6883 — Bundler 的 BuildFactory
-- rolldown/rolldown#6886 — Build/BuildFactory 重命名为 Bundle/BundleFactory
+- [rust-bundler](../rust-bundler/implementation.md) — Bundler struct and build lifecycle
+- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — Rollup API compatibility wrapper (no shared state)
+- rolldown/rolldown#6877 — Introduced Build abstraction
+- rolldown/rolldown#6883 — BuildFactory for Bundler
+- rolldown/rolldown#6886 — Build/BuildFactory renamed to Bundle/BundleFactory
 - rolldown/rolldown#6891 — PluginDriverFactory
-- rolldown/rolldown#6894 — BundleMode 枚举
+- rolldown/rolldown#6894 — BundleMode enum

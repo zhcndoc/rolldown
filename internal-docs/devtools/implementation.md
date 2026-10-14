@@ -1,12 +1,12 @@
-# 开发工具 — 实现
+# Devtools — Implementation
 
-> 前瞻性设计（未来方向）和未决问题见 [design.md](./design.md)。
+> Forward-looking design (future directions) and open questions live in [design.md](./design.md).
 
-## 概述
+## Summary
 
-Rolldown devtools 是一个基于追踪的系统，它会将结构化的构建期数据（模块图、chunk 图、插件钩子调用、生成的资源）输出到磁盘，以便外部工具（例如 Vite devtools）消费这些数据，从而提供调试、性能分析和可视化体验。
+Rolldown devtools is a tracing-based system that emits structured build-time data (module graphs, chunk graphs, plugin hook calls, generated assets) to disk so that external tools (e.g. Vite devtools) can consume it to provide debugging, profiling, and visualization experiences.
 
-## 用户面向 API
+## User-Facing API
 
 ```ts
 import { rolldown } from 'rolldown';
@@ -14,66 +14,66 @@ import { rolldown } from 'rolldown';
 const bundle = await rolldown({
   input: 'src/index.js',
   devtools: {
-    sessionId?: string,  // 可选覆盖；若省略则自动生成
+    sessionId?: string,  // optional override; auto-generated if omitted
   },
 });
 await bundle.generate();
 ```
 
-`devtools` 选项是 `@experimental`。设置 `devtools: {}` 就足以启用追踪。该选项通过绑定层传递为 `BindingDevtoolsOptions`，并在 Rust 端规范化为 `DevtoolsOptions { session_id: Option<String> }`。
+The `devtools` option is `@experimental`. Setting `devtools: {}` is sufficient to enable tracing. The option flows through the binding layer as `BindingDevtoolsOptions` and normalizes to `DevtoolsOptions { session_id: Option<String> }` on the Rust side.
 
-CLI 等价项：`--devtools.session-id <id>`。
+CLI equivalent: `--devtools.session-id <id>`.
 
-## 输出
+## Output
 
-启用 devtools 后，rolldown 会将 JSON 行文件写入：
+When devtools is enabled, rolldown writes JSON-lines files to:
 
 ```
 <InputOptions.cwd>/node_modules/.rolldown/<session_id>/
-  meta.json    # SessionMeta 操作（每次构建一个 JSON 对象；在 watch/rebuild 中追加）
-  logs.json    # 所有其他操作，每行一个 JSON 对象
+  meta.json    # SessionMeta action (one JSON object per build; appended in watch/rebuild)
+  logs.json    # All other actions, one JSON object per line
 ```
 
-格式化器会输出相对于 `node_modules/` 的路径，写入线程则将这些路径拼接到它从 `DebugTracer::init` 接收到的会话 `cwd` 上——即 `InputOptions#cwd`。该选项默认为执行构建时的工作目录。进程工作目录不能作为可用的回退方案：wasm 绑定运行在 `wasm32-wasip1-threads` 上，此环境没有进程 `cwd`，相对路径会解析到 `/` 预开放目录，而不是项目目录。
+The formatter emits paths relative to `node_modules/`, and the writer thread joins them onto the session `cwd` it received from `DebugTracer::init` — `InputOptions#cwd`, which defaults to the working directory the build ran from. The process working directory is not a usable fallback: the wasm binding runs on `wasm32-wasip1-threads`, where there is no process `cwd` and a relative path resolves against the `/` preopen instead of the project.
 
-作用域内没有会话 span 的事件会回退到 `unknown-session` id（位于 `crates/rolldown_devtools/src/static_data.rs` 中的 `DEFAULT_SESSION_ID`），该会话永远不会接收到 `cwd`。它们的路径会保持相对路径，因此会在原生环境中遵循进程工作目录，而在 wasm 中，写入器会发出警告而不是写入这些事件。这与 [design.md](./design.md) 在按构建作用域部分记录的进程全局启用注意事项相同：一旦任意构建启用了 devtools，该进程中的后续构建就会继续在 `unknown-session` 下发出事件。
+Events with no session span in scope fall back to the `unknown-session` id (`DEFAULT_SESSION_ID` in `crates/rolldown_devtools/src/static_data.rs`), which never receives a `cwd`. Their paths stay relative, so they follow the process working directory natively and the writer warns instead of writing them on wasm. This is the same process-global activation caveat that [design.md](./design.md) tracks under per-build scoping: once any build turns devtools on, later builds in that process keep emitting under `unknown-session`.
 
-每一行都是一个自包含的 JSON 对象，并带有 `action` 判别字段。操作事件还包含 `timestamp`、`session_id` 和 `build_id` 字段。`StringRef` 条目只包含 `action`、`id` 和 `content`（不包含 timestamp）。消费者读取文件并按换行符进行拆分。
+Each line is a self-contained JSON object with an `action` discriminator field. Action events also carry `timestamp`, `session_id`, and `build_id` fields. `StringRef` entries contain only `action`, `id`, and `content` (no timestamp). The consumer reads the file and splits on newlines.
 
-### 关闭后读取契约
+### Read-after-close contract
 
-只有在 `await bundle.close()` 完成之后，才能保证 `meta.json` 和 `logs.json` 已经完整且可读。内部上，事件会通过通道流向后台写线程，并通过 `BufWriter` 缓冲，因此在 `generate()`/`write()` 之后立即读取文件可能会得到空内容或被截断的内容。`bundle.close()` 会发送带有 ack 通道的 `CloseSession` 命令，并等待写线程的信号，从而建立消费者所依赖的先行发生边。
+`meta.json` and `logs.json` are only guaranteed to be complete and readable **after `await bundle.close()` resolves**. Internally, events flow through a channel to a background writer thread and are buffered via `BufWriter`, so reading the files immediately after `generate()`/`write()` may return empty or truncated content. `bundle.close()` sends a `CloseSession` command with an ack channel and awaits the writer thread's signal, establishing the happens-before edge consumers depend on.
 
-### 大字符串去重
+### Large String Deduplication
 
-大于 5 KB 的顶层字符串字段会按 blake3 哈希进行缓存。一个 `StringRef` 记录会在引用它的动作之前发出：
+Top-level string fields larger than 5 KB are cached by blake3 hash. A `StringRef` record is emitted before the action that references it:
 
 ```json
-{ "action": "StringRef", "id": "<blake3-hash>", "content": "<完整字符串>" }
+{ "action": "StringRef", "id": "<blake3-hash>", "content": "<full string>" }
 ```
 
-大于 10 KB 的顶层字符串字段还会在动作本身中被替换为 `$ref:<hash>` 占位符，指回 `StringRef` 条目。这样可以让动作记录保持紧凑，同时为需要完整内容的消费者保留全部信息。注意：嵌套字符串（例如 `AssetsReady.assets[].content`）不会被 ref——只考虑顶层字段。
+Top-level string fields larger than 10 KB are additionally replaced with a `$ref:<hash>` placeholder in the action itself, pointing back to the `StringRef` entry. This keeps action records compact while preserving full content for consumers that need it. Note: nested strings (e.g. `AssetsReady.assets[].content`) are not ref'd — only top-level fields are considered.
 
-## 架构
+## Architecture
 
-### Crate 布局
+### Crate Layout
 
-| Crate                      | 作用                                                        |
-| -------------------------- | ----------------------------------------------------------- |
-| `rolldown_devtools`        | 核心追踪机制：`DebugTracer`、`Session`、格式化器、层        |
-| `rolldown_devtools_action` | 动作类型定义（带有 `ts-rs` 用于 TS 代码生成的 Rust 结构体） |
-| `@rolldown/debug`          | TypeScript 包：重新导出生成的类型 + `parseToEvents()` 工具  |
+| Crate                      | Purpose                                                                    |
+| -------------------------- | -------------------------------------------------------------------------- |
+| `rolldown_devtools`        | Core tracing machinery: `DebugTracer`, `Session`, formatter, layer         |
+| `rolldown_devtools_action` | Action type definitions (Rust structs with `ts-rs` for TS codegen)         |
+| `@rolldown/debug`          | TypeScript package: re-exports generated types + `parseToEvents()` utility |
 
-### 关键类型
+### Key Types
 
-- **`DebugTracer`** — 使用 devtools 专用层和格式化器初始化一个 `tracing_subscriber` 注册表。通过 `AtomicBool` 进行单例初始化，但它接收的会话 `cwd` 会在每次调用时、每个会话一次地注册到写入线程。销毁时，会向写入线程发送尽力而为（无确认）的 `CloseSession`，作为清理回退方案；权威的刷新路径是 `ClassicBundler::close()`，它使用 `rolldown_devtools::flush_session(session_id)` 并等待确认后再完成解析。
-- **`Session`** — 持有会话 `id`（例如 `sid_0_1710000000000`）和一个父级 `tracing::Span`。所有构建 span 都是会话 span 的子级。当 devtools 被禁用时使用 `Session::dummy()`（无操作 span）。
-- **`DevtoolsLayer`** — 一个 `tracing_subscriber::Layer`，从 span 中提取带有 `CONTEXT_*` 前缀的字段，并将其作为 `ContextData` 存储在 span 扩展中。
-- **`DevtoolsFormatter`** — 一个 `FormatEvent` 实现，用于将带有 `devtoolsAction` 标签的事件序列化为 JSON 行，注入上下文变量，并写入适当的文件。
+- **`DebugTracer`** — Initializes a `tracing_subscriber` registry with the devtools-specific layer and formatter. Singleton init via `AtomicBool`, but the session `cwd` it takes is registered with the writer thread on every call, once per session. On drop, sends a best-effort (no-ack) `CloseSession` to the writer thread as a cleanup fallback; the authoritative flush path is `ClassicBundler::close()`, which uses `rolldown_devtools::flush_session(session_id)` and awaits an ack before resolving.
+- **`Session`** — Holds a session `id` (e.g. `sid_0_1710000000000`) and a parent `tracing::Span`. All build spans are children of the session span. A `Session::dummy()` is used when devtools is disabled (no-op span).
+- **`DevtoolsLayer`** — A `tracing_subscriber::Layer` that extracts `CONTEXT_*` prefixed fields from spans and stores them as `ContextData` in span extensions.
+- **`DevtoolsFormatter`** — A `FormatEvent` impl that serializes `devtoolsAction`-tagged events to JSON lines, injects context variables, and writes to the appropriate file.
 
-### 追踪机制
+### Tracing Mechanism
 
-该系统基于 `tracing` crate 构建。核心思想是：**span 隐式携带上下文，事件显式携带数据**。
+The system is built on the `tracing` crate. The core idea: **spans carry context implicitly, events carry data explicitly**.
 
 ```
 <SessionSpan CONTEXT_session_id="sid_0_...">
@@ -92,94 +92,94 @@ CLI 等价项：`--devtools.session-id <id>`。
 </SessionSpan>
 ```
 
-**为什么使用 span？**
+**Why spans?**
 
-- 无需手动传递即可注入上下文——`session_id`、`build_id`、`call_id` 都会在发出时通过 `${variable_name}` 占位符替换，从祖先 span 中解析出来。
-- 自动异步上下文跟踪——span 会跨越 `.await` 边界继续传递。
+- Context injection without manual plumbing — `session_id`, `build_id`, `call_id` are all resolved from ancestor spans at emit time via `${variable_name}` placeholder substitution.
+- Automatic async context tracking — spans follow across `.await` boundaries.
 
-**事件过滤：** `rolldown_devtools` 和 `rolldown_tracing` 都会根据是否存在 `devtoolsAction` 字段来过滤事件。devtools 层只处理带有该字段的事件；普通 tracing 层（chrome/console）会把它们过滤掉，因此 devtools 事件不会污染标准 trace 输出。
+**Event filtering:** Both `rolldown_devtools` and `rolldown_tracing` filter events by the presence of the `devtoolsAction` field. The devtools layer only processes events with that field; the normal tracing layer (chrome/console) filters them _out_, so devtools events don't pollute standard trace output.
 
-### ID 生成
+### ID Generation
 
-- **Session ID：** `sid_{atomic_seed}_{unix_ms}` — 对每个 `ClassicBundler` / `Bundler` 实例都是唯一的。
-- **Build ID：** `bid_{atomic_seed}_count_{build_count}` — 对会话中的每个 `Bundle` 都是唯一的。`build_count` 在同一个 `BundleFactory` 中每次构建都会递增。
+- **Session ID:** `devtools.sessionId` when set (one path segment; `unknown-session` is reserved regardless of case for events without a session context); otherwise `sid_{atomic_seed}_{unix_ms}`, unique per `ClassicBundler` / `Bundler` instance. A custom id is not checked for uniqueness: callers must give each concurrent bundler its own id, because the writer keys its files and state by that id.
+- **Build ID:** `bid_{atomic_seed}_count_{build_count}` — unique per `Bundle` within a session. The `build_count` increments per build in the same `BundleFactory`.
 
-### 生命周期集成
+### Lifecycle Integration
 
-**`ClassicBundler`**（绑定层，兼容 Rollup 的 API）：
+**`ClassicBundler`** (binding layer, Rollup-compatible API):
 
-1. `new()` — 生成 `session_id`，创建 dummy session
-2. `enable_debug_tracing_if_needed()` — 在第一次带有 `devtools` 选项的构建中，初始化 `DebugTracer` 并创建真实的 session span
-3. 在每次 `create_bundle()` 调用时，将 `Session` 传递给 `BundleFactory`
+1. `new()` — generates `session_id`, creates dummy session
+2. `enable_debug_tracing_if_needed()` — on first build with `devtools` option, swaps in `devtools.sessionId` if given, initializes `DebugTracer` and creates real session span
+3. Passes `Session` to `BundleFactory` on each `create_bundle()` call
 
-**`BundleFactory`**（核心）：
+**`BundleFactory`** (core):
 
-1. 存储 session，通过 `generate_unique_bundle_span()` 生成唯一的 build span
-2. 每个 span 都是 `session.span` 的子 span，并带有 `CONTEXT_build_id` 和 `CONTEXT_hook_resolve_id_trigger` 字段
+1. Stores session, generates unique build spans via `generate_unique_bundle_span()`
+2. Each span is a child of `session.span` with `CONTEXT_build_id` and `CONTEXT_hook_resolve_id_trigger` fields
 
-**`Bundle`**（按构建）：
+**`Bundle`** (per-build):
 
-1. `trace_action_session_meta()` — 发出包含输入项、插件、cwd、平台、格式、输出目录/文件的 `SessionMeta`
-2. `BuildStart` / `BuildEnd` — 分别在外层 `write()`/`generate()` 调用周围以及 `scan_modules()` 内部发出，因此消费者可能会在每次构建中看到嵌套的成对事件
-3. `trace_action_module_graph_ready()` — 在扫描阶段后发出，包含所有模块及其导入关系
-4. `trace_action_chunks_infos()` — 在 generate 阶段构建 chunk 图之后发出
-5. `trace_action_package_graph_ready()` — 在 chunk 实例化之后发出，包含从已解析的 package.json 文件中发现的包元数据
+1. `trace_action_session_meta()` — emits `SessionMeta` with inputs, plugins, cwd, platform, format, output dir/file
+2. `BuildStart` / `BuildEnd` — emitted both around the outer `write()`/`generate()` call and inside `scan_modules()`, so consumers may see nested pairs per build
+3. `trace_action_module_graph_ready()` — emits after scan stage with all modules and their import relationships
+4. `trace_action_chunks_infos()` — emits after chunk graph construction in the generate stage
+5. `trace_action_package_graph_ready()` — emits after chunk instantiation with package metadata discovered from resolved package.json files
 
-**`PluginDriver`**（插件钩子）：
+**`PluginDriver`** (plugin hooks):
 
-- `resolve_id` — 在带有 `CONTEXT_call_id` 的 `HookResolveIdCall` span 中包裹 `HookResolveIdCallStart` / `HookResolveIdCallEnd`
-- `load` — 同样包裹 `HookLoadCallStart` / `HookLoadCallEnd`
+- `resolve_id` — `HookResolveIdCallStart` / `HookResolveIdCallEnd` wrapped in a `HookResolveIdCall` span with `CONTEXT_call_id`
+- `load` — `HookLoadCallStart` / `HookLoadCallEnd` wrapped similarly
 - `transform` — `HookTransformCallStart` / `HookTransformCallEnd`
 - `render_chunk` — `HookRenderChunkStart` / `HookRenderChunkEnd`
 
-每一对钩子调用都会通过其外层 span 获得一个唯一的 `call_id`（UUID v4）。
+Each hook call pair gets a unique `call_id` (UUID v4) via its enclosing span.
 
-## 动作目录
+## Action Catalog
 
-| 动作                         | 何时发出                                  | 关键字段                                                                                                                     |
-| ---------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `SessionMeta`                | 构建开始时（写入 `meta.json`）            | inputs, plugins, cwd, platform, format, dir, file                                                                            |
-| `BuildStart`                 | 扫描阶段之前及 write/generate 调用前后     | —                                                                                                                            |
-| `HookResolveIdCallStart/End` | 每个插件的每次 resolve 调用               | module_request, importer, plugin_name, plugin_id, trigger, call_id, resolved_id                                              |
-| `HookLoadCallStart/End`      | 每个插件的每次 load 调用                  | module_id, plugin_name, plugin_id, call_id, content                                                                          |
-| `HookTransformCallStart/End` | 每个插件的每次 transform 调用             | module_id, content, plugin_name, plugin_id, call_id                                                                          |
-| `ModuleGraphReady`           | 扫描及规范化之后                          | modules[]{id, is_external, imports[]{module_id, kind, module_request}, importers[]}                                          |
-| `BuildEnd`                   | 扫描阶段之后及 write/generate 调用之后     | —                                                                                                                            |
-| `ChunkGraphReady`            | chunk 图构建之后                           | chunks[]{chunk_id, name, reason, modules[], imports[], is_user_defined_entry, is_async_entry, entry_module}                  |
-| `PackageGraphReady`          | chunk 实例化之后                           | packages[]{package_id, name, version, package_json_path, package_root, is_used, dependency_type, size, modules[], chunk_ids[]} |
-| `HookRenderChunkStart/End`   | 每个插件的每次 renderChunk 调用            | chunk_id, plugin_name, plugin_id, call_id, content                                                                           |
-| `AssetsReady`                | 最终资源生成之后                           | assets[]{chunk_id, content, size, filename}                                                                                  |
-| `StringRef`                  | 任何包含大字符串的动作之前                 | id (blake3 hash), content                                                                                                    |
+| Action                       | When Emitted                              | Key Fields                                                                                                                     |
+| ---------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `SessionMeta`                | Start of build (to `meta.json`)           | inputs, plugins, cwd, platform, format, dir, file                                                                              |
+| `BuildStart`                 | Before scan stage + around write/generate | —                                                                                                                              |
+| `HookResolveIdCallStart/End` | Per plugin per resolve call               | module_request, importer, plugin_name, plugin_id, trigger, call_id, resolved_id                                                |
+| `HookLoadCallStart/End`      | Per plugin per load call                  | module_id, plugin_name, plugin_id, call_id, content                                                                            |
+| `HookTransformCallStart/End` | Per plugin per transform call             | module_id, content, plugin_name, plugin_id, call_id                                                                            |
+| `ModuleGraphReady`           | After scan + normalize                    | modules[]{id, is_external, imports[]{module_id, kind, module_request}, importers[]}                                            |
+| `BuildEnd`                   | After scan stage + after write/generate   | —                                                                                                                              |
+| `ChunkGraphReady`            | After chunk graph construction            | chunks[]{chunk_id, name, reason, modules[], imports[], is_user_defined_entry, is_async_entry, entry_module}                    |
+| `PackageGraphReady`          | After chunk instantiation                 | packages[]{package_id, name, version, package_json_path, package_root, is_used, dependency_type, size, modules[], chunk_ids[]} |
+| `HookRenderChunkStart/End`   | Per plugin per renderChunk call           | chunk_id, plugin_name, plugin_id, call_id, content                                                                             |
+| `AssetsReady`                | After final asset generation              | assets[]{chunk_id, content, size, filename}                                                                                    |
+| `StringRef`                  | Before any action with large strings      | id (blake3 hash), content                                                                                                      |
 
-除 `StringRef` 之外，所有动作都会携带注入的 `session_id`、`build_id` 和 `timestamp` 字段。`StringRef` 条目只包含 `action`、`id` 和 `content`。
+All actions except `StringRef` carry injected `session_id`, `build_id`, and `timestamp` fields. `StringRef` entries contain only `action`, `id`, and `content`.
 
-`PackageGraphReady.packages` 包含从已解析模块的 `package.json` 文件中发现的包。当该包至少有一个模块出现在生成的 chunk 中时，`is_used` 为 true；当该包的所有已解析模块都被树摇掉时，`is_used` 为 false。`dependency_type` 在包中的任意模块被构建 `cwd` 下且位于 `node_modules` 之外的源代码模块导入时为 `direct`；否则为 `transitive`。这里使用的是导入者图，而不会检查 `package.json` 的依赖字段。`size` 是该包在树摇和 codegen 之后、chunk 级 `renderChunk`、压缩、banner 及最终资源输出之前，其渲染后模块代码字节数的总和。`modules` 包含该包生成的 chunk 模块 ID，`chunk_ids` 包含匹配的 `ChunkGraphReady` chunk ID；对于未使用的包，这两个数组都为空。包会按照包名、版本、包根目录和包 ID 排序。Rolldown 不会发出重复标志；消费者可以通过按非空包名分组，并检查某个组是否包含多个版本或包根目录，来识别重复包。
+`PackageGraphReady.packages` contains packages discovered from resolved module `package.json` files. `is_used` is true when at least one module for that package appears in a generated chunk, and false when all resolved modules for that package are tree-shaken. `dependency_type` is `direct` when any module in the package is imported by a source module under the build `cwd` and outside `node_modules`; otherwise it is `transitive`. This uses the importer graph and does not inspect `package.json` dependency fields. `size` is the sum of the package's rendered module code bytes after tree-shaking/codegen and before chunk-level `renderChunk`, minification, banners, and final asset emission. `modules` contains the package's generated chunk module IDs, and `chunk_ids` contains the matching `ChunkGraphReady` chunk IDs; both arrays are empty for unused packages. The packages are sorted by package name, version, package root, and package id. Rolldown does not emit a duplicate flag; consumers can identify duplicate packages by grouping non-null package names and checking whether a group contains multiple versions or package roots.
 
-## TypeScript 代码生成
+## TypeScript Codegen
 
-动作类型定义为带有 `#[derive(ts_rs::TS, serde::Serialize)]` 的 Rust 结构体。代码生成流水线如下：
+Action types are defined as Rust structs with `#[derive(ts_rs::TS, serde::Serialize)]`. The codegen pipeline:
 
-1. `cargo test -p rolldown_devtools_action export_bindings` — ts-rs 在 `crates/rolldown_devtools_action/bindings/` 中生成 `.ts` 文件
-2. `scripts/src/gen-debug-action-types.ts` — 复制到 `packages/debug/src/generated/`，创建 barrel `index.ts`
-3. `packages/debug` 以 `@rolldown/debug` 发布 — 导出所有动作类型以及 `parseToEvents()` / `parseToEvent()` 工具
+1. `cargo test -p rolldown_devtools_action export_bindings` — ts-rs generates `.ts` files in `crates/rolldown_devtools_action/bindings/`
+2. `scripts/src/gen-debug-action-types.ts` — copies to `packages/debug/src/generated/`, creates barrel `index.ts`
+3. `packages/debug` publishes as `@rolldown/debug` — exports all action types plus `parseToEvents()` / `parseToEvent()` utilities
 
-运行：`pnpm --filter @rolldown/debug run gen-action-types`
+Run: `pnpm --filter @rolldown/debug run gen-action-types`
 
-## 静态数据管理
+## Static Data Management
 
-文件句柄、会话目录和哈希缓存都存放在由后台写入线程持有的 `WriterState` 中，因此无需加锁：
+File handles, session directories, and hash caches live in `WriterState`, owned by the background writer thread, so no locking is needed:
 
-- `files` — 每个输出文件路径对应一个带缓冲的文件句柄，防止重复写入
-- `files_by_session` — 跟踪每个会话对应哪些文件（用于清理）
-- `exist_hash_by_session` — 跟踪每个会话已输出的 `StringRef` 哈希值（用于去重）
-- `cwd_by_session` — 每个会话的相对日志路径所解析到的目录，由 `LogCommand::SetSessionCwd` 设置；在 `CloseSession` 之后仍会保留，因为 `close()` 会在 `closeBundle` 钩子运行之前将该命令加入队列，因此在进程生命周期内每个会话会保留一个很小的条目
-- `unopenable_files_by_session` — 首次打开失败的日志文件，因此写入线程只会发出一次警告，而不会针对每个事件重试；该条目会在 `CloseSession` 时丢弃，而对于仍然损坏文件上的延迟事件，则会再次发出一次警告并重新添加该条目
+- `files` — one buffered file handle per output file path, preventing duplicate writes
+- `files_by_session` — tracks which files belong to which session (for cleanup)
+- `exist_hash_by_session` — tracks already-emitted `StringRef` hashes per session (for dedup)
+- `cwd_by_session` — the directory each session's relative log paths resolve against, set by `LogCommand::SetSessionCwd`; kept past `CloseSession` because `close()` queues that command before the `closeBundle` hooks run, so it holds one small entry per session for the life of the process
+- `unopenable_files_by_session` — log files whose first open failed, so the writer warns once instead of retrying per event; dropped on `CloseSession`, and a late event on a still-broken file warns once more and re-adds its entry
 
-除会话当前工作目录外，其他所有内容都会在后台写入线程处理 `CloseSession` 命令时被清理——该命令要么通过 `ClassicBundler::close()` 中的 `flush_session(...)` 同步发送（基于确认机制，在 `close()` 解析之前发生），要么由 `DebugTracer::drop` 尽力发送。
+Everything except the session cwd is cleaned up when the background writer thread processes a `CloseSession` command — either sent synchronously via `flush_session(...)` from `ClassicBundler::close()` (ack-based, happens-before `close()` resolving) or best-effort from `DebugTracer::drop`.
 
-## 消费端
+## Consumer Side
 
-`@rolldown/debug` 包提供了：
+The `@rolldown/debug` package provides:
 
 ```ts
 import { parseToEvents, type Event, type StringRef } from '@rolldown/debug';
@@ -189,10 +189,10 @@ const events = parseToEvents(data.trim());
 // events: Array<StringRef | { timestamp, session_id, action: "BuildStart" | "ModuleGraphReady" | "PackageGraphReady" | ... }>
 ```
 
-消费者（如 Vite 开发者工具）读取 JSON 行文件，将 `$ref:<hash>` 占位符解析为 `StringRef` 条目，并重建完整的构建时间线。
+Consumers (like Vite devtools) read the JSON-lines files, resolve `$ref:<hash>` placeholders against `StringRef` entries, and reconstruct the full build timeline.
 
-## 相关
+## Related
 
-- [design.md](./design.md) — devtools 的未来方向和未决问题
-- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — ClassicBundler 设计，引用 devtools session/tracer 字段
-- [rust-bundler](../rust-bundler/implementation.md) — Core Bundler 设计，引用 session 字段。
+- [design.md](./design.md) — devtools future directions and open questions
+- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — ClassicBundler design, references devtools session/tracer fields
+- [rust-bundler](../rust-bundler/implementation.md) — Core Bundler design, references session field

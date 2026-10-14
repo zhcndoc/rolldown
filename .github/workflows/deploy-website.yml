@@ -39,7 +39,7 @@ jobs:
 
       - uses: voidzero-dev/setup-vp@3754dd7dbdb32bd8f6d28b6043de13ad3a75f21f # v1.21.1
         with:
-          version: '0.2.1'
+          version: '1.0.0'
           cache: true
 
       - name: Generate API reference
@@ -92,13 +92,14 @@ jobs:
 
       - uses: voidzero-dev/setup-vp@3754dd7dbdb32bd8f6d28b6043de13ad3a75f21f # v1.21.1
         with:
-          version: '0.2.1'
+          version: '1.0.0'
           cache: true
 
       - name: Deploy to Void
         run: vp run docs:void
         env:
           VOID_PROJECT: rolldown
+          VOID_API_URL: https://api.void.cloud
           ALGOLIA_APP_ID: ${{ secrets.ALGOLIA_APP_ID }}
           ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY }}
 

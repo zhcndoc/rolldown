@@ -38,6 +38,7 @@ import type {
   MinifyOptions,
   ModuleFormat,
   CodeSplittingOptions,
+  ExperimentalInlineCommonChunksOptions,
   GeneratedCodePreset,
   GeneratedCodeOptions,
 } from '../options/output-options.ts';
@@ -446,6 +447,12 @@ const ChecksOptionsSchema = v.strictObject({
       'Whether to emit warnings when multiple star re-exports provide the same name from different modules',
     ),
   ),
+  shimmedExport: v.pipe(
+    v.optional(v.boolean()),
+    v.description(
+      'Whether to emit warnings when a missing export is replaced with an undefined binding',
+    ),
+  ),
 });
 isTypeTrue<IsSchemaSubType<typeof ChecksOptionsSchema, ChecksOptions>>();
 
@@ -627,6 +634,7 @@ const DevModeSchema = v.union([
     implement: v.optional(v.string()),
     skipCommonRuntimeInjection: v.optional(v.boolean()),
     lazy: v.optional(v.boolean()),
+    hotUpdate: v.optional(v.boolean()),
   }),
 ]);
 isTypeTrue<IsSchemaSubType<typeof DevModeSchema, DevModeOptions>>();
@@ -707,7 +715,23 @@ const InputOptionsSchema = v.strictObject({
   devtools: v.pipe(
     v.optional(
       v.object({
-        sessionId: v.pipe(v.optional(v.string()), v.description('Used to name the build.')),
+        sessionId: v.pipe(
+          v.optional(
+            v.pipe(
+              v.string(),
+              // The id names the `node_modules/.rolldown/{sessionId}` directory.
+              v.check(
+                (id) => id !== '' && id !== '.' && id !== '..' && !/[/\\\0]/.test(id),
+                'Expected one path segment: not empty, not "." or "..", and without "/", "\\" or NUL',
+              ),
+              v.check(
+                (id) => id.toLowerCase().toUpperCase() !== 'UNKNOWN-SESSION',
+                '"unknown-session" is reserved for devtools events without a session context',
+              ),
+            ),
+          ),
+          v.description('Used to name the build.'),
+        ),
       }),
     ),
     v.description(
@@ -845,6 +869,24 @@ const AdvancedChunksTestFunctionSchema = v.pipe(
 );
 isTypeTrue<IsSchemaSubType<typeof AdvancedChunksTestFunctionSchema, CodeSplittingTestFunction>>();
 
+const InlineCommonChunksExcludeItemSchema = v.union([
+  StringOrRegExpSchema,
+  AdvancedChunksTestFunctionSchema,
+]);
+
+const ExperimentalInlineCommonChunksSchema = v.strictObject({
+  maxSize: v.optional(v.number()),
+  exclude: v.optional(
+    v.union([InlineCommonChunksExcludeItemSchema, v.array(InlineCommonChunksExcludeItemSchema)]),
+  ),
+});
+isTypeTrue<
+  IsSchemaSubType<
+    typeof ExperimentalInlineCommonChunksSchema,
+    ExperimentalInlineCommonChunksOptions
+  >
+>();
+
 const AdvancedChunksSchema = v.strictObject({
   includeDependenciesRecursively: v.optional(v.boolean()),
   minSize: v.optional(v.number()),
@@ -871,6 +913,7 @@ const AdvancedChunksSchema = v.strictObject({
       }),
     ),
   ),
+  experimentalInlineCommonChunks: v.optional(ExperimentalInlineCommonChunksSchema),
 });
 isTypeTrue<IsSchemaSubType<typeof AdvancedChunksSchema, CodeSplittingOptions>>();
 

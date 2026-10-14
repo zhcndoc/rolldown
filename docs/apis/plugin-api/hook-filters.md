@@ -72,6 +72,7 @@ Rolldown 会在 Rust 端评估过滤器，并且只有在过滤器匹配时才�
 - `resolveId` hook：`id`
 - `load` hook：`id`
 - `transform` hook：`id`、`moduleType`、`code`
+- `renderChunk` hook：`code`
 
 另请参见 [`HookFilter`](/reference/Interface.HookFilter)。
 

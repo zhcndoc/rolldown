@@ -9,7 +9,7 @@ pub mod stmt_eval_analyzer;
 mod top_level_import_read;
 
 use arcstr::ArcStr;
-use const_eval::{ConstEvalCtx, try_extract_const_literal};
+use const_eval::{ConstEvalCtx, eval_can_assign, try_extract_const_literal};
 use oxc::ast::ast::{BindingPattern, Expression, ImportExpression};
 use oxc::ast::{AstKind, ast};
 use oxc::semantic::{NodeId, Reference, ScopeFlags, Scoping};
@@ -116,6 +116,8 @@ pub struct ScanResult {
   /// `import.meta.ROLLDOWN_FILE_URL_<referenceId>[_<urlId>]`, one entry per occurrence.
   pub rolldown_file_url_references: Vec<RolldownFileUrlReference>,
   pub this_expr_replace_map: FxHashMap<NodeId, ThisExprReplaceKind>,
+  /// See `EcmaView::cjs_this_ref`.
+  pub cjs_this_ref: Option<SymbolRef>,
   pub hmr_info: HmrInfo,
   pub hmr_hot_ref: Option<SymbolRef>,
   pub directive_range: Vec<Span>,
@@ -224,6 +226,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       new_url_references: FxHashMap::default(),
       rolldown_file_url_references: Vec::new(),
       this_expr_replace_map: FxHashMap::default(),
+      cjs_this_ref: None,
       hmr_info: HmrInfo::default(),
       hmr_hot_ref,
       directive_range: vec![],
@@ -355,10 +358,11 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       self.result.this_expr_replace_map = generate_replace_this_expr_map(
         &self.top_level_this_expr_set,
         if exports_kind.is_commonjs() {
-          // The rewrite changes `this` to `exports`.
-          // The wrapper requires an `exports` parameter for the new reference.
+          // Top-level `this` is the module's exports object, an implicit `exports` reference.
           // See internal-docs/linking/determine-module-exports-kind/implementation.md.
           self.result.ast_usage.insert(EcmaModuleAstUsage::ExportsRef);
+          self.result.cjs_this_ref =
+            Some(self.result.symbol_ref_db.create_facade_root_symbol_ref("this"));
           ThisExprReplaceKind::Exports
         } else {
           ThisExprReplaceKind::Context
@@ -1122,9 +1126,10 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
   }
 
   pub fn add_constant_symbol(&mut self, symbol_id: SymbolId, value: ConstExportMeta) {
+    let scoping = self.result.symbol_ref_db.scoping();
     let is_mutated = !self.result.symbol_ref_db.is_facade_symbol(symbol_id)
-      && self.result.symbol_ref_db.scoping().symbol_is_mutated(symbol_id);
-    if is_mutated {
+      && scoping.symbol_is_mutated(symbol_id);
+    if is_mutated || eval_can_assign(scoping, symbol_id) {
       return;
     }
     self.result.constant_export_map.insert(symbol_id, value);
