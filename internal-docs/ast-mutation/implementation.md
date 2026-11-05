@@ -1,82 +1,89 @@
-# Pass 之间的 AST 变异
+# AST Mutation Between Passes
 
-## 概要
+## Summary
 
-Rolldown 通过侧表在编译器各个 pass 之间传递每个 AST 节点的元数据。跨 pass 的身份键现在是 oxc 的语义分析后 `NodeId`，而 `Span` 仍然作为源位置元数据，用于诊断、注释、源码映射以及生成的替换范围。
+Rolldown threads per-AST-node metadata between compiler passes via side tables. The cross-pass identity key is now oxc's post-semantic `NodeId`, while `Span` remains source-location metadata for diagnostics, comments, source maps, and generated replacement spans.
 
-公开的 oxc 类型是 `oxc::semantic::NodeId`。它是 AST 节点在语义分析后 `node_id()` / `set_node_id()` 访问器背后的实现；Rolldown 当前使用的版本中并没有单独公开的 `AstNodeId` 类型。
+The public oxc type is `oxc::semantic::NodeId`. It is the implementation behind the `node_id()` / `set_node_id()` accessors on AST nodes after semantic analysis; there is not a separate public `AstNodeId` type in the version Rolldown currently uses.
 
-## Pass 概览
+## Pass Overview
 
-Rolldown 的打包流水线有三个会与 AST 交互的阶段：
+Rolldown's bundling pipeline has three stages that interact with the AST:
 
-- **扫描** - `ScanStage::scan` 会解析每个模块，运行 Rolldown 的预扫描 AST 调整，然后重建语义/作用域信息。这个最终重建步骤会为每个节点——包括调整过程中创建的节点——分配 `NodeId`，因此后续通过 `AstScanner` 的只读遍历会在填充 `EcmaView` 侧表时看到稳定的 id。
-- **链接** - `LinkStage::link` 执行跨模块工作，例如符号绑定、导出解析、tree shaking 和跨模块优化。它仍然不会修改 AST，但可以基于 scan 阶段的记录派生出额外的侧表。
-- **生成 / 收尾** - `ScopeHoistingFinalizer` 由 `GenerateStage::generate` 驱动，是主要在原地修改 AST 的阶段。它会访问感兴趣的节点，调用 `node_id()`，并查询侧表以决定要重写什么。
+- **Scan** - `ScanStage::scan` parses each module, runs Rolldown's pre-scan AST tweaks, then rebuilds semantic/scoping information. This final rebuild is what assigns every node — including the nodes the tweaks created — its `NodeId`, so the subsequent read-only walk via `AstScanner` sees stable ids while populating `EcmaView` side tables.
+- **Link** - `LinkStage::link` performs cross-module work such as symbol binding, export resolution, tree shaking, and cross-module optimization. It still does not mutate the AST, but it can derive additional side tables from scan-time records.
+- **Generate / Finalize** - `ScopeHoistingFinalizer`, driven from `GenerateStage::generate`, is the main stage that mutates the AST in place. It visits interesting nodes, calls `node_id()`, and queries the side tables to decide what to rewrite.
 
-在这些 pass 之间，Rolldown 不会持有 AST 节点的直接引用。生命周期和并行的跨模块工作使这变得不现实。因此，一个模块 AST 内节点持久的身份就是它的 `NodeId`。
+Between passes, Rolldown does not hold direct references to AST nodes. Lifetimes and parallel cross-module work make that impractical. The durable identity for a node within one module AST is therefore its `NodeId`.
 
-## NodeId 契约
+## NodeId Contract
 
-跨 pass 共享的不变式如下：
+The shared invariant across passes:
 
-- **插入**：scan/link 使用被记录的 AST 节点的 `NodeId` 写入侧表条目。
-- **查找**：finalizer 或其他后续 AST walker 从当前节点读取 `node_id()`，并查询表。
-- **必要保证**：该节点来自同一个语义分析后的 AST，并且侧表仅限于该模块，除非键中也包含 `ModuleIdx`。
+- **Insertion**: scan/link write side-table entries using the `NodeId` of the AST node being recorded.
+- **Lookup**: finalizer or another later AST walker reads `node_id()` from the current node and queries the table.
+- **Required guarantees**: the node comes from the same post-semantic AST, and the side table is scoped to the module unless the key also includes `ModuleIdx`.
 
-重要限制：
+Important constraints:
 
-- `NodeId` 只在单个 AST 内唯一。任何合并多个模块记录的表都必须以 `(ModuleIdx, NodeId)` 作为键。
-- `NodeId` 只有在语义分析为其分配 id 之后才有意义。Rolldown 的正常 scan 路径是语义分析后进行的，因此 scan 创建的记录是有效的。
-- 合成/默认节点在稍后分配 id 之前使用 `NodeId::DUMMY`。不要为合成的 `DUMMY` 节点插入跨 pass 的侧表记录。
-- `NodeId::DUMMY` 等于 `NodeId::ROOT`（两者都是 `0`，即 `Program` 节点的 id）。来自合成节点的 `DUMMY` 探测之所以会缺失，只是因为没有任何侧表记录 `Program` 级别的条目——绝不要向按模块划分的 `NodeId` 表中添加以 `Program` 为键的条目。
-- 已克隆的语义分析后节点可以保留原始节点 id，除非克隆被重置或重新构建语义信息。应将克隆节点视为对身份敏感。
+- `NodeId` is only unique within a single AST. Any table that combines records from multiple modules must key by `(ModuleIdx, NodeId)`.
+- `NodeId` is meaningful only after semantic analysis has assigned ids. Rolldown's normal scan path is post-semantic, so scan-created records are valid.
+- Synthetic/default nodes use `NodeId::DUMMY` unless ids are assigned later. Do not insert cross-pass side-table records for synthetic `DUMMY` nodes.
+- `NodeId::DUMMY` equals `NodeId::ROOT` (both are `0`, the `Program` node's id). `DUMMY` probes from synthesized nodes only miss because no side table records a `Program`-level entry — never add a `Program`-keyed entry to a per-module `NodeId` table.
+- Cloned post-semantic nodes can preserve the original node id unless the clone is reset or semantic information is rebuilt. Treat cloned nodes as identity-sensitive.
 
-有两条路径会对扫描得到的 AST 的 _克隆_ 进行最终处理；该克隆由 `EcmaAst::clone_with_another_arena` 复制到新的分配器中，它们通过不同机制满足“同一个语义分析后的 AST”这一保证：
+Two paths finalize a _clone_ of the scanned AST, produced by `EcmaAst::clone_with_another_arena` into a fresh allocator, and they satisfy the "same post-semantic AST" guarantee through different mechanisms:
 
-- **缓存路径 — 保留 id。** 增量构建缓存（`NormalizedScanStageOutput::make_copy`、`ScanStageCache::create_output`）会把它的克隆交给 link 阶段和 `ScopeHoistingFinalizer`，它们复用 scan 阶段的作用域信息，并且不会重新运行语义分析。克隆本身必须携带 scan 阶段的 id——这就是为什么 `clone_with_another_arena` 使用 oxc 的 `clone_in_with_semantic_ids`，而不是普通的 `clone_in`；后者会把每个 id 重置为 `NodeId::DUMMY`，从而悄无声息地破坏所有查找。
-- **HMR 路径 — 确定性重新推导。** `crates/rolldown/src/hmr/hmr_stage.rs` 中的 HMR 渲染器会先克隆，然后立即在克隆上运行 `EcmaAst::make_semantic`，这会重新标记每个 `NodeId`；克隆保留的 id 会在任何查找之前被覆盖。查找仍然有效，是因为 `SemanticBuilder` 仅按遍历顺序为节点编号，所以对同一树形结构的未修改克隆会重新推导出与 scan 阶段完全相同的 id。两个不变式保证了这一点：在 `make_semantic` 运行之前不能修改克隆，并且 oxc 的编号必须仍然是树形结构的纯函数（截至 oxc 0.135，这一点成立——`with_cfg` / `with_enum_eval` 等 builder 选项不会影响编号）。破坏任一条件都会悄无声息地改变 id：索引查找（`module.imports[&…]`）会 panic，`.get()` 查找则会静默跳过重写。
+- **Cache path — id preservation.** The incremental-build cache (`NormalizedScanStageOutput::make_copy`, `ScanStageCache::create_output`) hands its clones to the link stage and `ScopeHoistingFinalizer`, which reuse scan-time scoping and never re-run semantic. The clone itself must carry the scan-time ids — this is why `clone_with_another_arena` uses oxc's `clone_in_with_semantic_ids` rather than plain `clone_in`, which would reset every id to `NodeId::DUMMY` and silently break every lookup.
+- **HMR path — deterministic re-derivation.** The HMR renderers in `crates/rolldown/src/hmr/hmr_stage.rs` clone and then immediately run `EcmaAst::make_semantic` on the clone, which re-stamps every `NodeId`; the ids the clone preserved are overwritten before any lookup. Lookups still hit because `SemanticBuilder` numbers nodes purely by traversal order, so an unmutated clone of the same tree shape re-derives exactly the scan-time ids. Two invariants keep this true: nothing may mutate the clone before `make_semantic` runs, and oxc's numbering must remain a pure function of tree shape (true as of oxc 0.135 — builder options such as `with_cfg` / `with_enum_eval` do not affect numbering). Breaking either shifts ids silently: the indexing lookups (`module.imports[&…]`) panic, the `.get()` lookups silently skip rewrites.
 
-## 当前以 NodeId 为键的表
+## Current NodeId-Keyed Tables
 
-主要的跨 pass 侧表、以 `NodeId` 为键的有：
+The main cross-pass side tables keyed by `NodeId` are:
 
 - `EcmaView::imports` - import declarations, export-from declarations, dynamic `import()` expressions, and recognized `require()` call expressions.
-- `EcmaView::dummy_record_set` - 需要运行时 helper 重写的 `require` 标识符引用。
-- `EcmaView::new_url_references` - 映射到资源导入记录的 `new URL('...', import.meta.url)` 节点。
+- `EcmaView::dummy_record_set` - `require` identifier references that need the runtime helper rewrite.
+- `EcmaView::new_url_references` - `new URL('...', import.meta.url)` nodes mapped to asset import records.
 - `EcmaView::rolldown_file_url_references` and the generate stage's `ResolvedFileUrls` - `import.meta.ROLLDOWN_FILE_URL_<referenceId>` member expressions recorded at scan; `resolveFileUrl` hook results are keyed by `(ModuleIdx, NodeId)` for the finalizer's rewrite.
-- `EcmaView::this_expr_replace_map` - 应该变成 `exports` 或 `undefined` 的顶层 `this` 表达式。
-- `MemberExprRef::node_id` and `LinkingMetadata::resolved_member_expr_refs` - 从 scan 到 link 再到 finalization 的命名空间/成员表达式解析。
-- `DynamicImportExprInfo::node_id` 记录了其所在模块中的动态 `import()` 节点；`EntryPoint::related_stmt_infos` 随后携带 `(ModuleIdx, …, NodeId, …)` 元组，以便将动态 import 入口追溯回模块图中的位置。
-- 跨模块优化状态，它有两种形态：每个模块各自的一组无副作用调用表达式（裸 `NodeId`，只在同一模块的遍历中消费），以及按 `(ModuleIdx, NodeId)` 键控的全图范围内不可达动态导入集合，因为它汇总了来自每个模块的记录。
+- `EcmaView::this_expr_replace_map` - top-level `this` expressions that should become `exports` or `undefined`.
+- `MemberExprRef::node_id` and `LinkingMetadata::resolved_member_expr_refs` - namespace/member-expression resolution from scan through link to finalization.
+- `EcmaView::namespace_in_checks` and `LinkingMetadata::folded_namespace_in_checks` - `'key' in ns` expressions on namespace imports, and the results the finalizer prints for the ones resolved at link time.
+- `DynamicImportExprInfo::node_id` records the dynamic `import()` node within its own module; `EntryPoint::related_stmt_infos` then carries `(ModuleIdx, …, NodeId, …)` tuples so a dynamic-import entry can be traced back across the module graph.
+- Cross-module optimization state, which comes in two shapes: a per-module set of side-effect-free call expressions (bare `NodeId`, only consumed within the same module's traversal) and a graph-wide set of unreachable dynamic imports keyed by `(ModuleIdx, NodeId)` because it aggregates records from every module.
 
-这意味着 finalizer 生成的、保留默认 `NodeId::DUMMY` 的节点不会意外匹配 scan 阶段的记录。`Span` 不再需要同时充当这些重写决策的键。
+This means finalizer-generated nodes that keep the default `NodeId::DUMMY` do not accidentally match scan-time records. `Span` no longer needs to double as the key for these rewrite decisions.
 
-## `Span` 仍然适用的地方
+## Where Span Still Belongs
 
-`Span` 仍然是源位置的正确表示。它依然用于：
+`Span` remains the right representation for source positions. It is still used for:
 
-- 指向用户源码的诊断和警告；
-- 注释、源码映射范围、指令/hashbang 范围，以及 TLA 关键字位置；
-- 生成的替换范围，其中代码生成应保留有用的源位置；
-- import 记录的源位置，包括用于解析器诊断的原始模块请求范围，以及用于需要指向完整 import 位置的诊断的已解析 `importer_span`。
+- diagnostics and warnings that point at user source;
+- comments, source-map ranges, directive/hashbang ranges, and TLA keyword locations;
+- generated replacement spans where codegen should preserve a useful source location;
+- import-record source locations, including the raw module-request span for resolver diagnostics and resolved `importer_span` for diagnostics that need to point at the full import site.
 
-对于 import 记录，模块请求范围属于 `ImportRecordStateInit`：依赖解析诊断仍然需要标出原始说明符，但该范围不会被带入 `ImportRecordStateResolved`。已解析记录会保留 `importer_span`，因为后续 pass（例如 TLA import-chain 诊断）需要一个位置来表示已解析的 import 边。
+For import records, the module-request span belongs to `ImportRecordStateInit`: dependency
+resolution diagnostics still need to underline the original specifier, but the span is not
+carried into `ImportRecordStateResolved`. Resolved records keep `importer_span` because later
+passes, such as TLA import-chain diagnostics, need a location for the resolved import edge.
 
-对于成员表达式，`NodeId` 是跨 pass 的查找键，但 `Span` 仍然作为源位置必需：`MemberExprRef::span` 会让诊断定位到原始表达式，而 finalizer 会把当前成员表达式的 span 应用到生成的替换中，从而让源码映射和诊断位置继续绑定到被重写的源码范围。
+For member expressions, `NodeId` is the cross-pass lookup key, but spans remain necessary as
+source locations: `MemberExprRef::span` points diagnostics at the original expression, and the
+finalizer applies the current member expression span to generated replacements so source-map and
+diagnostic locations stay tied to the rewritten source range.
 
-不要再添加仅以 `Span` 为键的跨 pass 节点侧表。如果后续 pass 需要识别同一个 AST 节点，应优先使用 `NodeId`；如果一张表可能包含来自多个模块的记录，则应包含 `ModuleIdx`。
+Do not add a cross-pass node side table keyed only by `Span`. If a later pass needs to identify the same AST node, prefer `NodeId`; if records from more than one module can share a table, include `ModuleIdx`.
 
-## 预扫描 Span 处理
+## Pre-Scan Span Handling
 
-`PreProcessor` 不再为了身份而重写 span。自从迁移到 `NodeId` 之后，成对 span 的唯一性不再支撑任何身份表，因此普通的重复 span 会保持原样，而预扫描重写过程中创建的节点可以保留保留的合成 span（`SPAN`，`0..0`）。
+`PreProcessor` does not rewrite spans for identity anymore. Pairwise span uniqueness does not back any identity table after the `NodeId` migration, so ordinary duplicate spans are left alone, and nodes created during pre-scan rewrites can keep the reserved synthetic span (`SPAN`, `0..0`).
 
-后续遍历不得使用 `span.is_unspanned()` 来判断一个 scanner 可见节点是否有跨遍历记录。例如，最终处理一个 `require()` 调用现在依赖 `EcmaView::imports.get(call_expr.node_id())`：预扫描创建的调用具有语义 `NodeId`，因此可以命中；而 finalizer 创建的调用会保留 `NodeId::DUMMY`，因此命不中。
+Later passes must not use `span.is_unspanned()` to decide whether a scanner-visible node has a cross-pass record. For example, finalizing a `require()` call now relies on `EcmaView::imports.get(call_expr.node_id())`: pre-scan-created calls have semantic `NodeId`s and can hit, while finalizer-created calls keep `NodeId::DUMMY` and miss.
 
-实践规则很简单：把 `Span` 当作位置，把 `NodeId` 当作同一 AST 节点身份，把 `(ModuleIdx, NodeId)` 当作跨模块节点身份。
+The practical rule is simple: treat `Span` as location, `NodeId` as same-AST node identity, and `(ModuleIdx, NodeId)` as cross-module node identity.
 
-## 相关内容
+## Related
 
-- [ast-construction](../ast-construction/implementation.md) — rolldown 如何构建这些节点，其身份由该契约跟踪；合成节点使用 synthetic-`SPAN` / dummy-`NodeId` 的规范与本文档共享
+- [ast-construction](../ast-construction/implementation.md) — how rolldown builds the nodes whose identity this contract tracks; the synthetic-`SPAN` / dummy-`NodeId` discipline for synthesized nodes is shared with that doc
 - [bundler-data-lifecycle](../bundler-data-lifecycle/implementation.md)
 - [module-id](../module-id/implementation.md)

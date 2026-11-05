@@ -105,7 +105,9 @@ impl GenerateStage<'_> {
           return None;
         }
         let init_target = order_state.esm_init_target(module_idx, meta)?;
-        let is_noop = init_is_noop(meta, ast_table[module_idx].as_ref(), keep_names);
+        // In dev mode every wrapper's closure holds the module's HMR header.
+        let is_noop = !self.options.is_dev_mode_enabled()
+          && init_is_noop(meta, ast_table[module_idx].as_ref(), keep_names);
         let targets_by_stmt = modules[module_idx]
           .as_normal()
           .zip(module_to_chunk[module_idx])
@@ -298,10 +300,12 @@ fn transitive_esm_init_targets(
   ctx: &EsmInitTargetContext<'_>,
 ) -> FxHashMap<StmtInfoIdx, Vec<WrappedEsmInitTarget>> {
   let mut targets_by_stmt = FxHashMap::<StmtInfoIdx, Vec<WrappedEsmInitTarget>>::default();
-  // A transparent order wrapper owns no init calls: its consumers route through it to the leaves
-  // they read. A transparent module whose wrapper comes from interop takes the legacy path below.
+  // Consumer-local routes own no init calls, including interop-wrapped routes. Other transparent
+  // wrappers bypass metadata only when order lowering owns their initialization.
   // See internal-docs/code-splitting/design.md#tree-shaking-parity-across-strict-modes.
-  if ctx.order_wrap && ctx.order_state.reexport_init_is_transparent(module.idx) {
+  if (ctx.order_wrap && ctx.order_state.reexport_init_is_transparent(module.idx))
+    || ctx.order_state.is_consumer_local_reexport_route(module.idx)
+  {
     return targets_by_stmt;
   }
   // Shared across all excluded re-export statements of this importer, so a barrel subtree is

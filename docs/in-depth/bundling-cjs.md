@@ -30,21 +30,18 @@ module.exports = { value: 'foo' };
 打包后会生成：
 
 ```js
-// #region \0rolldown/runtime.js
-// ...运行时代码
-// #endregion
+// \0rolldown/runtime.js
+// ...runtime code
 
-// #region foo.js
+// foo.js
 var require_foo = __commonJS({
   'foo.js'(exports, module) {
     module.exports = { value: 'foo' };
   },
 });
 
-// #endregion
-// #region index.js
+// index.js
 const getFooExports = () => require_foo();
-// #endregion
 ```
 
 在这个示例中，`foo.js` 模块在调用 `getFooExports()` 之前不会执行，从而保持了 CommonJS 的懒加载行为。
@@ -68,23 +65,19 @@ module.exports = { value: 'foo' };
 打包输出：
 
 ```js
-// #region \0rolldown/runtime.js
-// ...运行时代码
-// #endregion
+// \0rolldown/runtime.js
+// ...runtime code
 
-// #region foo.js
+// foo.js
 var require_foo = __commonJS({
   'foo.js'(exports, module) {
     module.exports = { value: 'foo' };
   },
 });
 
-// #endregion
-// #region index.js
+// index.js
 var import_foo = __toESM(require_foo());
 console.log(import_foo.value);
-
-// #endregion
 ```
 
 `__toESM` 辅助函数确保 CommonJS 导出会被正确转换为 ES 模块格式，从而可以无缝访问导出的值。

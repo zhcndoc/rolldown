@@ -35,6 +35,7 @@ const sidebarForGuide: DefaultTheme.SidebarItem[] = [
       { text: '指令', link: '/in-depth/directives.md' },
       { text: '自动代码分割', link: '/in-depth/automatic-code-splitting.md' },
       { text: '手动代码分割', link: '/in-depth/manual-code-splitting.md' },
+      { text: '内联公共 chunk', link: '/in-depth/inline-common-chunks.md' },
       { text: '打包 CJS', link: '/in-depth/bundling-cjs.md' },
       {
         text: '非 ESM 输出格式',

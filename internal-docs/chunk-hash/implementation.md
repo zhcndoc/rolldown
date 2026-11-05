@@ -1,47 +1,47 @@
-# 块哈希
+# Chunk Hash
 
-## 摘要
+## Summary
 
-每个输出 chunk 的文件名都可以包含一个 `[hash]` token，调用方通常期望它是一个**内容可寻址**的标识符：相同内容（跨构建、跨机器、跨配置）→ 相同 hash → 相同文件名。这使得 HTTP 缓存、不可变部署以及 CDN 缓存固定成为可能。
+Each emitted chunk's file name can contain a `[hash]` token that callers expect to be a **content-addressable** identifier: same content (across builds, machines, configurations) → same hash → same file name. This enables HTTP caching, immutable deploys, and CDN cache pinning.
 
-这个机制必须同时满足三个不变性：
+The mechanism has to satisfy three invariants at once:
 
-1. **跨构建稳定。** 添加或移除一个无关的 chunk，不能改变任何其自身字节未变化的 chunk 的 hash。
-2. **对真实内容敏感。** 任何对 chunk 字节的修改——或者对其传递依赖的 chunk 的修改——都必须改变它的 hash。
-3. **构建内唯一性。** 两个不同的 chunk 如果会解析成同一个文件名，最终必须拥有不同的 hash。
+1. **Stability across builds.** Adding or removing an unrelated chunk must not change the hash of any chunk whose own bytes are unchanged.
+2. **Sensitivity to real content.** Any change to a chunk's bytes — or to a chunk it transitively depends on — must change its hash.
+3. **Uniqueness within a build.** Two distinct chunks that would resolve to the same file name must end up with different hashes.
 
-这三者相互牵制，而这里描述的设计本质上与 Rollup 相同。非显而易见的部分在于：当 chunk 内容通过名字相互引用时，如何满足 #1，以及如何解决 #2 和 #3 之间罕见的冲突。
+These three pull in opposite directions, and the design described here is essentially the same as Rollup's. The non-obvious bits are: how to satisfy #1 when chunk contents quote each other by name, and how to resolve the rare conflict between #2 and #3.
 
-## 流程
+## The Pipeline
 
-hash 计算位于 `crates/rolldown/src/utils/chunk/finalize_chunks.rs::finalize_assets`。在它运行时，每个 chunk 都已经被渲染成字符串，并且每个 chunk 都已经被分配了一个**初步文件名**，例如 `entries/main-!~{001}~.js` —— 其中的 `!~{001}~` 是一个 hash 占位符，见下文。
+Hash computation lives in `crates/rolldown/src/utils/chunk/finalize_chunks.rs::finalize_assets`. By the time it runs, every chunk has already been rendered into a string, and every chunk has been assigned a **preliminary filename** like `entries/main-!~{001}~.js` — the `!~{001}~` is a hash placeholder, see below.
 
 ```
-[渲染 chunks]
-  ↓ chunk.content（字符串）+ chunk.preliminary_filename（带占位符）
+[render chunks]
+  ↓ chunk.content (string) + chunk.preliminary_filename (with placeholder)
 [finalize_assets]
-  ├─ 阶段 1（并行）：每个 chunk 的独立内容 hash
-  ├─ 阶段 2（并行）：每个 chunk 的最终 hash = 自身独立内容 + 传递依赖的独立内容
-  ├─ 阶段 3（串行）：通过对冲突进行重新 hash 来消解文件名冲突
-  ├─ 将 content + filename 中的占位符替换为最终 hash
-  └─ 准备 sourcemaps，对其最终内容进行 hash，然后 emit
+  ├─ Phase 1 (parallel):  per-chunk standalone content hash
+  ├─ Phase 2 (parallel):  per-chunk final hash = own standalone + transitive deps' standalone
+  ├─ Phase 3 (sequential): deconflict file names by rehashing on collision
+  ├─ replace placeholders in content + filename with final hashes
+  └─ prepare sourcemaps, hash their final content, then emit them
 ```
 
-## Hash 占位符
+## Hash Placeholders
 
-hash 占位符是一个固定形状的字符串 `!~{<index>}~`，由 `HashPlaceholderGenerator`（`crates/rolldown_utils/src/hash_placeholder.rs`）在 rolldown 需要在 chunk 的最终 hash 尚未知晓时先输出一个对该 chunk 的引用时注入。它会出现在两个地方：
+A hash placeholder is a fixed-shape string `!~{<index>}~` injected by `HashPlaceholderGenerator` (`crates/rolldown_utils/src/hash_placeholder.rs`) whenever rolldown needs to emit a reference to a chunk before the chunk's final hash is known. It appears in two places:
 
-- **在 `preliminary_filename` 中。** 像 `entries/[name]-[hash].js` 这样的模板，在分配占位符后会变成 `entries/main-!~{001}~.js`。
-- **在 chunk 内容中。** 任何 emitter 写出跨 chunk 的 import 路径时——`crates/rolldown_common/src/chunk/mod.rs` 中的 `import_path_for(importee_chunk)`——都会把被导入 chunk 的 `absolute_preliminary_filename`（其中包含它自己的占位符）拼接进生成的代码里：
+- **Inside `preliminary_filename`.** A template like `entries/[name]-[hash].js` becomes `entries/main-!~{001}~.js` once the placeholder is allocated.
+- **Inside chunk content.** Anywhere an emitter writes a cross-chunk import path — `import_path_for(importee_chunk)` in `crates/rolldown_common/src/chunk/mod.rs` — the importee's `absolute_preliminary_filename` (which contains its own placeholder) is concatenated into the emitted code:
   ```js
   import { x } from './chunk-shared-!~{002}~.js';
   ```
 
-占位符的**形状是稳定的**（长度相同，`!~{` / `}~` 定界符相同，仅 ASCII）。占位符的**索引不稳定**——它取决于 chunk 被渲染的顺序，而这个顺序又取决于 chunk 图；当 entry 增加/移除时，chunk 图会变化。
+Placeholder **shape is stable** (same length, same `!~{` / `}~` delimiters, ASCII-only). Placeholder **index is not** — it depends on the order chunks are rendered, which depends on the chunk graph, which changes when entries are added/removed.
 
-在所有最终 hash 计算完毕之后，`finalize_assets` 的最后一步会把这个索引替换为真实 hash。
+The index is replaced with the real hash at the very end of `finalize_assets`, after all final hashes have been computed.
 
-## 第 1 阶段：独立内容 hash
+## Phase 1: Standalone Content Hash
 
 ```rust
 let mut hasher = Xxh3::default();
@@ -54,15 +54,15 @@ visit_with_placeholders_defaulted(
 let standalone = to_url_safe_base64(hasher.digest128().to_le_bytes());
 ```
 
-`visit_with_placeholders_defaulted`（位于 `rolldown_utils::hash_placeholder`）会遍历 `content`，并按顺序把字节送入 `hasher.update`。每一个 rolldown 自己生成的 `!~{xxx}~`（谓词会通过 `ins_chunk_idx_by_placeholder` 去查找它）都会在送入哈希前被规范化为 `!~{000...}~`（同样的形状，索引全 0）；而用户源代码中碰巧符合占位符形状的字面量则会按原样参与哈希，这样其字节变化仍会反映到 hash 中。这与 Rollup 的 `replacePlaceholdersWithDefaultAndGetContainedPlaceholders` 一致，后者执行的是相同的 `placeholders.has(placeholder)` 检查。
+`visit_with_placeholders_defaulted` (in `rolldown_utils::hash_placeholder`) walks `content` and feeds bytes through `hasher.update` in order. Each `!~{xxx}~` that rolldown itself generated (the predicate looks it up in `ins_chunk_idx_by_placeholder`) is normalized to `!~{000...}~` (same shape, all-zero index) before being fed in; literals in user source code that just happen to match the placeholder shape are hashed verbatim so changes to their bytes still flow into the hash. This matches Rollup's `replacePlaceholdersWithDefaultAndGetContainedPlaceholders`, which performs the same `placeholders.has(placeholder)` check.
 
-这对应不变性 #1（稳定性）：chunk 自身的 hash 现在只依赖于它的真实字节和跨 chunk 引用的 _形状_，而不依赖那些短暂的索引值。
+This is invariant #1 (stability): the chunk's own hash now depends only on its real bytes and the _shape_ of its cross-chunk references, not the transient index values.
 
-**流式处理，而不是物化。** Chunk 可能有几十 MB。若为每个 chunk 先物化一个规范化后的 `String`，每次构建都会额外分配接近整个 bundle 大小的临时缓冲区。`visit_with_placeholders_defaulted` 是针对 `&[u8]` 切片的 visitor；hasher 直接消费这些切片。Rollup 的对应实现（`replacePlaceholdersWithDefaultAndGetContainedPlaceholders`）会先物化字符串再哈希——rolldown 刻意没有这样做。
+**Streaming, not materializing.** Chunks can be megabytes. Materializing a normalized `String` per chunk would allocate roughly the bundle size's worth of throwaway buffers per build. `visit_with_placeholders_defaulted` is a visitor over `&[u8]` slices; the hasher consumes them directly. Rollup's equivalent (`replacePlaceholdersWithDefaultAndGetContainedPlaceholders`) materializes the string before hashing — rolldown deliberately doesn't.
 
-**augmentChunkHash。** 如果用户插件提供了 hash 增强内容，它会被追加到 standalone hash 字符串之后，然后对整体重新哈希（`xxhash_base64_url(hash.as_bytes())`）。这与 Rollup 保持一致。
+**augmentChunkHash.** If the user's plugin supplied a hash augmentation, it gets appended to the standalone hash string and the whole thing is re-hashed (`xxhash_base64_url(hash.as_bytes())`). This matches Rollup.
 
-## 第 2 阶段：最终 hash
+## Phase 2: Final Hash
 
 ```rust
 let mut hasher = Xxh3::default();
@@ -73,70 +73,70 @@ for dep_idx in transitive_dependencies[chunk_idx] {
 let final_hash = encode_hash_with_base(hasher.digest128().to_le_bytes(), hash_base);
 ```
 
-`transitive_dependencies` 是通过从每个 chunk 的内容中提取占位符（占位符指向其他 chunk），然后求传递闭包得到的。对每个传递依赖的 _standalone_ hash 进行哈希，意味着：
+`transitive_dependencies` is computed by extracting the placeholders from each chunk's content (placeholders point to other chunks), then taking the transitive closure. Hashing every transitive dep's _standalone_ hash means:
 
-- 如果 chunk `B` 发生变化，那么所有在传递依赖链上依赖 `B` 的 chunk 都会得到新的最终 hash——满足不变性 #2。
-- 如果只是一 个无关 chunk 的索引发生偏移，那么没有被传递到的 chunk 不会看到不同的输入——不变性 #1 仍然成立。
+- If chunk `B` changes, every chunk transitively depending on `B` gets a new final hash — invariant #2.
+- If only an unrelated chunk's index shifts, no transitively reached chunk sees a different input — invariant #1 still holds.
 
-chunk 的 `preliminary_filename` **刻意不参与这个 hash**。早期设计曾经把它混入（`#1141`），以保证构建内唯一性，但 `preliminary_filename` 里的占位符索引恰恰是我们希望排除的那个不稳定输入。唯一性由第 3 阶段单独保证。
+The chunk's `preliminary_filename` is **deliberately not mixed into this hash**. An earlier design did (`#1141`) to guarantee uniqueness within a build, but the placeholder index inside the preliminary filename is exactly the unstable input we want to keep out. Uniqueness is enforced separately in Phase 3.
 
-## 第 3 阶段：消解文件名冲突
+## Phase 3: Deconflict File Names
 
-在第 2 阶段之后，两个字节完全相同且传递依赖也完全相同的 chunk 会产生相同的最终 hash。如果它们的初步文件名模板也解析成同一个字符串（例如都为 `entry-!~{XXX}~.js`，且没有 `[name]` token），它们就会在磁盘上冲突。
+After Phase 2, two chunks with byte-identical content and identical transitive deps produce the same final hash. If their preliminary filename templates also resolve to the same string (e.g. both `entry-!~{XXX}~.js` with no `[name]` token), they would collide on disk.
 
-`deconflict_filenames` 会按确定性的顺序遍历 chunk，解析每个候选文件名，并在冲突时**重新哈希冲突的 chunk**（`Xxh3(prev_hash_string)`）再试一次。比较是大小写不敏感的（HFS+/NTFS）。
+`deconflict_filenames` walks chunks in deterministic order, resolves each candidate file name, and on collision **rehashes the colliding chunk** (`Xxh3(prev_hash_string)`) and tries again. Comparison is case-insensitive (HFS+/NTFS).
 
 ```rust
 for chunk in chunks_in_order {
   loop {
     let candidate = resolve_filename(chunk.preliminary_filename, chunk_hash);
     if taken.insert(candidate.to_lowercase()) { break; }
-    chunk_hash = rehash(chunk_hash);  // hash 的 hash
+    chunk_hash = rehash(chunk_hash);  // hash-of-hash
   }
 }
 ```
 
-这是整个流程中唯一的顺序执行阶段。它几乎逐行对应 Rollup 的 `generateFinalHashes`（在 `src/utils/renderChunks.ts` 中），包括大小写不敏感的冲突集合。
+This is the only sequential pass in the pipeline. It mirrors Rollup's `generateFinalHashes` (in `src/utils/renderChunks.ts`) almost line-for-line, including the case-insensitive collision set.
 
-Rollup 中有一个针对这个确切情况的回归测试：`test/chunking-form/samples/hashing/deconflict-hashes`：两个字节完全相同的 entry + `entryFileNames: 'entry-[hash].js'` → 两个不同的文件名。
+A regression test for this exact case lives in Rollup as `test/chunking-form/samples/hashing/deconflict-hashes`: two byte-identical entries + `entryFileNames: 'entry-[hash].js'` → two distinct file names.
 
-在实践中，这种冲突很少见，因为默认值为 `Simple` 的 `experimental.attachDebugInfo` 会向渲染后的 chunk 注入一个 `//#region <module.debug_id>` 标记，这会根据模块路径区分内容。通过 `experimental.attachDebugInfo: 'none'` 禁用调试信息的用户，才更可能触发这种冲突并依赖这个循环。
+In practice the collision case is rare because `experimental.attachDebugInfo` (defaulting to `Simple`) injects a `// <module.debug_id>` marker into rendered chunks, which differentiates content based on module path. Users who disable debug info via `experimental.attachDebugInfo: 'none'` are the ones who can trigger the collision and rely on this loop.
 
-## Sourcemap 文件哈希
+## Sourcemap File Hashes
 
-`output.sourcemapFileNames` 有自己独立的 `[hash]` 占位符。它会在 chunk 哈希之后解析，因为最终的 sourcemap 会在其 `file` 字段中包含最终的 chunk 文件名。
+`output.sourcemapFileNames` has its own `[hash]` placeholder. It is resolved after chunk hashes because the final sourcemap contains the final chunk file name in its `file` field.
 
-sourcemap 的处理顺序如下：
+The sourcemap sequence is:
 
-1. 解析 chunk 哈希和最终的 chunk 文件名。
-2. 通过设置 `file`、应用 `sourcemapExcludeSources`、`sourcemapIgnoreList` 和 `sourcemapPathTransform`，并将源路径调整为相对于最终 chunk 目录，来准备每个 sourcemap。
-3. 如果 sourcemap 文件名模式包含 `[hash]`，则对已准备好的 map 序列化后的 JSON 进行哈希。
-4. 解析 sourcemap 文件名，然后添加 debug ID，并发出内联注释或单独的资源。
+1. Resolve chunk hashes and final chunk file names.
+2. Prepare each sourcemap by setting `file`, applying `sourcemapExcludeSources`, `sourcemapIgnoreList`, and `sourcemapPathTransform`, and making source paths relative to the final chunk directory.
+3. If the sourcemap file-name pattern contains `[hash]`, hash the prepared map's serialized JSON.
+4. Resolve the sourcemap file name, then add debug IDs and emit the inline comment or separate asset.
 
-准备和发出是分开的，因此用户回调只会运行一次，而每个会改变内容的 map 选项都会对 `[hash]` 产生影响。Debug ID 会刻意在 sourcemap 哈希之后添加，这与 Rollup 保持一致。传递给 sourcemap 回调的路径是默认的 `<chunk-file>.map` 路径，这样可以避免当自定义 sourcemap 文件名本身包含 `[hash]` 时产生循环依赖。
+Preparation and emission are separate so user callbacks run only once while every content-changing map option contributes to `[hash]`. Debug IDs are deliberately added after the sourcemap hash, matching Rollup. The path passed to sourcemap callbacks is the default `<chunk-file>.map` path, which avoids a circular dependency when the custom sourcemap file name itself contains `[hash]`.
 
-## 为什么不直接对初步文件名做哈希
+## Why Not Hash the Preliminary Filename Directly
 
-一个诱人的替代方案是：在对初步文件名的占位符做规范化之后，把初步文件名混入最终 hash —— 这样对于 chunk 名称不同的 chunk，就无需再进行 rehash 循环，也能满足唯一性。
+Tempting alternative: mix the preliminary filename into the final hash _after normalizing its placeholder_ — this would satisfy uniqueness for chunks with different chunk names without any rehash loop.
 
-它几乎可行，但会在 `deconflict-hashes` 场景下失败：当两个 chunk 具有**相同的 chunk 名称**，而模板是 `[hash].js`（没有 `[name]`）时，它们规范化后的初步文件名字节完全相同（`!~{000}~.js`），hash 仍然会冲突。重新哈希循环才是正确的修复方式，因为它作用于解析后的文件名，而不是作用于模板本身。
+It almost works, but fails the `deconflict-hashes` case: when two chunks have the **same chunk name** and the template is `[hash].js` (no `[name]`), their normalized preliminary filenames are byte-identical (`!~{000}~.js`), and the hash collides anyway. The rehash loop is the proper fix because it acts on the resolved file name, not on the template.
 
 ## debug_id
 
-`ecma_meta.debug_id`（used to emit `//# debugId=...` in source maps for Sentry, etc.）will be set to the same `u128` digest generated in stage 2. This means the debug ID also shares the stability property of the hash—same content → same debug ID across builds, which is very useful for sourcemap association. Chunks that collide and are rehashed will naturally get different debug IDs.
+`ecma_meta.debug_id` (used to emit `//# debugId=...` in source maps for Sentry/etc.) is set to the same `u128` digest produced in Phase 2. This means debug IDs share the hash's stability properties — same content → same debug ID across builds, useful for sourcemap correlation. Collision-rehashed chunks naturally get a distinct debug ID too.
 
-## 已知限制
+## Known Limitations
 
-**第 3 阶段的 rehash 不会回传给导入者。** 第 2 阶段会把每个传递依赖的 _standalone_ hash（即 deconflict 之前的 hash）累加进导入者的最终 hash。如果第 3 阶段为了避免文件名冲突而把依赖 `B` 重新哈希，`B` 的导入者 `A` 最终在 import specifier 中会发出 `B` 重新哈希后的文件名——但 `A` 自己的最终 hash 是基于 `B` 重新哈希前的 standalone hash 计算出来的，所以 `A` 的 `[hash]` 并不会反映这一变化。相同输入 + 相同配置会产生相同的 deconflict 顺序，因此发出的字节也相同（在某个配置内是确定性的），但仅仅因为某些会改变字节完全相同 chunk 的 `InsChunkIdx` 顺序的因素而不同的两个构建（例如用户在 `input` 中重新排列 entries），可能会让 `A` 发出不同的字节，同时保持 `A` 的 `[hash]` 不变。Rollup 的 `generateFinalHashes` 也表现出同样的行为（其 `contentToHash` 累加的是 deconflict 之前的 `contentHash`，而不是 deconflicted 的最终 hash），因此若要修复这一点，就需要偏离参考实现，并按拓扑顺序处理 chunk，让导入者依赖导入对象 deconflict 之后的 hash。要触发这个问题，需要存在能被某个导入者引用的字节完全相同的 chunk（很少见），并且使用仅有 `[hash]` 的模板（也同样很少见）。
+**Phase 3 rehashes are not propagated back into importers.** Phase 2 accumulates each transitive dep's _standalone_ hash (pre-deconflict) into an importer's final hash. If Phase 3 rehashes a dep `B` to avoid a file-name collision, an importer `A` of `B` will end up emitting `B`'s post-rehash file name in its import specifier — but `A`'s own final hash was computed against `B`'s pre-rehash standalone hash, so `A`'s `[hash]` does not reflect the change. Same input + same config produces the same deconflict ordering and therefore the same emitted bytes (deterministic within a config), but two builds that differ only in something which shifts `InsChunkIdx` ordering of byte-identical chunks (e.g. user reorders entries in `input`) can produce different emitted bytes for `A` while keeping `A`'s `[hash]` unchanged. Rollup's `generateFinalHashes` exhibits the same behavior (its `contentToHash` accumulates the pre-deconflict `contentHash`, not the deconflicted final hash), so fixing this would require diverging from the reference implementation and processing chunks in topological order with importers depending on importees' post-deconflict hashes. Triggering it requires byte-identical chunks importable by something (rare) with a `[hash]`-only template (also rare).
 
 ## Files
 
 - `crates/rolldown/src/utils/chunk/finalize_chunks.rs` — `finalize_assets`, `deconflict_filenames`, `resolve_filename`, `rehash`
 - `crates/rolldown_utils/src/hash_placeholder.rs` — `HashPlaceholderGenerator`, `find_hash_placeholders`, `visit_with_placeholders_defaulted`, `replace_placeholder_with_hash`
-- `crates/rolldown_common/src/chunk/types/preliminary_filename.rs` — `PreliminaryFilename`（字符串 + 拥有的占位符列表）
+- `crates/rolldown_common/src/chunk/types/preliminary_filename.rs` — `PreliminaryFilename` (string + owned placeholder list)
 - `crates/rolldown_utils/src/xxhash.rs` — `encode_hash_with_base`, `xxhash_base64_url`
 
-## 相关
+## Related
 
-- Rollup 参考实现：[`src/utils/renderChunks.ts`](https://github.com/rollup/rollup/blob/master/src/utils/renderChunks.ts)（`transformChunksAndGenerateContentHashes`、`generateFinalHashes`）
-- Issue [#9339](https://github.com/rolldown/rolldown/issues/9339) —— 促使将独立内容哈希中的占位符规范化移除的 bug
+- Rollup reference implementation: [`src/utils/renderChunks.ts`](https://github.com/rollup/rollup/blob/master/src/utils/renderChunks.ts) (`transformChunksAndGenerateContentHashes`, `generateFinalHashes`)
+- Issue [#9339](https://github.com/rolldown/rolldown/issues/9339) — the bug that motivated normalizing placeholders out of the standalone content hash

@@ -1,79 +1,84 @@
-# Devtools — 设计与未来方向
+# Devtools — Design & Future Directions
 
-> 实现地图——输出格式、架构、动作目录、代码生成以及消费者侧：见 [implementation.md](./implementation.md)。
+> Implementation map — output format, architecture, action catalog, codegen, and the consumer side: see [implementation.md](./implementation.md).
 
-## 概述
+## Summary
 
-Rolldown devtools 是一个基于 tracing 的系统，它会将结构化的构建期数据（模块图、chunk 图、插件 hook 调用、生成的资源）输出到磁盘，以便外部工具（例如 Vite devtools）消费这些数据，提供调试、性能分析和可视化体验。
+Rolldown devtools is a tracing-based system that emits structured build-time data (module graphs, chunk graphs, plugin hook calls, generated assets) to disk so that external tools (e.g. Vite devtools) can consume it to provide debugging, profiling, and visualization experiences.
 
-## 未来方向
+## Future Directions
 
-### 插件提供的元数据
+### Plugin-Supplied Metadata
 
-消费者并不总能判断一个虚拟模块是什么，或者某个插件来自哪个包。Rolldown 允许插件同时为这两者附加描述性元数据，这样 devtools 输出就能呈现更丰富、更贴近人工编写的上下文。该元数据仅用于信息展示，不会影响打包。参见 vitejs/devtools [#171](https://github.com/vitejs/devtools/issues/171)（模块描述）和 [#172](https://github.com/vitejs/devtools/issues/172)（插件包名）。
+Consumers cannot always tell what a virtual module is or which package a plugin came from. Rolldown lets plugins attach descriptive metadata to both, so the devtools output can surface richer, human-authored context. The metadata is informational and does not affect bundling. See vitejs/devtools [#171](https://github.com/vitejs/devtools/issues/171) (module descriptions) and [#172](https://github.com/vitejs/devtools/issues/172) (plugin package name).
 
-**面向作者的契约（已在 `packages/rolldown` 中完成类型定义）：**
+**Author-facing contract (already typed in `packages/rolldown`):**
 
-- **模块描述** —— 插件从 `resolveId`/`load`/`transform` 钩子返回顶层 `description`。它是 `ModuleOptions` 上一个直接的可选字段（因此也可通过 `this.getModuleInfo` 读取），并且适用于动态生成的虚拟模块。
-- **插件元数据** —— 插件在插件对象上设置 `meta.packageName`、`meta.version` 和 `meta.description`（`PluginMeta`）。
+- **Module description** — plugins return a top-level `description` from the `resolveId`/`load`/`transform` hooks. It is a direct optional field on `ModuleOptions` (so it is also readable via `this.getModuleInfo`) and works for dynamically-generated virtual modules.
+- **Plugin metadata** — plugins set `meta.packageName`, `meta.version`, and `meta.description` on the plugin object (`PluginMeta`).
 
-这些字段都不是必需的，并且对打包没有任何影响。它们是通用的描述性元数据；tracing 层只是其中一个消费者，它会把这些信息转发给诸如 Vite devtools 之类的工具。
+These fields are all optional and inert to bundling. They are general-purpose descriptive metadata; the tracing layer is one consumer that forwards them to tools such as Vite devtools.
 
-**发射侧（尚未接通）：** trace action 需要携带这些值，这样消费者才能真正接收到它们。
+**Emission side (not yet wired):** the trace actions need to carry these values so consumers actually receive them.
 
-- `SessionMeta.plugins[]`（`rolldown_devtools_action` 中的 `PluginItem`）应增加 `package_name: Option<String>`、`version: Option<String>` 和 `description: Option<String>`，并在发射 session meta 时读取每个插件的 `meta` 来填充。
-- 模块描述应附加在按模块输出数据的位置（例如 `HookLoadCallEnd` / `ModuleGraphReady`），从模块解析后的 `description` 中读取。
+- `SessionMeta.plugins[]` (`PluginItem` in `rolldown_devtools_action`) should gain `package_name: Option<String>`, `version: Option<String>`, and `description: Option<String>`, populated by reading each plugin's `meta` when the session meta is emitted.
+- Module descriptions should be attached where per-module data is emitted (e.g. `HookLoadCallEnd` / `ModuleGraphReady`), read from the module's resolved `description`.
 
-在这套管线落地之前，设置这些字段除了类型检查之外不会产生任何效果；先定义契约，是为了让插件作者和消费者能够就数据形状达成一致。
+Until that plumbing lands, setting the fields is a no-op beyond type-checking; the contract is defined first so plugin authors and consumers can align on the shape.
 
-### 性能
+### Performance
 
-最初的实现优先解决的是“可消费性”——把结构化数据输出到磁盘，这样外部工具就可以开始基于它进行开发。当时性能显式地不是优先级。
+The initial implementation prioritized unblocking consumability — getting structured data out to disk so that external tools could start building on it. Performance was explicitly not a priority at that stage.
 
-现在系统已经投入使用，性能成了一个大问题。在大型项目中，启用 devtools 会让构建变得非常慢。主要瓶颈如下：
+Now that the system is in use, it's a major issue. On large projects, enabling devtools causes builds to become incredibly slow. The main bottlenecks:
 
-- **热路径上的同步 JSON 序列化。** 每次 `trace_action!` 调用都会通过 `serde_json::to_string` 将 action 结构体序列化为 JSON，然后格式化器再把它解析回 `serde_json::Value`，用于注入上下文和写文件。这个双重序列化是在构建过程中同步执行的。
-- **hook 事件中包含完整模块内容。** `HookLoadCallEnd`、`HookTransformCallStart/End` 和 `HookRenderChunkStart/End` 都包含每个模块的完整源码文本。对于大型代码库来说，这意味着每次构建都要序列化并写入数 MB 的源码。
-- **用于去重的 blake3 哈希。** 每个大于 5 KB 的字符串都会被哈希，而每个大于 10 KB 的字符串都会触发一次哈希查找和 `$ref` 替换。这会带来与总源码大小成正比的 CPU 开销。
-- **同步文件 I/O。** `DevtoolsFormatter::format_event` 直接通过 `std::fs::File` 写入文件，阻塞当前线程。
+- **Synchronous JSON serialization on the hot path.** Every `trace_action!` call serializes the action struct to JSON via `serde_json::to_string`, then the formatter parses it back into `serde_json::Value` for context injection and file writing. This double serialization happens inline during the build.
+- **Full module content in hook events.** `HookLoadCallEnd`, `HookTransformCallStart/End`, and `HookRenderChunkStart/End` include the full source text of every module. For large codebases this means serializing and writing megabytes of source code per build.
+- **blake3 hashing for dedup.** Every string >5 KB is hashed, and every string >10 KB triggers a hash lookup and `$ref` replacement. This adds CPU work proportional to total source size.
+- **Synchronous file I/O.** `DevtoolsFormatter::format_event` writes directly to files via `std::fs::File`, blocking the thread.
 
-可行方案：
+Potential approaches:
 
-- **异步/缓冲写入。** 将文件 I/O 从构建线程移走——把事件缓存在内存中，在后台线程或构建边界处刷新。
-- **延迟内容发射。** 默认不要在 hook 事件中包含完整源码。改为输出内容哈希或偏移引用；让消费者按需请求完整内容（或者把内容写到单独的 sidecar 文件中）。
-- **避免双重序列化。** 直接序列化为目标输出格式，而不是先经过 `serde_json::Value` 作为中间表示。
-- **分级详细程度。** 让用户选择不同的细节级别（例如仅图数据 vs. 完整 hook 跟踪），这样轻量级消费者就不会为不需要的数据付出代价。
+- **Async/buffered writes.** Move file I/O off the build thread — buffer events in memory and flush on a background thread or at build boundaries.
+- **Lazy content emission.** Don't include full source in hook events by default. Instead, emit a content hash or offset reference; let the consumer request full content on demand (or write content to separate sidecar files).
+- **Avoid double serialization.** Serialize directly to the output format instead of going through `serde_json::Value` as an intermediate.
+- **Tiered verbosity.** Let users opt into levels of detail (e.g. graph-only vs. full hook tracing) so lightweight consumers don't pay for data they don't need.
 
-### 存储后端
+### Storage Backend
 
-当前的存储模型——把 JSON 行追加到单个 `logs.json` 文件中——无法扩展。在大型项目中，单次构建可能产生约 3 GB 的 devtools 数据。在这个规模下：
+The current storage model — appending JSON lines to a single `logs.json` file — does not scale. On large projects, a single build can produce ~3 GB of devtools data. At that size:
 
-- **消费者无法加载文件。** 将 3 GB 的 JSON 解析进内存，对于基于浏览器的 UI 甚至 Node.js 进程来说都不现实。输出这些数据的目的就是为了让工具消费，而当前格式在大规模场景下让这件事变得不可能。
-- **没有随机访问。** 要查找某个模块的 transform 历史，消费者必须线性扫描整个文件。无法在不读取全部内容的情况下查询“模块 X 的所有 HookTransformCall 事件”。
-- **无法增量消费。** 在 watch 模式下，文件会跨多次重建持续增长，但没有结构来区分边界。已经处理过构建 N 的消费者，没有高效方式只读取构建 N+1 的事件。
+- **Consumers cannot load the file.** Parsing 3 GB of JSON into memory is impractical for a browser-based UI or even a Node.js process. The entire point of emitting data is for tools to consume it, and the current format makes that impossible at scale.
+- **No random access.** To find a specific module's transform history, a consumer must scan the entire file linearly. There's no way to query "all HookTransformCall events for module X" without reading everything.
+- **No incremental consumption.** In watch mode, the file grows across rebuilds with no structure to distinguish boundaries. A consumer that already processed build N has no efficient way to read only build N+1's events.
 
-#### 基于数据库的存储
+Report mode (`devtools: { mode: 'report' }`, see `implementation.md`, "Report mode") is the
+shipped answer for agents: bounded aggregates and a small set of files per build output,
+with no event log. It does not serve a UI that needs every event, so the storage question
+below stays open for `full` mode.
 
-真正的数据库后端可以解决所有这些问题，并开启新的能力：
+#### Database-Backed Storage
 
-**本地嵌入式 DB（例如 SQLite）：**
+A real database backend would address all of these and unlock new capabilities:
 
-- 按动作类型分表——消费者只查询自己需要的数据
-- 按模块 ID、插件名、构建 ID、时间戳建立索引——无需全表扫描即可快速查找
-- WAL 模式支持并发读写——消费者可以在构建运行时持续尾随事件
-- 单文件部署，不需要外部进程
-- 非常契合现有的 `node_modules/.rolldown/<session_id>/` 布局（一个 `.db` 文件替代多个 `.json` 文件）
+**Local embedded DB (e.g. SQLite):**
 
-**远程 DB：**
+- Structured tables per action type — consumers query only what they need
+- Indexed by module ID, plugin name, build ID, timestamp — fast lookups without full scans
+- WAL mode allows concurrent read/write — consumer can tail events while the build is running
+- Single-file deployment, no external process needed
+- Natural fit for the existing `node_modules/.rolldown/<session_id>/` layout (one `.db` file instead of `.json` files)
 
-- 为 CI/CD 解锁集中式 devtools——来自 CI 流水线的构建数据流入共享存储，开发者可通过仪表盘查询
-- 团队级的构建性能回归可见性
-- 历史分析——比较模块图演化、插件耗时趋势、chunk 大小随时间的增长
-- 可通过 `devtools: { backend: 'remote', endpoint: '...' }` 进行可选启用
+**Remote DB:**
 
-#### Schema 考量
+- Unlocks centralized devtools for CI/CD — build data from CI pipelines flows to a shared store that developers can query from a dashboard
+- Team-wide visibility into build performance regressions across commits
+- Historical analysis — compare module graph evolution, plugin timing trends, chunk size growth over time
+- Could be opt-in via `devtools: { backend: 'remote', endpoint: '...' }`
 
-这些 action 类型已经有明确的结构（`SessionMeta`、`ModuleGraphReady`、`ChunkGraphReady` 等），很自然地可以映射到关系型表。示意如下：
+#### Schema Considerations
+
+The action types already have well-defined structures (`SessionMeta`, `ModuleGraphReady`, `ChunkGraphReady`, etc.) that map naturally to relational tables. A sketch:
 
 ```
 sessions(session_id, cwd, platform, format, dir, file, created_at)
@@ -82,16 +87,16 @@ modules(build_id, module_id, is_external)
 module_imports(build_id, module_id, imported_module_id, kind, module_request)
 chunks(build_id, chunk_id, name, reason, is_user_defined_entry, is_async_entry, entry_module)
 chunk_imports(build_id, chunk_id, imported_chunk_id, kind)
-sources(source_id, content)  -- 将大 payload/源码只存一份
+sources(source_id, content)  -- store large payloads/source text once
 hook_calls(build_id, call_id, hook_type, plugin_name, plugin_id, module_id, started_at, ended_at, input_source_id, output_source_id)
 assets(build_id, filename, chunk_id, size, content_source_id)
 ```
 
-将大内容与元数据分离，意味着查询插件耗时的消费者不会接触多 GB 的源码文本。对于基于数据库的设计，源代码类 payload 应该放在独立的字段/行中（例如 `sources.content`），而 action 应通过 ID（`input_source_id`、`output_source_id`、`content_source_id`）引用它们，而不是在各处内联同一份源码。这是当前 `StringRef` 去重模式的关系型等价实现，但拥有真正的查询支持。
+Separating large content from metadata means consumers querying plugin timing never touch the multi-GB source text. For a database-backed design specifically, source-like payloads should live in standalone fields/rows (for example, `sources.content`) and actions should reference them by ID (`input_source_id`, `output_source_id`, `content_source_id`) instead of inlining the same source everywhere. This is the relational equivalent of the current `StringRef` dedup pattern, but with proper query support.
 
-#### 迁移路径
+#### Migration Path
 
-可以通过一个 trait 将存储后端抽象出来，让 formatter 写入 `DevtoolsWriter`，而不是直接写文件：
+The storage backend could be abstracted behind a trait so the formatter writes to a `DevtoolsWriter` instead of directly to files:
 
 ```rust
 trait DevtoolsWriter: Send + Sync {
@@ -99,84 +104,84 @@ trait DevtoolsWriter: Send + Sync {
 }
 ```
 
-这样，JSON 行文件写入器可以继续作为默认方案（零新增依赖），同时可通过配置接入 SQLite 或远程后端。`@rolldown/debug` 消费者包也会获得相应的 `DevtoolsReader` 抽象。
+This allows the JSON-lines file writer to remain as the default (zero new dependencies) while a SQLite or remote backend can be plugged in via configuration. The `@rolldown/debug` consumer package would gain a corresponding `DevtoolsReader` abstraction.
 
-### 按构建作用域隔离（vs. 全局激活）
+### Per-Build Scoping (vs. Global Activation)
 
-当前实现使用的是进程全局的 `tracing_subscriber` 注册表，由 `DebugTracer::init()` 通过一个 `AtomicBool` 单例守卫初始化。这意味着：
+The current implementation uses a process-global `tracing_subscriber` registry initialized via `DebugTracer::init()` with an `AtomicBool` singleton guard. This means:
 
-- 在**一个** rolldown 配置中设置 `devtools: {}`，会导致**同一进程中所有** bundler 实例都输出 devtools 数据，即使它们自己并未选择启用。
-- 无法在同一进程内对一个构建启用 devtools、对另一个构建禁用 devtools（例如一个 monorepo 工具同时运行多个 rolldown 构建）。
+- Setting `devtools: {}` in **one** rolldown config causes **all** bundler instances in the same process to emit devtools data, even those that didn't opt in.
+- There's no way to enable devtools for one build and disable it for another within the same process (e.g. a monorepo tool running multiple rolldown builds).
 
-根本原因是 `tracing_subscriber::registry().init()` 安装的是全局 subscriber。一旦安装，进程中每个 `tracing::trace!` 事件都会流经 devtools 层。
+The root cause is that `tracing_subscriber::registry().init()` installs a global subscriber. Once installed, every `tracing::trace!` event in the process flows through the devtools layer.
 
-#### `tracing` 的作用域 subscriber 机制
+#### `tracing` Scoped Subscriber Mechanisms
 
-`tracing` crate 提供了若干作用域原语：
+The `tracing` crate provides several scoping primitives:
 
-**`set_default` / `with_default`** —— 设置线程局部 subscriber，返回一个 `DefaultGuard`，在 drop 时恢复先前的 subscriber。**仅线程局部有效**——在多线程 tokio 运行时中不会跨 `.await` 保持。当任务在一个 await 点之后迁移到另一个 worker 线程时，它会失去这个作用域 subscriber，并回退到全局默认值。
+**`set_default` / `with_default`** — Sets a thread-local subscriber, returns a `DefaultGuard` that restores the prior subscriber on drop. **Thread-local only** — does **not** survive `.await` on multi-threaded tokio runtimes. When a task migrates to a different worker thread after an await point, it loses the scoped subscriber and falls back to the global default.
 
-**`.with_subscriber()`（`WithDispatch`）** —— 最有希望的原语。它会把一个 async future 包装起来，使 subscriber 在**每次 poll** 时重新安装到线程局部存储中。它是 async-safe 的：无论由哪个线程 poll 这个 future，正确的 subscriber 都会处于激活状态。
+**`.with_subscriber()` (`WithDispatch`)** — The most promising primitive. Wraps an async future so the subscriber is re-installed into thread-local storage on **every poll**. This is async-safe: regardless of which thread polls the future, the correct subscriber is active.
 
-其内部实现方式是，`WithDispatch` 在每次 `poll` 之前调用 `set_default`：
+Under the hood, `WithDispatch` implements `Future` by calling `set_default` before every `poll`:
 
 ```rust
-// 简化自 tracing 的 instrument.rs
+// Simplified from tracing's instrument.rs
 impl<T: Future> Future for WithDispatch<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        let _default = dispatcher::set_default(this.dispatcher); // 每次 poll 都设置 TLS
+        let _default = dispatcher::set_default(this.dispatcher); // set TLS on EVERY poll
         this.inner.poll(cx)
     }
 }
 ```
 
-按 bundler 作用域隔离的用法大致如下：
+Usage for per-bundler scoping would look like:
 
 ```rust
-use tracing::Instrument; // 也会带入 WithSubscriber trait
+use tracing::Instrument; // also brings in WithSubscriber trait
 
 let devtools_subscriber = tracing_subscriber::registry()
     .with(DevtoolsLayer)
     .with(fmt::layer().event_format(DevtoolsFormatter));
 
-// 每个 bundler 的顶层 future 都有自己的 subscriber
+// Each bundler's top-level future gets its own subscriber
 let build_future = bundle.write().with_subscriber(devtools_subscriber);
 tokio::spawn(build_future);
 ```
 
-**关键注意：`tokio::spawn` 不会继承。** 如果被包装的 future 内部调用了 `tokio::spawn(sub_task)`，那么子任务会回退到全局默认 subscriber。每一次内部 spawn 都必须显式包装：
+**Key caveat: `tokio::spawn` does NOT inherit.** If the wrapped future internally calls `tokio::spawn(sub_task)`, the sub-task falls back to the global default subscriber. Every internal spawn must be explicitly wrapped:
 
 ```rust
-// 在会 spawn 子任务的 bundler 代码内部：
-let sub_task = do_work().with_current_subscriber(); // 捕获当前线程局部 subscriber
+// Inside bundler code that spawns sub-tasks:
+let sub_task = do_work().with_current_subscriber(); // captures current thread-local subscriber
 tokio::spawn(sub_task);
 ```
 
-漏掉一个 `.with_current_subscriber()` 就会悄悄丢失该任务的 subscriber 上下文。这是 rolldown 的主要风险点，因为它在 scan 阶段及其他地方内部会 spawn 任务。
+Missing a single `.with_current_subscriber()` silently drops the subscriber context for that task. This is the main risk for rolldown, which spawns tasks internally in the scan stage and elsewhere.
 
-**在全局注册表上做按层过滤** —— 通过 `.init()` 保留一个全局 subscriber，然后为各层附加 `FilterFn`，根据 span 字段（例如 session ID）路由事件。由于 subscriber 是全局的，因此不会有传播问题；复杂度转移到了过滤逻辑和动态层管理上。
+**Per-layer filtering on a global registry** — Keep one global subscriber installed via `.init()`, but attach per-layer `FilterFn`s that route events based on span fields (e.g. session ID). No propagation issue since the subscriber is global; the complexity shifts to the filter logic and dynamic layer management.
 
-#### 对 Rolldown 的适用性
+#### Applicability to Rolldown
 
-| 方案                                         | async-safe？ | `tokio::spawn` 传播？                               | 复杂度 | 适合 rolldown 吗？                                                                                      |
-| -------------------------------------------- | ----------- | ---------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
-| **按 bundler future 使用 `.with_subscriber()`** | **是**      | 手动（每次 spawn 都要 `.with_current_subscriber()`） | 中等   | **最佳语义匹配**——真正的按 bundler 隔离。需要审计所有内部 `tokio::spawn` 位置 |
-| 在全局注册表上做按层过滤                     | 是          | 免费（全局）                                         | 中等   | 很合适——session ID 已在 span 上下文中，无需 spawn 传播                                             |
-| 每个 bundler 用 `set_default` + `current_thread` | 是          | 免费（单线程）                                       | 高     | 不现实——会改变运行时模型                                                                                 |
-| 在 `trace_action!` 中进行 session-aware 检查  | 是          | N/A（emit 前）                                       | 低     | 互补方案——无论上面选择哪种方式，禁用的 session 都能零成本跳过序列化            |
+| Approach                                     | Async-safe? | `tokio::spawn` propagation?                          | Complexity | Fits rolldown?                                                                                          |
+| -------------------------------------------- | ----------- | ---------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------- |
+| **`.with_subscriber()` per bundler future**  | **Yes**     | Manual (`.with_current_subscriber()` on every spawn) | Medium     | **Best semantic fit** — true per-bundler isolation. Requires auditing all internal `tokio::spawn` sites |
+| Per-layer filtering on global registry       | Yes         | Free (global)                                        | Medium     | Good fit — session ID already in span context, no spawn propagation needed                              |
+| `set_default` + `current_thread` per bundler | Yes         | Free (single-thread)                                 | High       | Impractical — changes the runtime model                                                                 |
+| Session-aware check in `trace_action!`       | Yes         | N/A (pre-emit)                                       | Low        | Complementary — zero cost for disabled sessions regardless of which approach above is chosen            |
 
-**`.with_subscriber()` 是实现真正按构建隔离的最强候选方案**——它能为每个 bundler 实例提供独立的 subscriber，并实现清晰隔离。`tokio::spawn` 的传播缺口是主要采用成本：它要求审计所有内部 spawn 位置，并用 `.with_current_subscriber()` 包裹。不过，这是一项一次性的审计，同时也能让代码库中的 subscriber 作用域正确性变得显式。未来可以通过 lint 或包装辅助函数（例如自动包装的 `devtools_spawn(future)`）来强制执行这一点。
+**`.with_subscriber()` is the strongest candidate** for true per-build isolation — it gives each bundler instance its own subscriber with clean separation. The `tokio::spawn` propagation gap is the main adoption cost: it requires auditing every internal spawn site and wrapping with `.with_current_subscriber()`. However, this is a one-time audit that also makes subscriber scoping correctness explicit in the codebase. A lint or wrapper helper (e.g. a `devtools_spawn(future)` that auto-wraps) could enforce this going forward.
 
-无论最终选择哪种 subscriber 作用域方案，`trace_action!` 中都应该增加一个**发射前检查**作为互补优化，这样被禁用的 session 可以完全跳过序列化。
+Regardless of which approach is chosen for subscriber scoping, a **pre-emit check in `trace_action!`** should be added as a complementary optimization so disabled sessions skip serialization entirely.
 
-## 未解决的问题
+## Unresolved Questions
 
-- **增量/监听模式：** devtools 系统同时适用于 `ClassicBundler`（一次性构建）和核心 `Bundler`（增量构建），但同一会话中的连续构建会追加到同一个 `logs.json`。目前还不存在明确的“重建边界”操作。
-- **开发引擎集成：** `BindingDevEngine` 创建了一个会话，但使用的是 `Session::dummy()` —— devtools 尚未接入开发/HMR 引擎。
+- **Incremental/watch mode:** The devtools system works for both `ClassicBundler` (one-shot) and core `Bundler` (incremental), but successive builds within the same session append to the same `logs.json`. No explicit "rebuild boundary" action exists yet.
+- **Dev engine integration:** `BindingDevEngine` creates a session but uses `Session::dummy()` — devtools is not yet wired up for the dev/HMR engine.
 
-## 相关内容
+## Related
 
-- [implementation.md](./implementation.md) — devtools 实现映射
-- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — ClassicBundler 设计，引用了 devtools 的 session/tracer 字段
-- [rust-bundler](../rust-bundler/implementation.md) — 核心 Bundler 设计，引用了 session 字段。
+- [implementation.md](./implementation.md) — the devtools implementation map
+- [rust-classic-bundler](../rust-classic-bundler/implementation.md) — ClassicBundler design, references devtools session/tracer fields
+- [rust-bundler](../rust-bundler/implementation.md) — Core Bundler design, references session field

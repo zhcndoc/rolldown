@@ -172,6 +172,33 @@ console.log('main');
 console.log('main');
 ```
 
+::: details 关于 `import()` 呢？
+
+同样的规则也适用于 `import()`。如果导入的模块被标记为无副作用，`import()` 位于模块顶层，并且它解析出的值未被使用，Rolldown 会让 `import()` 解析为空对象，而不加载该模块。即使模块导出了 `then` 也一样；否则解析 `import()` 时会调用这个函数。
+
+```js
+// lib.js (marked as side-effect-free)
+export function then(resolve) {
+  console.log('then');
+  resolve({});
+}
+
+// main.js
+import('./lib.js');
+console.log('main');
+```
+
+输出为：
+
+```js
+Promise.resolve().then(() => /* @__PURE__ */ Object.freeze({ __proto__: null }));
+console.log('main');
+```
+
+这里 `lib.js` 不会打包，且 `import()` 会解析为空对象，因此不会运行 `then`。如果使用了 `import()` 解析出的值、`import()` 位于函数内部，或模块未被标记为无副作用，`then` 仍会运行。
+
+:::
+
 :::: warning 这是有条件的
 
 只有当模块的导出都没有被使用时，这些语句才会被视为无副作用。如果任何导出被使用，副作用就会被保留。

@@ -1,27 +1,27 @@
-# 失败案例
+# Failed Cases
 ## [comment_preservation](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation/diff.md)
-  由于 https://github.com/rolldown/rolldown/issues/7009，with 语句被拒绝
+  with statement is rejected due to https://github.com/rolldown/rolldown/issues/7009
 ## [comment_preservation_preserve_jsx](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation_preserve_jsx/diff.md)
-  注释没有被正确保留
+  comments are not kept properly
 ## [comment_preservation_transform_jsx](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation_transform_jsx/diff.md)
-  注释没有被正确保留
+  comments are not kept properly
 ## [direct_eval_tainting_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/direct_eval_tainting_no_bundle/diff.md)
-  由于 https://github.com/rolldown/rolldown/issues/7009 被拒绝，而且次优：`test4` 参数位置中的 eval 不需要被重命名
+  rejected due to https://github.com/rolldown/rolldown/issues/7009, also sub optimal: eval in `test4` param position don't need to be renamed
 ## [export_forms_with_minify_identifiers_and_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/export_forms_with_minify_identifiers_and_no_bundle/diff.md)
-  次优：不应生成重复的导出绑定
+  sub optimal: should not generate duplicate export binding
 ## [external_es6_converted_to_common_js](../../../../../crates/rolldown/tests/esbuild/default/external_es6_converted_to_common_js/diff.md)
-  次优：多余的 `import` 语句
+  sub optimal: redundant `import` statements
 ## [false_require](../../../../../crates/rolldown/tests/esbuild/default/false_require/diff.md)
-  当 `require` 出现在参数位置时，应该重命名它
+  should rename `require` when it is appear in param position
 ## [jsx_dev_self_edge_cases](../../../../../crates/rolldown/tests/esbuild/default/jsx_dev_self_edge_cases/diff.md)
   https://github.com/oxc-project/oxc/issues/16654
 ## [mangle_props_import_export](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_import_export/diff.md)
-  次优：对于 `__require` 的 diff，我们没有 ModePassThrough
+  sub optimal: for `__require` diff, we don't have ModePassThrough
 ## [no_warn_common_js_exports_in_esm_pass_through](../../../../../crates/rolldown/tests/esbuild/default/no_warn_common_js_exports_in_esm_pass_through/diff.md)
-  次优：我们没有直通模式，只是在这种情况下拥有与 esbuild 相同的输出
+  sub optimal: we don't have pass through mode, we just have same output as esbuild if
 ## [top_level_await_allowed_import_with_splitting](../../../../../crates/rolldown/tests/esbuild/default/top_level_await_allowed_import_with_splitting/diff.md)
-  次优：应移除空的 chunk
-# 通过案例
+  sub optimal: empty chunks should be removed
+# Passed Cases
 ## [ambiguous_reexport_msg](../../../../../crates/rolldown/tests/esbuild/default/ambiguous_reexport_msg)
 ## [argument_default_value_scope_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/argument_default_value_scope_no_bundle)
 ## [arguments_special_case_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/arguments_special_case_no_bundle)
@@ -97,94 +97,92 @@
 ## [inject_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_no_bundle)
 ## [inject_with_define](../../../../../crates/rolldown/tests/esbuild/default/inject_with_define)
 ## [inject_with_string_re_export_name_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_re_export_name_no_bundle)
-## [JSX 自动导入 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/jsx_automatic_imports_common_js)
-## [JSX 自动导入 ES6](../../../../../crates/rolldown/tests/esbuild/default/jsx_automatic_imports_es6)
-## [JSX 常量片段](../../../../../crates/rolldown/tests/esbuild/default/jsx_constant_fragments)
-## [JSX 导入 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/jsx_imports_common_js)
-## [JSX 导入 ES6](../../../../../crates/rolldown/tests/esbuild/default/jsx_imports_es6)
-## [JSX this 属性 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_property_common_js)
-## [JSX this 属性 ESM](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_property_esm)
-## [JSX this 值 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_value_common_js)
-## [JSX this 值 ESM](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_value_esm)
-## [保留名称所有形式](../../../../../crates/rolldown/tests/esbuild/default/keep_names_all_forms)
-## [保留名称类静态 name](../../../../../crates/rolldown/tests/esbuild/default/keep_names_class_static_name)
-## [保留名称与 Tree Shaking](../../../../../crates/rolldown/tests/esbuild/default/keep_names_tree_shaking)
-## [内联合法注释](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_inline)
-## [合并重复的合法注释 issue4139](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_merge_duplicates_issue4139)
-## [不混淆带引号的属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_no_quoted_props)
-## [不混淆带引号的属性（压缩语法）](../../../../../crates/rolldown/tests/esbuild/default/mangle_no_quoted_props_minify_syntax)
-## [混淆属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_props)
-## [混淆属性避免冲突](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_avoid_collisions)
-## [混淆属性导入/导出打包](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_import_export_bundled)
-## [JSX 保留时混淆属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_preserve)
-## [JSX 转换时混淆属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_transform)
-## [混淆属性键注释](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_key_comment)
-## [混淆属性键注释（压缩）](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_key_comment_minify)
-## [混淆关键字属性（压缩）](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_keyword_property_minify)
-## [降级类字段时混淆属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_lowered_class_fields)
-## [降级可选链时混淆属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_lowered_optional_chain)
-## [混淆属性（压缩）](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_minify)
-## [混淆属性无简写](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_no_shorthand)
-## [混淆属性可选链](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_optional_chain)
-## [混淆属性简写](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_shorthand)
-## [混淆属性 super 调用](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_super_call)
-## [混淆带引号的属性](../../../../../crates/rolldown/tests/esbuild/default/mangle_quoted_props)
-## [混淆带引号的属性（压缩语法）](../../../../../crates/rolldown/tests/esbuild/default/mangle_quoted_props_minify_syntax)
-## [多入口点](../../../../../crates/rolldown/tests/esbuild/default/many_entry_points)
-## [压缩后的 CommonJS 包](../../../../../crates/rolldown/tests/esbuild/default/minified_bundle_common_js)
-## [以重要分号结尾的压缩包](../../../../../crates/rolldown/tests/esbuild/default/minified_bundle_ending_with_important_semicolon)
-## [压缩后的 ES6 包](../../../../../crates/rolldown/tests/esbuild/default/minified_bundle_es6)
-## [带表达式的动态导入 CJS 压缩](../../../../../crates/rolldown/tests/esbuild/default/minified_dynamic_import_with_expression_cjs)
-## [压缩后的导出和模块格式 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/minified_exports_and_module_format_common_js)
-## [带对象展开的 JSX 保留压缩](../../../../../crates/rolldown/tests/esbuild/default/minified_jsx_preserve_with_object_spread)
-## [压缩参数](../../../../../crates/rolldown/tests/esbuild/default/minify_arguments)
-## [通过导入路径频率分析压缩标识符](../../../../../crates/rolldown/tests/esbuild/default/minify_identifiers_import_path_frequency_analysis)
-## [不打包时压缩私有标识符](../../../../../crates/rolldown/tests/esbuild/default/minify_private_identifiers_no_bundle)
-## [不打包时压缩同级标签](../../../../../crates/rolldown/tests/esbuild/default/minify_sibling_labels_no_bundle)
-## [多入口点同名冲突](../../../../../crates/rolldown/tests/esbuild/default/multiple_entry_points_same_name_collision)
-## [命名函数表达式参数冲突](../../../../../crates/rolldown/tests/esbuild/default/named_function_expression_argument_collision)
-## [嵌套 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/nested_common_js)
-## [CommonJS 中嵌套的 ES6](../../../../../crates/rolldown/tests/esbuild/default/nested_es6_from_common_js)
-## [不带调用的嵌套 require](../../../../../crates/rolldown/tests/esbuild/default/nested_require_without_call)
-## [嵌套作用域 bug](../../../../../crates/rolldown/tests/esbuild/default/nested_scope_bug)
-## [CommonJS new 表达式](../../../../../crates/rolldown/tests/esbuild/default/new_expression_common_js)
-## [Node 注解误报 issue3544](../../../../../crates/rolldown/tests/esbuild/default/node_annotation_false_positive_issue3544)
-## [Node 注解无效标识符 issue4100](../../../../../crates/rolldown/tests/esbuild/default/node_annotation_invalid_identifier_issue4100)
+## [jsx_automatic_imports_common_js](../../../../../crates/rolldown/tests/esbuild/default/jsx_automatic_imports_common_js)
+## [jsx_automatic_imports_es6](../../../../../crates/rolldown/tests/esbuild/default/jsx_automatic_imports_es6)
+## [jsx_constant_fragments](../../../../../crates/rolldown/tests/esbuild/default/jsx_constant_fragments)
+## [jsx_imports_common_js](../../../../../crates/rolldown/tests/esbuild/default/jsx_imports_common_js)
+## [jsx_imports_es6](../../../../../crates/rolldown/tests/esbuild/default/jsx_imports_es6)
+## [jsx_this_property_common_js](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_property_common_js)
+## [jsx_this_property_esm](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_property_esm)
+## [jsx_this_value_common_js](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_value_common_js)
+## [jsx_this_value_esm](../../../../../crates/rolldown/tests/esbuild/default/jsx_this_value_esm)
+## [keep_names_all_forms](../../../../../crates/rolldown/tests/esbuild/default/keep_names_all_forms)
+## [keep_names_class_static_name](../../../../../crates/rolldown/tests/esbuild/default/keep_names_class_static_name)
+## [keep_names_tree_shaking](../../../../../crates/rolldown/tests/esbuild/default/keep_names_tree_shaking)
+## [legal_comments_inline](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_inline)
+## [legal_comments_merge_duplicates_issue4139](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_merge_duplicates_issue4139)
+## [mangle_no_quoted_props](../../../../../crates/rolldown/tests/esbuild/default/mangle_no_quoted_props)
+## [mangle_no_quoted_props_minify_syntax](../../../../../crates/rolldown/tests/esbuild/default/mangle_no_quoted_props_minify_syntax)
+## [mangle_props](../../../../../crates/rolldown/tests/esbuild/default/mangle_props)
+## [mangle_props_avoid_collisions](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_avoid_collisions)
+## [mangle_props_import_export_bundled](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_import_export_bundled)
+## [mangle_props_jsx_preserve](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_preserve)
+## [mangle_props_jsx_transform](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_transform)
+## [mangle_props_key_comment](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_key_comment)
+## [mangle_props_key_comment_minify](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_key_comment_minify)
+## [mangle_props_keyword_property_minify](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_keyword_property_minify)
+## [mangle_props_lowered_class_fields](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_lowered_class_fields)
+## [mangle_props_lowered_optional_chain](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_lowered_optional_chain)
+## [mangle_props_minify](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_minify)
+## [mangle_props_no_shorthand](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_no_shorthand)
+## [mangle_props_optional_chain](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_optional_chain)
+## [mangle_props_shorthand](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_shorthand)
+## [mangle_props_super_call](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_super_call)
+## [mangle_quoted_props](../../../../../crates/rolldown/tests/esbuild/default/mangle_quoted_props)
+## [mangle_quoted_props_minify_syntax](../../../../../crates/rolldown/tests/esbuild/default/mangle_quoted_props_minify_syntax)
+## [many_entry_points](../../../../../crates/rolldown/tests/esbuild/default/many_entry_points)
+## [minified_bundle_common_js](../../../../../crates/rolldown/tests/esbuild/default/minified_bundle_common_js)
+## [minified_bundle_ending_with_important_semicolon](../../../../../crates/rolldown/tests/esbuild/default/minified_bundle_ending_with_important_semicolon)
+## [minified_bundle_es6](../../../../../crates/rolldown/tests/esbuild/default/minified_bundle_es6)
+## [minified_dynamic_import_with_expression_cjs](../../../../../crates/rolldown/tests/esbuild/default/minified_dynamic_import_with_expression_cjs)
+## [minified_exports_and_module_format_common_js](../../../../../crates/rolldown/tests/esbuild/default/minified_exports_and_module_format_common_js)
+## [minified_jsx_preserve_with_object_spread](../../../../../crates/rolldown/tests/esbuild/default/minified_jsx_preserve_with_object_spread)
+## [minify_arguments](../../../../../crates/rolldown/tests/esbuild/default/minify_arguments)
+## [minify_identifiers_import_path_frequency_analysis](../../../../../crates/rolldown/tests/esbuild/default/minify_identifiers_import_path_frequency_analysis)
+## [minify_private_identifiers_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/minify_private_identifiers_no_bundle)
+## [minify_sibling_labels_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/minify_sibling_labels_no_bundle)
+## [multiple_entry_points_same_name_collision](../../../../../crates/rolldown/tests/esbuild/default/multiple_entry_points_same_name_collision)
+## [named_function_expression_argument_collision](../../../../../crates/rolldown/tests/esbuild/default/named_function_expression_argument_collision)
+## [nested_common_js](../../../../../crates/rolldown/tests/esbuild/default/nested_common_js)
+## [nested_es6_from_common_js](../../../../../crates/rolldown/tests/esbuild/default/nested_es6_from_common_js)
+## [nested_require_without_call](../../../../../crates/rolldown/tests/esbuild/default/nested_require_without_call)
+## [nested_scope_bug](../../../../../crates/rolldown/tests/esbuild/default/nested_scope_bug)
+## [new_expression_common_js](../../../../../crates/rolldown/tests/esbuild/default/new_expression_common_js)
+## [node_annotation_false_positive_issue3544](../../../../../crates/rolldown/tests/esbuild/default/node_annotation_false_positive_issue3544)
+## [node_annotation_invalid_identifier_issue4100](../../../../../crates/rolldown/tests/esbuild/default/node_annotation_invalid_identifier_issue4100)
 ## [node_modules](../../../../../crates/rolldown/tests/esbuild/default/node_modules)
-## [非确定性 issue2537](../../../../../crates/rolldown/tests/esbuild/default/non_determinism_issue2537)
-## [对象字面量 __proto__ setter 边缘情况](../../../../../crates/rolldown/tests/esbuild/default/object_literal_proto_setter_edge_cases)
-## [对象字面量 __proto__ setter 边缘情况（压缩语法）](../../../../../crates/rolldown/tests/esbuild/default/object_literal_proto_setter_edge_cases_minify_syntax)
-## [输出基目录](../../../../../crates/rolldown/tests/esbuild/default/outbase)
-## [输出扩展名重映射目录](../../../../../crates/rolldown/tests/esbuild/default/output_extension_remapping_dir)
-## [输出扩展名重映射文件](../../../../../crates/rolldown/tests/esbuild/default/output_extension_remapping_file)
-## [保留键注释](../../../../../crates/rolldown/tests/esbuild/default/preserve_key_comment)
-## [带引号的属性](../../../../../crates/rolldown/tests/esbuild/default/quoted_property)
-## [将 CommonJS 重新导出为 ES6](../../../../../crates/rolldown/tests/esbuild/default/re_export_common_js_as_es6)
-## [将外部 CommonJS 默认导出重新导出](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_external_common_js)
-## [将外部 ES6 默认导出重新导出](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_external_es6)
-## [将内部默认导出重新导出](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_internal)
-## [不打包时重新导出默认值](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_no_bundle)
-## [不打包时重新导出默认值 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_no_bundle_common_js)
-## [不打包时重新导出默认值 ES6](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_no_bundle_es6)
-## [重新导出 fs Node](../../../../../crates/rolldown/tests/esbuild/default/re_export_fs_node)
-## [不打包时重命名标签](../../../../../crates/rolldown/tests/esbuild/default/rename_labels_no_bundle)
-## [重命名嵌套变量](../../../../../crates/rolldown/tests/esbuild/default/rename_nested_var)
-## [不打包时重命名私有标识符](../../../../../crates/rolldown/tests/esbuild/default/rename_private_identifiers_no_bundle)
-## [require 参数数量错误](../../../../../crates/rolldown/tests/esbuild/default/require_bad_argument_count)
-## [子目录 require CommonJS](../../../../../crates/rolldown/tests/esbuild/default/require_child_dir_common_js)
-## [子目录 require ES6](../../../../../crates/rolldown/tests/esbuild/default/require_child_dir_es6)
-## [require fs Node](../../../../../crates/rolldown/tests/esbuild/default/require_fs_node)
-## [require fs Node（压缩）](../../../../../crates/rolldown/tests/esbuild/default/require_fs_node_minify)
-## [require JSON](../../../../../crates/rolldown/tests/esbuild/default/require_json)
-## [主缓存 require CommonJS](../../../../../crates/rolldown/tests/esbuild/default/require_main_cache_common_js)
-## [父目录 require CommonJS](../../../../../crates/rolldown/tests/esbuild/default/require_parent_dir_common_js)
-## [父目录 require ES6](../../../../../crates/rolldown/tests/esbuild/default/require_parent_dir_es6)
-## [require 属性访问 CommonJS](../../../../../crates/rolldown/tests/esbuild/default/require_property_access_common_js)
-## [require resolve](../../../../../crates/rolldown/tests/esbuild/default/require_resolve)
-## [require txt](../../../../../crates/rolldown/tests/esbuild/default/require_txt)
-## [在 try 内部调用的 require](../../../../../crates/rolldown/tests/esbuild/default/require_with_call_inside_try)
-## [带模板字符串的 require](../../../../../crates/rolldown/tests/esbuild/default/require_with_template)
-## [不带调用的 require](../../../../../crates/rolldown/tests/esbuild/default/require_without_call)
+## [non_determinism_issue2537](../../../../../crates/rolldown/tests/esbuild/default/non_determinism_issue2537)
+## [object_literal_proto_setter_edge_cases](../../../../../crates/rolldown/tests/esbuild/default/object_literal_proto_setter_edge_cases)
+## [object_literal_proto_setter_edge_cases_minify_syntax](../../../../../crates/rolldown/tests/esbuild/default/object_literal_proto_setter_edge_cases_minify_syntax)
+## [outbase](../../../../../crates/rolldown/tests/esbuild/default/outbase)
+## [output_extension_remapping_dir](../../../../../crates/rolldown/tests/esbuild/default/output_extension_remapping_dir)
+## [output_extension_remapping_file](../../../../../crates/rolldown/tests/esbuild/default/output_extension_remapping_file)
+## [preserve_key_comment](../../../../../crates/rolldown/tests/esbuild/default/preserve_key_comment)
+## [quoted_property](../../../../../crates/rolldown/tests/esbuild/default/quoted_property)
+## [re_export_common_js_as_es6](../../../../../crates/rolldown/tests/esbuild/default/re_export_common_js_as_es6)
+## [re_export_default_external_common_js](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_external_common_js)
+## [re_export_default_external_es6](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_external_es6)
+## [re_export_default_internal](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_internal)
+## [re_export_default_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_no_bundle)
+## [re_export_default_no_bundle_common_js](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_no_bundle_common_js)
+## [re_export_default_no_bundle_es6](../../../../../crates/rolldown/tests/esbuild/default/re_export_default_no_bundle_es6)
+## [re_export_fs_node](../../../../../crates/rolldown/tests/esbuild/default/re_export_fs_node)
+## [rename_labels_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/rename_labels_no_bundle)
+## [rename_nested_var](../../../../../crates/rolldown/tests/esbuild/default/rename_nested_var)
+## [rename_private_identifiers_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/rename_private_identifiers_no_bundle)
+## [require_bad_argument_count](../../../../../crates/rolldown/tests/esbuild/default/require_bad_argument_count)
+## [require_child_dir_common_js](../../../../../crates/rolldown/tests/esbuild/default/require_child_dir_common_js)
+## [require_child_dir_es6](../../../../../crates/rolldown/tests/esbuild/default/require_child_dir_es6)
+## [require_json](../../../../../crates/rolldown/tests/esbuild/default/require_json)
+## [require_main_cache_common_js](../../../../../crates/rolldown/tests/esbuild/default/require_main_cache_common_js)
+## [require_parent_dir_common_js](../../../../../crates/rolldown/tests/esbuild/default/require_parent_dir_common_js)
+## [require_parent_dir_es6](../../../../../crates/rolldown/tests/esbuild/default/require_parent_dir_es6)
+## [require_property_access_common_js](../../../../../crates/rolldown/tests/esbuild/default/require_property_access_common_js)
+## [require_resolve](../../../../../crates/rolldown/tests/esbuild/default/require_resolve)
+## [require_txt](../../../../../crates/rolldown/tests/esbuild/default/require_txt)
+## [require_with_call_inside_try](../../../../../crates/rolldown/tests/esbuild/default/require_with_call_inside_try)
+## [require_with_template](../../../../../crates/rolldown/tests/esbuild/default/require_with_template)
+## [require_without_call](../../../../../crates/rolldown/tests/esbuild/default/require_without_call)
 ## [require_without_call_inside_try](../../../../../crates/rolldown/tests/esbuild/default/require_without_call_inside_try)
 ## [reserve_props](../../../../../crates/rolldown/tests/esbuild/default/reserve_props)
 ## [runtime_name_collision_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/runtime_name_collision_no_bundle)
@@ -226,101 +224,105 @@
 ## [warn_common_js_exports_in_esm_bundle](../../../../../crates/rolldown/tests/esbuild/default/warn_common_js_exports_in_esm_bundle)
 ## [warn_common_js_exports_in_esm_convert](../../../../../crates/rolldown/tests/esbuild/default/warn_common_js_exports_in_esm_convert)
 ## [with_statement_tainting_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/with_statement_tainting_no_bundle)
-# 被忽略的案例
-## [define_import_meta_es5](../../../../../crates/rolldown/tests/esbuild/default/define_import_meta_es5)
-  不支持 target: 'es5'
-## [entry_names_chunk_names_ext_placeholder](../../../../../crates/rolldown/tests/esbuild/default/entry_names_chunk_names_ext_placeholder)
-  不支持 CSS bundling（https://github.com/rolldown/rolldown/issues/4271）
-## [entry_names_no_slash_after_dir](../../../../../crates/rolldown/tests/esbuild/default/entry_names_no_slash_after_dir)
-  无关：Rolldown 没有 `entryFileNames` 的 [dir] 占位符
-## [entry_names_non_portable_character](../../../../../crates/rolldown/tests/esbuild/default/entry_names_non_portable_character)
-  测试基础设施的限制，该测试在 CI 中可能很难通过
-## [import_abs_path_as_dir](../../../../../crates/rolldown/tests/esbuild/default/import_abs_path_as_dir)
-  测试基础设施的限制，该测试在 CI 中可能很难通过
-## [import_abs_path_as_file](../../../../../crates/rolldown/tests/esbuild/default/import_abs_path_as_file)
-  测试基础设施的限制，该测试在 CI 中可能很难通过
-## [inject_duplicate](../../../../../crates/rolldown/tests/esbuild/default/inject_duplicate)
-  inject 功能与 `@rollup/plugin-inject` 保持一致，不支持直接注入源文件
-## [inject_import_order](../../../../../crates/rolldown/tests/esbuild/default/inject_import_order)
-  inject 功能与 `@rollup/plugin-inject` 保持一致，不支持直接注入源文件
-## [inject_import_ts](../../../../../crates/rolldown/tests/esbuild/default/inject_import_ts)
-  inject 功能与 `@rollup/plugin-inject` 保持一致，不支持直接注入源文件
-## [inject_jsx](../../../../../crates/rolldown/tests/esbuild/default/inject_jsx)
-  由于多阶段转换器架构，目前不支持该测试（要支持它，我们应先 `Define`，然后再 `Transform`）。
-## [inject_with_string_export_name_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_export_name_bundle)
-  Rolldown 在 `inject files` 中替换了函数本身；这种行为与 `@rollup/plugin-inject` 一致
-## [inject_with_string_export_name_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_export_name_no_bundle)
-  Rolldown 在 `inject files` 中替换了函数本身；这种行为与 `@rollup/plugin-inject` 一致
-## [jsx_import_meta_property](../../../../../crates/rolldown/tests/esbuild/default/jsx_import_meta_property)
-  由于多阶段转换器架构，JSX 转换注入的 `import.meta` 不能被 define 插件替换（define 在 JSX 转换之前运行）
-## [jsx_import_meta_value](../../../../../crates/rolldown/tests/esbuild/default/jsx_import_meta_value)
-  由于多阶段转换器架构，JSX 转换注入的 `import.meta` 不能被 define 插件替换（define 在 JSX 转换之前运行）
-## [legal_comments_modify_indent](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_modify_indent)
-  不支持 CSS bundling（https://github.com/rolldown/rolldown/issues/4271）
-## [line_limit_minified](../../../../../crates/rolldown/tests/esbuild/default/line_limit_minified)
-  无关：不会支持 lineLimit 选项
-## [line_limit_not_minified](../../../../../crates/rolldown/tests/esbuild/default/line_limit_not_minified)
-  无关：不会支持 lineLimit 选项
-## [metafile_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/metafile_no_bundle)
-  不支持 CSS bundling（https://github.com/rolldown/rolldown/issues/4271）
-## [package_alias](../../../../../crates/rolldown/tests/esbuild/default/package_alias)
-  解析别名行为存在差异
-## [package_alias_match_longest](../../../../../crates/rolldown/tests/esbuild/default/package_alias_match_longest)
-  解析别名行为存在差异
-## [quoted_property_mangle](../../../../../crates/rolldown/tests/esbuild/default/quoted_property_mangle)
-  已被压缩器覆盖
-## [warnings_inside_node_modules](../../../../../crates/rolldown/tests/esbuild/default/warnings_inside_node_modules)
-  解析别名行为存在差异
-# 被忽略的案例（不支持）
+# Ignored Cases
 ## [comment_preservation_import_assertions](../../../../../crates/rolldown/tests/esbuild/default/comment_preservation_import_assertions)
-  不支持 import attributes
-## [conditional_require_resolve](../../../../../crates/rolldown/tests/esbuild/default/conditional_require_resolve)
-  不支持转换条件性的 `require.resolve`
-## [import_with_hash_parameter](../../../../../crates/rolldown/tests/esbuild/default/import_with_hash_parameter)
-  不支持去除 hash 参数
-## [import_with_query_parameter](../../../../../crates/rolldown/tests/esbuild/default/import_with_query_parameter)
-  不支持去除 query 参数
-## [legal_comments_avoid_slash_tag_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_end_of_file)
-  CSS 中不支持转义 </style>
-## [legal_comments_avoid_slash_tag_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_external)
-  不支持 `legalComments: 'external'`。CSS 中不支持转义 </style>
-## [legal_comments_avoid_slash_tag_inline](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_inline)
-  CSS 中不支持转义 </style>
-## [legal_comments_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_end_of_file)
-  不支持 `legalComments: 'eof'`
-## [legal_comments_escape_slash_script_and_style_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_escape_slash_script_and_style_end_of_file)
-  不支持 `legalComments: 'eof'`。CSS 中不支持转义 </style>
-## [legal_comments_escape_slash_script_and_style_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_escape_slash_script_and_style_external)
-  不支持 `legalComments: 'external'`。CSS 中不支持转义 </style>
-## [legal_comments_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_external)
-  不支持 `legalComments: 'external'`
-## [legal_comments_linked](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_linked)
-  不支持 `legalComments: 'linked'`
-## [legal_comments_many_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_many_end_of_file)
-  不支持 `legalComments: 'eof'`
-## [legal_comments_many_linked](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_many_linked)
-  不支持 `legalComments: 'linked'`
-## [legal_comments_no_escape_slash_script_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_no_escape_slash_script_end_of_file)
-  不支持 `legalComments: 'eof'`
-## [legal_comments_no_escape_slash_style_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_no_escape_slash_style_end_of_file)
-  不支持 `legalComments: 'eof'`
-## [legal_comments_none](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_none)
-  CSS 文件不支持 `legalComments: 'none'`
-## [mangle_props_jsx_transform_namespace](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_transform_namespace)
-  oxc minifier 不支持属性混淆
-## [mangle_props_type_script_features](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_type_script_features)
-  oxc minifier 不支持属性混淆
+  Rolldown renders the legacy `assert` keyword as `with` and does not keep comments inside import attributes
+## [define_import_meta_es5](../../../../../crates/rolldown/tests/esbuild/default/define_import_meta_es5)
+  target: 'es5' is not supported
+## [entry_names_chunk_names_ext_placeholder](../../../../../crates/rolldown/tests/esbuild/default/entry_names_chunk_names_ext_placeholder)
+  CSS bundling is not supported (https://github.com/rolldown/rolldown/issues/4271)
+## [entry_names_no_slash_after_dir](../../../../../crates/rolldown/tests/esbuild/default/entry_names_no_slash_after_dir)
+  irrelevant: Rolldown does not have [dir] placeholder for `entryFileNames`
+## [entry_names_non_portable_character](../../../../../crates/rolldown/tests/esbuild/default/entry_names_non_portable_character)
+  limitation of test infra, the test may hard to pass in CI
+## [import_abs_path_as_dir](../../../../../crates/rolldown/tests/esbuild/default/import_abs_path_as_dir)
+  limitation of test infra, the test may hard to pass in CI
+## [import_abs_path_as_file](../../../../../crates/rolldown/tests/esbuild/default/import_abs_path_as_file)
+  limitation of test infra, the test may hard to pass in CI
+## [inject_duplicate](../../../../../crates/rolldown/tests/esbuild/default/inject_duplicate)
+  inject feature is aligned with `@rollup/plugin-inject` and doesn't support injecting source file directly
+## [inject_import_order](../../../../../crates/rolldown/tests/esbuild/default/inject_import_order)
+  inject feature is aligned with `@rollup/plugin-inject` and doesn't support injecting source file directly
+## [inject_import_ts](../../../../../crates/rolldown/tests/esbuild/default/inject_import_ts)
+  inject feature is aligned with `@rollup/plugin-inject` and doesn't support injecting source file directly
+## [inject_jsx](../../../../../crates/rolldown/tests/esbuild/default/inject_jsx)
+  due to multi pass transformer arch, this test could not be supported for now (to support this, we should `Define` first and then `Transform`).
+## [inject_with_string_export_name_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_export_name_bundle)
+  Rolldown replaces the function it self in `inject files`; this behavior aligns with `@rollup/plugin-inject`
+## [inject_with_string_export_name_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/inject_with_string_export_name_no_bundle)
+  Rolldown replaces the function it self in `inject files`; this behavior aligns with `@rollup/plugin-inject`
+## [jsx_import_meta_property](../../../../../crates/rolldown/tests/esbuild/default/jsx_import_meta_property)
+  due to multi pass transformer arch, `import.meta` injected by JSX transform cannot be replaced by the define plugin (define runs before JSX transform)
+## [jsx_import_meta_value](../../../../../crates/rolldown/tests/esbuild/default/jsx_import_meta_value)
+  due to multi pass transformer arch, `import.meta` injected by JSX transform cannot be replaced by the define plugin (define runs before JSX transform)
+## [legal_comments_modify_indent](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_modify_indent)
+  CSS bundling is not supported (https://github.com/rolldown/rolldown/issues/4271)
+## [line_limit_minified](../../../../../crates/rolldown/tests/esbuild/default/line_limit_minified)
+  irrelevant: lineLimit option will not be supported
+## [line_limit_not_minified](../../../../../crates/rolldown/tests/esbuild/default/line_limit_not_minified)
+  irrelevant: lineLimit option will not be supported
 ## [metafile_import_with_type_json](../../../../../crates/rolldown/tests/esbuild/default/metafile_import_with_type_json)
-  不支持导入属性
+  Rolldown treats the legacy `assert` keyword as `with`, so the `assert` and `with` imports are one module. esbuild puts the `assert` import with the plain one
+## [metafile_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/metafile_no_bundle)
+  CSS bundling is not supported (https://github.com/rolldown/rolldown/issues/4271)
+## [package_alias](../../../../../crates/rolldown/tests/esbuild/default/package_alias)
+  resolve alias behavior difference
+## [package_alias_match_longest](../../../../../crates/rolldown/tests/esbuild/default/package_alias_match_longest)
+  resolve alias behavior difference
+## [quoted_property_mangle](../../../../../crates/rolldown/tests/esbuild/default/quoted_property_mangle)
+  covered by minifier
+## [require_fs_node](../../../../../crates/rolldown/tests/esbuild/default/require_fs_node)
+  Rolldown runs a CommonJS entry with a top-level `return` in an arrow function, so the `return` does not skip what the chunk prints after the module
+## [require_fs_node_minify](../../../../../crates/rolldown/tests/esbuild/default/require_fs_node_minify)
+  Rolldown runs a CommonJS entry with a top-level `return` in an arrow function, so the `return` does not skip what the chunk prints after the module
+## [warnings_inside_node_modules](../../../../../crates/rolldown/tests/esbuild/default/warnings_inside_node_modules)
+  resolve alias behavior difference
+# Ignored Cases (not supported)
+## [conditional_require_resolve](../../../../../crates/rolldown/tests/esbuild/default/conditional_require_resolve)
+  converting conditional `require.resolve` is not supported
+## [import_with_hash_parameter](../../../../../crates/rolldown/tests/esbuild/default/import_with_hash_parameter)
+  stripping hash parameter is not supported
+## [import_with_query_parameter](../../../../../crates/rolldown/tests/esbuild/default/import_with_query_parameter)
+  stripping query parameter is not supported
+## [legal_comments_avoid_slash_tag_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_end_of_file)
+  escaping </style> in CSS is not supported
+## [legal_comments_avoid_slash_tag_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_external)
+  `legalComments: 'external'` is not supported. escaping </style> in CSS is not supported
+## [legal_comments_avoid_slash_tag_inline](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_avoid_slash_tag_inline)
+  escaping </style> in CSS is not supported
+## [legal_comments_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_end_of_file)
+  `legalComments: 'eof'` is not supported
+## [legal_comments_escape_slash_script_and_style_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_escape_slash_script_and_style_end_of_file)
+  `legalComments: 'eof'` is not supported. escaping </style> in CSS is not supported
+## [legal_comments_escape_slash_script_and_style_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_escape_slash_script_and_style_external)
+  `legalComments: 'external'` is not supported. escaping </style> in CSS is not supported
+## [legal_comments_external](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_external)
+  `legalComments: 'external'` is not supported
+## [legal_comments_linked](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_linked)
+  `legalComments: 'linked'` is not supported
+## [legal_comments_many_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_many_end_of_file)
+  `legalComments: 'eof'` is not supported
+## [legal_comments_many_linked](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_many_linked)
+  `legalComments: 'linked'` is not supported
+## [legal_comments_no_escape_slash_script_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_no_escape_slash_script_end_of_file)
+  `legalComments: 'eof'` is not supported
+## [legal_comments_no_escape_slash_style_end_of_file](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_no_escape_slash_style_end_of_file)
+  `legalComments: 'eof'` is not supported
+## [legal_comments_none](../../../../../crates/rolldown/tests/esbuild/default/legal_comments_none)
+  `legalComments: 'none'` is not supported for CSS files
+## [mangle_props_jsx_transform_namespace](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_jsx_transform_namespace)
+  mangle props is not supported by oxc minifier
+## [mangle_props_type_script_features](../../../../../crates/rolldown/tests/esbuild/default/mangle_props_type_script_features)
+  mangle props is not supported by oxc minifier
 ## [metafile_various_cases](../../../../../crates/rolldown/tests/esbuild/default/metafile_various_cases)
-  不支持 copy loader
+  copy loader is not supported
 ## [metafile_very_long_external_paths](../../../../../crates/rolldown/tests/esbuild/default/metafile_very_long_external_paths)
-  不支持 copy loader
+  copy loader is not supported
 ## [minify_nested_labels_no_bundle](../../../../../crates/rolldown/tests/esbuild/default/minify_nested_labels_no_bundle)
-  oxc minifier 不支持标签混淆
+  label mangling is not supported by oxc minifier
 ## [output_for_assert_type_json](../../../../../crates/rolldown/tests/esbuild/default/output_for_assert_type_json)
-  不支持导入属性
+  copy loader is not supported
 ## [require_and_dynamic_import_invalid_template](../../../../../crates/rolldown/tests/esbuild/default/require_and_dynamic_import_invalid_template)
-  不支持 glob
+  glob is not supported
 ## [require_shim_substitution](../../../../../crates/rolldown/tests/esbuild/default/require_shim_substitution)
-  不支持 require 的第二个参数
+  require second argument is not supported

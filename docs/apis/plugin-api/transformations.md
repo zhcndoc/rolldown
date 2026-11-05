@@ -11,6 +11,8 @@ return {
 };
 ```
 
+这样一来，输出 sourcemap 会将该代码排除在 `sources`、`sourcesContent` 和 `names` 之外。
+
 如果转换没有移动代码，你可以通过返回 `null` 来保留现有的 sourcemap：
 
 ```js

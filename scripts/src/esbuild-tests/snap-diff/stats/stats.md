@@ -1,60 +1,60 @@
-# 兼容性指标
-- 总计：824
-- 已忽略：112
-- 已通过：688
-- 通过率：87.42%
-# 不包括不支持情况的兼容性指标
-- 总计：712
-- 已通过：688
-- 通过率：96.63%
-# 兼容性指标详情
+# Compatibility metric
+- total: 824
+- ignored: 113
+- passed: 688
+- passed ratio: 88.43%
+# Compatibility metric without not supported case
+- total: 711
+- passed: 688
+- passed ratio: 96.77%
+# Compatibility metric details
 ## dce
-- 总计：120
-- 已忽略：12
-- 已通过：104
-- 通过率：96.30%
+- total: 120
+- ignored: 12
+- passed: 104
+- passed ratio: 96.30%
 ## default
-- 总计：263
-- 已忽略：48
-- 已通过：204
-- 通过率：94.88%
+- total: 263
+- ignored: 50
+- passed: 202
+- passed ratio: 94.84%
 ## glob
-- 总计：9
-- 已忽略：8
-- 已通过：1
-- 通过率：100.00%
+- total: 9
+- ignored: 8
+- passed: 1
+- passed ratio: 100.00%
 ## importstar
-- 总计：76
-- 已忽略：0
-- 已通过：76
-- 通过率：100.00%
+- total: 76
+- ignored: 0
+- passed: 76
+- passed ratio: 100.00%
 ## importstar_ts
-- 总计：23
-- 已忽略：0
-- 已通过：23
-- 通过率：100.00%
+- total: 23
+- ignored: 0
+- passed: 23
+- passed ratio: 100.00%
 ## loader
-- 总计：75
-- 已忽略：35
-- 已通过：36
-- 通过率：90.00%
+- total: 75
+- ignored: 34
+- passed: 38
+- passed ratio: 92.68%
 ## lower
-- 总计：82
-- 已忽略：0
-- 已通过：82
-- 通过率：100.00%
+- total: 82
+- ignored: 0
+- passed: 82
+- passed ratio: 100.00%
 ## packagejson
-- 总计：68
-- 已忽略：0
-- 已通过：65
-- 通过率：95.59%
+- total: 68
+- ignored: 0
+- passed: 65
+- passed ratio: 95.59%
 ## splitting
-- 总计：23
-- 已忽略：0
-- 已通过：23
-- 通过率：100.00%
+- total: 23
+- ignored: 0
+- passed: 23
+- passed ratio: 100.00%
 ## ts
-- 总计：85
-- 已忽略：9
-- 已通过：74
-- 通过率：97.37%
+- total: 85
+- ignored: 9
+- passed: 74
+- passed ratio: 97.37%

@@ -769,9 +769,9 @@ impl GenerateStage<'_> {
     /// preserve-modules chunk names disagree about where the module lives.
     fn common_dir_input<'a>(id: &'a ModuleId, cwd: &Path) -> Option<Cow<'a, str>> {
       if id.is_path() {
-        return Some(Cow::Borrowed(id.as_ref()));
+        return Some(Cow::Borrowed(id.raw_id()));
       }
-      let glued = node_style_absolute(Path::new(id.as_str()), cwd)?;
+      let glued = node_style_absolute(Path::new(id.raw_id()), cwd)?;
       Some(Cow::Owned(glued.into_owned().expect_into_string()))
     }
 
@@ -1072,7 +1072,12 @@ impl GenerateStage<'_> {
       );
     }
 
-    self.try_merge_runtime_chunk(chunk_graph, None, RuntimeMergeCascade::Full);
+    self.try_merge_runtime_chunk(
+      chunk_graph,
+      None,
+      RuntimeMergeCascade::Full,
+      used_symbol_refs_builder,
+    );
 
     Ok(())
   }
@@ -1282,10 +1287,33 @@ impl GenerateStage<'_> {
       // effectful carriers unconditionally. Selected leaves come from the consuming modules'
       // precomputed initialization dependencies.
       if is_consumer_local_barrel && module_idx != entry_module_idx {
+        if module_namespace_is_referenced(module, meta, pre_chunk_order_state, |idx| {
+          self.link_output.metas[idx].is_included
+        }) {
+          // Namespace getters still reference nested namespace objects after forwarding
+          // statements disappear. Preserve those owners separately from leaf init demands.
+          for name in meta.sorted_and_non_ambiguous_resolved_exports.keys() {
+            let symbol_ref = self
+              .link_output
+              .symbol_db
+              .canonical_ref_resolving_namespace(meta.resolved_exports[name].symbol_ref);
+            if self.link_output.module_table[symbol_ref.owner]
+              .as_normal()
+              .is_some_and(|owner| owner.namespace_object_ref == symbol_ref)
+            {
+              q.push_back(symbol_ref.owner);
+            }
+          }
+        }
         for rec in &module.import_records {
+          // A materialized namespace belongs to the consumers of that object. Adding it as an
+          // unconditional waypoint would import all its getter targets into unrelated consumers.
           if rec.kind == ImportKind::Import
             && let Some(importee_idx) = rec.resolved_module
             && pre_chunk_order_state.is_consumer_local_reexport_route(importee_idx)
+            && !self.link_output.metas[importee_idx]
+              .module_namespace_included_reason
+              .contains(ModuleNamespaceIncludedReason::Unknown)
           {
             q.push_back(importee_idx);
           }

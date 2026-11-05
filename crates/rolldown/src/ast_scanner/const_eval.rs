@@ -36,33 +36,33 @@ impl<'me> ConstEvalCtx<'me, '_> {
   }
 }
 
-impl<'ast> ConstantEvaluationCtx<'ast> for ConstEvalCtx<'_, 'ast> {}
+impl<'me> ConstantEvaluationCtx<'me> for ConstEvalCtx<'me, '_> {}
 
-impl<'ast> GetAstBuilder<'ast> for ConstEvalCtx<'_, 'ast> {
-  type Builder = oxc::ast::builder::AstBuilder<'ast>;
+impl<'me> GetAstBuilder<'me> for ConstEvalCtx<'me, '_> {
+  type Builder = oxc::ast::builder::AstBuilder<'me>;
 
   #[inline]
-  fn builder(&self) -> &oxc::ast::builder::AstBuilder<'ast> {
+  fn builder(&self) -> &oxc::ast::builder::AstBuilder<'me> {
     &self.ast
   }
 }
 
-impl<'ast> GetAllocator<'ast> for ConstEvalCtx<'_, 'ast> {
+impl<'me> GetAllocator<'me> for ConstEvalCtx<'me, '_> {
   #[inline]
-  fn allocator(&self) -> &'ast Allocator {
+  fn allocator(&self) -> &'me Allocator {
     self.ast.allocator()
   }
 }
 
-impl<'ast> GlobalContext<'ast> for ConstEvalCtx<'_, 'ast> {
-  fn is_global_reference(&self, reference: &oxc::ast::ast::IdentifierReference<'ast>) -> bool {
+impl<'me> GlobalContext<'me> for ConstEvalCtx<'me, '_> {
+  fn is_global_reference(&self, reference: &oxc::ast::ast::IdentifierReference<'me>) -> bool {
     reference.is_global_reference(self.scope)
   }
 
   fn get_constant_value_for_reference_id(
     &self,
     reference_id: oxc::semantic::ReferenceId,
-  ) -> Option<oxc_ecmascript::constant_evaluation::ConstantValue<'ast>> {
+  ) -> Option<oxc_ecmascript::constant_evaluation::ConstantValue<'me>> {
     self.constant_value(reference_id).map(oxc_ecmascript::constant_evaluation::ConstantValue::from)
   }
 
@@ -72,7 +72,7 @@ impl<'ast> GlobalContext<'ast> for ConstEvalCtx<'_, 'ast> {
   }
 }
 
-impl<'ast> MayHaveSideEffectsContext<'ast> for ConstEvalCtx<'_, 'ast> {
+impl<'me> MayHaveSideEffectsContext<'me> for ConstEvalCtx<'me, '_> {
   fn annotations(&self) -> bool {
     false
   }
@@ -98,7 +98,7 @@ pub fn try_extract_const_literal<'me, 'ast: 'me>(
     Expression::TemplateLiteral(template) => {
       template_text(ctx, template).map(ConstantValue::String)
     }
-    _ => expr.evaluate_value(ctx).map(ConstantValue::from),
+    _ => expr.evaluate_value(ctx).and_then(ConstantValue::from_oxc),
   }?;
   (!contains_object_literal(expr)).then_some(value)
 }
@@ -150,10 +150,7 @@ fn template_text<'ast>(
 ) -> Option<String> {
   let mut text = String::new();
   for (i, quasi) in template.quasis.iter().enumerate() {
-    if quasi.lone_surrogates {
-      return None;
-    }
-    text.push_str(quasi.value.cooked.as_ref()?);
+    text.push_str(quasi.value.cooked?.as_str()?);
     match template.expressions.get(i) {
       None => {}
       Some(Expression::TemplateLiteral(inner)) => text.push_str(&template_text(ctx, inner)?),
@@ -242,6 +239,41 @@ mod tests {
   }
 
   #[test]
+  fn test_string_constant_lookups_do_not_allocate_in_the_ast_arena() {
+    let allocator = Allocator::default();
+    let program = Parser::new(
+      &allocator,
+      "const VALUE = ''; const target = VALUE.length;",
+      SourceType::default(),
+    )
+    .parse()
+    .program;
+    let ast_scopes = AstScopes::new(SemanticBuilder::new().build(&program).semantic.into_scoping());
+    let Statement::VariableDeclaration(decl) = &program.body[0] else { unreachable!() };
+    let BindingPattern::BindingIdentifier(binding) = &decl.declarations[0].id else {
+      unreachable!()
+    };
+    let mut constant_map = FxHashMap::default();
+    constant_map.insert(
+      binding.symbol_id(),
+      ConstExportMeta::new(ConstantValue::String("x".repeat(4096)), false),
+    );
+    let ctx = ConstEvalCtx {
+      ast: oxc::ast::builder::AstBuilder::new(&allocator),
+      scope: ast_scopes.scoping(),
+      constant_map: &constant_map,
+      overrode_get_constant_value_from_reference_id: None,
+    };
+    let Statement::VariableDeclaration(decl) = &program.body[1] else { unreachable!() };
+    let expr = decl.declarations[0].init.as_ref().unwrap();
+    let used_bytes = allocator.used_bytes();
+    for _ in 0..128 {
+      assert_eq!(try_extract_const_literal(&ctx, expr), Some(ConstantValue::Number(4096.0)));
+    }
+    assert_eq!(allocator.used_bytes(), used_bytes);
+  }
+
+  #[test]
   fn test_template_literal_with_an_unknown_substitution_is_not_a_constant() {
     assert_eq!(extract("const a = `${x}`;", "a"), None);
     assert_eq!(extract("let x; const a = `${x}`;", "a"), None);
@@ -250,6 +282,14 @@ mod tests {
     assert_eq!(extract("const NAME = 'rolldown'; const a = `${NAME}${x}`;", "a"), None);
     // A new string literal cannot carry a lone surrogate.
     assert_eq!(extract("const a = `\\uD800`;", "a"), None);
+  }
+
+  #[test]
+  fn test_string_with_a_lone_surrogate_is_not_a_constant() {
+    assert_eq!(extract("const a = '\\uD800';", "a"), None);
+    assert_eq!(extract("const a = '\\uD800' + 'x';", "a"), None);
+    // A pair split across two literals becomes a well-formed string after concatenation.
+    assert_eq!(extract("const a = '\\uD800' + '\\uDC00';", "a"), Some(string("\u{10000}")));
   }
 
   #[test]

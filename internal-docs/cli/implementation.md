@@ -1,56 +1,56 @@
-# CLI 设计
+# CLI Design
 
-CLI 使用 [cac](https://github.com/cacjs/cac)（v6.7.14）进行参数解析。cac 与 Vite 和 tsdown 使用的是同一个库。
+The CLI uses [cac](https://github.com/cacjs/cac) (v6.7.14) for argument parsing. cac is the same library used by Vite and tsdown.
 
-## 流程
+## Pipeline
 
 ```
 bin/cli.mjs
-  → src/cli/index.ts（入口）
+  → src/cli/index.ts (entry)
     → checkNodeVersion()
     → parseCliArguments()
       → arguments/index.ts
-        → getCliSchemaInfo()                 — 将 valibot schema 扁平化为 { key: { type, description } }
-        → build `options` export             — 供 help.ts 使用（camelCase keys，与 Rollup/Vite 的帮助显示保持一致）
-        → build knownKeys / shortAliases     — 用于后处理
-        → register options with cac          — 遍历 schemaInfo + alias，构建 rawName 字符串
+        → getCliSchemaInfo()                 — flatten valibot schema into { key: { type, description } }
+        → build `options` export             — for help.ts consumption (camelCase keys, aligns help display with Rollup/Vite)
+        → build knownKeys / shortAliases     — for post-processing
+        → register options with cac          — loop schemaInfo + alias, build rawName strings
         → cli.parse(process.argv, { run: true })
-        → 后处理：
-          → 删除 `--` key 和短别名重复项
-          → 原型污染防护
-          → 未知选项检测 + 警告
-          → rawArgs 快照
-          → 移除未知 key
-          → 类型强制转换（重复项过滤 + 数组包装）
-          → 对象选项解析（key:val,key:val）
+        → post-processing:
+          → append `--` arguments to positionals, then delete the key and short-alias duplicates
+          → prototype pollution guard
+          → unknown option detection + warning
+          → rawArgs snapshot
+          → remove unknown keys
+          → type coercion (duplicate filtering + array wrapping)
+          → object option parsing (key:val,key:val)
       → arguments/normalize.ts
-        → 通过 valibot 进行 validateCliOptions()
-        → 根据 schema keys 分成 input/output
-        → 将 positionals 合并到 input.input
-    → 处理 --environment（KEY:VALUE → process.env）
-    → 如果 --help：显示 showHelp()
-    → 如果 --version：打印版本
-    → 如果 --config：bundleWithConfig(configPath, cliOptions, rawArgs)
-    → 如果指定了 input：bundleWithCliOptions(cliOptions)
-    → 否则：显示帮助
+        → validateCliOptions() via valibot
+        → split into input/output based on schema keys
+        → use positionals as input.input (exit with an error if `--input` is also set, like Rollup; `--help` and `--version` skip this check)
+    → process --environment (KEY:VALUE → process.env)
+    → if --help: showHelp()
+    → if --version: print version
+    → if --config: bundleWithConfig(configPath, cliOptions, rawArgs)
+    → if input specified: bundleWithCliOptions(cliOptions)
+    → else: showHelp()
 ```
 
-## 关键文件
+## Key Files
 
-| 文件                              | 作用                                                                              |
+| File                              | Role                                                                              |
 | --------------------------------- | --------------------------------------------------------------------------------- |
-| `cli/index.ts`                    | 入口文件 — 协调整个流程                                                            |
-| `cli/arguments/index.ts`          | 核心解析 — cac 初始化、选项注册、后处理                                              |
-| `cli/arguments/normalize.ts`      | 将扁平选项拆分为 `input`/`output`，并用 valibot 校验                                  |
-| `cli/arguments/alias.ts`          | 短标志、`reverse`、`requireValue`、`hint` 配置                                      |
-| `cli/arguments/utils.ts`          | `setNestedProperty`、`camelCaseToKebabCase`                                       |
-| `cli/commands/help.ts`            | 自定义帮助文本生成（读取 `options` export）                                           |
-| `cli/commands/bundle.ts`          | `bundleWithConfig`、`bundleWithCliOptions`、watch 模式                              |
-| `cli/logger.ts`                   | consola logger，在 `ROLLDOWN_TEST=1` 时替换为普通 `console.log`                    |
-| `utils/validator.ts`              | 所有 CLI 选项的 valibot schemas、`getCliSchemaInfo()`、input/output key 列表         |
-| `utils/flatten-valibot-schema.ts` | 递归将 valibot object schemas 扁平化为 `{ key: { type, description } }`             |
+| `cli/index.ts`                    | Entry point — orchestrates the pipeline                                           |
+| `cli/arguments/index.ts`          | Core parsing — cac setup, option registration, post-processing                    |
+| `cli/arguments/normalize.ts`      | Splits flat options into `input`/`output`, validates with valibot                 |
+| `cli/arguments/alias.ts`          | Short flags, `reverse`, `requireValue`, `hint` config                             |
+| `cli/arguments/utils.ts`          | `setNestedProperty`, `camelCaseToKebabCase`                                       |
+| `cli/commands/help.ts`            | Custom help text generation (reads `options` export)                              |
+| `cli/commands/bundle.ts`          | `bundleWithConfig`, `bundleWithCliOptions`, watch mode                            |
+| `cli/logger.ts`                   | consola logger, replaced with plain `console.log` when `ROLLDOWN_TEST=1`          |
+| `utils/validator.ts`              | valibot schemas for all CLI options, `getCliSchemaInfo()`, input/output key lists |
+| `utils/flatten-valibot-schema.ts` | Recursively flattens valibot object schemas into `{ key: { type, description } }` |
 
-## `parseCliArguments()` 的返回值
+## What `parseCliArguments()` Returns
 
 ```ts
 interface NormalizedCliOptions {
@@ -63,14 +63,14 @@ interface NormalizedCliOptions {
   environment?: string | string[];
 }
 
-// 另外还有 rawArgs: Record<string, any> — 包含所有已解析参数，包括未知参数
+// Plus rawArgs: Record<string, any> — all parsed args including unknown ones
 ```
 
-## cac 配置
+## cac Setup
 
-### 选项注册
+### Option Registration
 
-遍历 `schemaInfo` + `alias`，并向 cac 注册每个选项。schema keys 采用 camelCase（例如 `moduleTypes`）；cac 内部的 `camelcaseOptionName` 负责 kebab↔camel 转换，因此我们直接用 camelCase key 注册。cac 会同时匹配 argv 中的 `--moduleTypes` 和 `--module-types`。
+Loop over `schemaInfo` + `alias` and register each option with cac. Schema keys are camelCase (e.g. `moduleTypes`); cac's internal `camelcaseOptionName` handles kebab↔camel conversion, so we register with the camelCase key directly. cac will match both `--moduleTypes` and `--module-types` from argv.
 
 ```ts
 for (const [key, info] of Object.entries(schemaInfo)) {
@@ -85,10 +85,10 @@ for (const [key, info] of Object.entries(schemaInfo)) {
     rawName += `--${key}`;
   }
 
-  // 方括号语法决定 cac 如何处理该选项：
-  // - 不带方括号 → boolean（注册到 mri 的 boolean 列表中）
-  // - <required>  → string，如果缺少值则 checkOptionValue 抛出 CACError
-  // - [optional]  → string，如果后面没有值则返回 true
+  // Bracket syntax determines how cac handles the option:
+  // - No brackets → boolean (registered in mri's boolean list)
+  // - <required>  → string, checkOptionValue throws CACError if missing
+  // - [optional]  → string, returns true if no value follows
   if (info.type !== 'boolean' && !config?.reverse) {
     if (config?.requireValue) {
       rawName += ` <${config?.hint ?? key}>`;
@@ -101,175 +101,179 @@ for (const [key, info] of Object.entries(schemaInfo)) {
 }
 ```
 
-### 默认命令
+### Default Command
 
 ```ts
 const cmd = cli.command('[...input]', '');
-cmd.allowUnknownOptions();    // 抑制 cac 的未知选项错误——我们自己发出警告
-cmd.ignoreOptionDefaultValue(); // 防止 cac 注入 --no-* 默认值
+cmd.allowUnknownOptions();    // suppress cac's unknown option error — we warn instead
+cmd.ignoreOptionDefaultValue(); // prevent cac from injecting --no-* defaults
 cmd.action((input, opts) => { ... });
 cli.parse(process.argv, { run: true });
 ```
 
-### cac 提供给我们的能力
+### What cac Gives Us
 
-- camelCase/kebab-case 可互换匹配（修复 [#8410]）
-- `--no-*` 布尔取反
-- 通过 `checkOptionValue()` 进行 `<required>` 值校验——抛出 `CACError`
-- `[optional]` 值解析——修复 `-s inline` 的位置限制（[#3248]）
-- 通过 `setDotProp` 实现点号嵌套（`--transform.define X=Y` → `{ transform: { define: 'X=Y' } }`）
-- 短标志别名与堆叠（`-ms` = `--minify --sourcemap`）
-- 对重复标志自动累积为数组
+- camelCase/kebab-case interchangeable matching (fixes [#8410])
+- `--no-*` boolean negation
+- `<required>` value validation via `checkOptionValue()` — throws `CACError`
+- `[optional]` value parsing — fixes `-s inline` position restriction ([#3248])
+- Dot-notation nesting via `setDotProp` (`--transform.define X=Y` → `{ transform: { define: 'X=Y' } }`)
+- Short flag aliases and stacking (`-ms` = `--minify --sourcemap`)
+- Array auto-accumulation for repeated flags
 
-### 我们自行实现的部分
+### What We Implement Ourselves
 
-- **对象解析** — `--module-types .a=text,.b=json`：先按 `,` 再按 `=` 拆分。支持单个 flag 逗号分隔以及重复 flags。
-- **未知选项警告** — `allowUnknownOptions()` 会抑制 cac 的错误；我们用自己的消息格式检测并警告。
-- **原型污染防护** — cac 的 `setDotProp` 不会防护 `__proto__`、`constructor`、`prototype`。
-- **input/output 拆分** — `normalize.ts` 中 rolldown 特有的逻辑，将扁平选项拆分为 `InputOptions` 和 `OutputOptions`。
-- **自定义帮助文本** — 不使用 `cli.help()`；保留我们自己的生成器，包含排序、对齐、示例、说明。
-- **重复选项过滤** — 非数组类型取最后一个值；`external` 和 `input` 保留数组。
-- **rawArgs 组装** — 所有已解析参数（包括未知参数）的快照，用于 config 函数透传。
-- **短别名 key 清理** — mri 会同时保留短名和长名（例如 `{ s: true, sourcemap: true }`）；我们会删除短名 key。
+- **Object parsing** — `--module-types .a=text,.b=json`: split on `,` then `=`. Supports both comma-separated single flag and repeated flags.
+- **Unknown option warning** — `allowUnknownOptions()` suppresses cac's error; we detect and warn with our own message format.
+- **Prototype pollution guard** — cac's `setDotProp` doesn't guard against `__proto__`, `constructor`, `prototype`.
+- **Input/output splitting** — rolldown-specific logic in `normalize.ts` that splits flat options into `InputOptions` and `OutputOptions`.
+- **Custom help text** — don't use `cli.help()`; keep our custom generator with sorting, padding, examples, notes.
+- **Duplicate option filtering** — take last value for non-array types; keep arrays for `external` and `input`.
+- **rawArgs assembly** — snapshot of all parsed args (including unknown) for config function passthrough.
+- **Short-alias key cleanup** — mri duplicates both short and long names (e.g. `{ s: true, sourcemap: true }`); we delete the short keys.
 
-## 后处理顺序
+## Post-Processing Order
 
-1. 删除 `parsedOptions['--']`（cac 特有产物）
-2. 删除短别名重复 key
-3. 原型污染防护
-4. 未知选项检测 + 警告
-5. 快照 `rawArgs`（包含未知 key）
-6. 从 `parsedOptions` 中移除未知 key
-7. 类型强制转换 — 重复项过滤 + 数组包装（合并为单次循环）
-8. 对象选项解析（`key:val,key:val`）
-9. `normalizeCliOptions()` — valibot 校验 + input/output 拆分
+1. Append `parsedOptions['--']` to positional input, then delete the cac-specific key
+2. Delete short-alias duplicate keys
+3. Prototype pollution guard
+4. Unknown option detection + warning
+5. Snapshot `rawArgs` (includes unknown keys)
+6. Remove unknown keys from `parsedOptions`
+7. Type coercion — duplicate filtering + array wrapping (single merged loop)
+8. Object option parsing (`key:val,key:val`)
+9. `normalizeCliOptions()` — valibot validation + input/output splitting
 
-## 实现说明
+## Implementation Notes
 
-### `CACError` 未导出
+### `CACError` Is Not Exported
 
-cac 只导出 `cac`、`CAC` 和 `Command`。`CACError` 在 `utils.ts` 中，但没有重新导出。我们通过检查 `err.name === 'CACError'` 来捕获。
+cac only exports `cac`, `CAC`, and `Command`. `CACError` is in `utils.ts` but not re-exported. We catch by checking `err.name === 'CACError'`.
 
 ### `ignoreOptionDefaultValue()`
 
-cac 会为 `--no-*` 选项自动注入 `default: true`。如果不调用 `ignoreOptionDefaultValue()`，cac 会在每次解析结果中都注入这些默认值，即使没有传入该标志也会如此。这会破坏 valibot 校验——例如 `preserveEntrySignatures` 只接受 `false`，而 cac 注入的 `true` 会导致校验错误。我们完全禁用 cac 的默认值，让 bundler 自己处理默认值。
+cac auto-injects `default: true` for `--no-*` options. Without `ignoreOptionDefaultValue()`, cac injects these into every parse result, even when the flag is not passed. This breaks valibot validation — e.g. `preserveEntrySignatures` only accepts `false`, so cac's injected `true` causes a validation error. We disable cac's defaults entirely and let the bundler handle its own defaults.
 
-### 短别名 key 重复
+### Short-Alias Key Duplication
 
-mri 会同时返回短名和长名作为独立 key（例如 `-s` → `{ s: true, sourcemap: true }`）。我们在启动时收集所有短别名，并在解析后的选项中删除它们。
+mri returns both short and long names as separate keys (e.g. `-s` → `{ s: true, sourcemap: true }`). We collect all short aliases at startup and delete them from parsed options.
 
-### 嵌套选项的父级 key
+### Nested Option Parent Keys
 
-cac 的 `setDotProp` 会把 `--transform.define value` 转换为 `{ transform: { define: 'value' } }`。在检查未知选项时，顶层 key `transform` 不在扁平化的 `schemaInfo` 中（只有 `transform.define`、`transform.target` 等）。我们会从点分 schema keys 预先计算父级 key，并将其纳入已知集合。
+cac's `setDotProp` converts `--transform.define value` into `{ transform: { define: 'value' } }`. When checking for unknown options, the top-level key `transform` is not in flattened `schemaInfo` (only `transform.define`, `transform.target`, etc. are). We pre-compute parent keys from dot-separated schema keys and include them in the known set.
 
-### 对象选项解析遍历
+### Object Option Parsing Traversal
 
-在 cac 的 `setDotProp` 之后，解析出的选项已经是嵌套结构。对象解析步骤会沿着点路径遍历以查找并解析字符串值，而不是遍历顶层条目。
+After cac's `setDotProp`, parsed options already have nested structure. The object parsing step traverses the dot-path to find and parse string values, rather than iterating top-level entries.
 
-### 带可选值的 `--config`
+### `--config` With Optional Value
 
-`-c` 注册为 `[optional]` 时，如果后面没有值，会返回 `config: true`。`normalize.ts` 会将 `config: true` 映射为 `config: ''`，以保留自动检测行为。
+`-c` registered as `[optional]` returns `config: true` when no value follows. `normalize.ts` maps `config: true` → `config: ''` to preserve auto-detect behavior.
 
-### `--environment` 不是对象选项
+### `--environment` Is Not an Object Option
 
-`--environment` 使用 `:` 和 `,` 分隔符（与 Rollup 兼容），在 `cli/index.ts` 中单独处理，写入 `process.env`。其 schema 类型是 `string | string[]`，不是 object。这与对象选项解析无关。
+`--environment` uses `:` and `,` separators (Rollup-compatible), processed separately in `cli/index.ts` by writing to `process.env`. Schema type is `string | string[]`, not object. Unrelated to the object option parsing.
 
-### `--` 分隔符
+### `--` Delimiter
 
-`parseArgs` 会将 `--` 之后的参数视为 positionals。cac 会把它们收集到 `options['--']` 数组中。我们会在后处理中删除这个 key，因为下游代码不会使用它。
+`parseArgs` treats args after `--` as positionals. cac collects them into `options['--']` as a string array. Post-processing appends them to the earlier positionals before deleting this parser-specific key. Their order is preserved, and values beginning with `-` remain entry paths rather than options.
 
-## 边界情况
+### The JS API Loads `cli/logger.ts` Lazily
 
-### `--sourcemap` 双重行为
+`utils/bindingify-output-options.ts` prints its warnings with the CLI logger, so the JS API and the CLI show them in the same format. consola is costly to load (it bundles `string-width`, which creates an `Intl.Segmenter` at load time), so that file imports `cli/logger.ts` with `await import()`, only when a warning can be printed. Keep `cli/logger.ts` out of the static imports of the JS API entries (`index.ts`, `experimental-index.ts`).
 
-单独 `-s` → `true`。`-s inline` → `"inline"`。`--sourcemap hidden` → `"hidden"`。
+## Edge Cases
 
-注册方式为 `-s, --sourcemap [type]`。`[optional]` 方括号意味着 mri 不会把 `-s` 当作 boolean——它会把下一个非 flag 参数作为值，若后面没有则返回 `true`。
+### `--sourcemap` Dual Behavior
+
+`-s` alone → `true`. `-s inline` → `"inline"`. `--sourcemap hidden` → `"hidden"`.
+
+Registered as `-s, --sourcemap [type]`. The `[optional]` bracket means mri does NOT treat `-s` as boolean — it consumes the next non-flag arg as the value, or returns `true` if none follows.
 
 ### `--no-preserve-entry-signatures`
 
-传入时，cac 设置 `preserveEntrySignatures: false`。未传入时，其值为 `undefined`，由 bundler 应用自己的默认值（`ExportsOnly`）。
+When passed, cac sets `preserveEntrySignatures: false`. When not passed, it's `undefined` and the bundler applies its own default (`ExportsOnly`).
 
-### 值中包含逗号的对象选项
+### Object Options With Comma in Values
 
-`--transform.define __A__=A,__B__=B` — cac 返回单个字符串 `"__A__=A,__B__=B"`。我们的后处理会将其拆分为 `{ __A__: 'A', __B__: 'B' }`。
+`--transform.define __A__=A,__B__=B` — cac returns the single string `"__A__=A,__B__=B"`. Our post-processing splits it into `{ __A__: 'A', __B__: 'B' }`.
 
-### 原型污染
+### Prototype Pollution
 
-cac 的 `setDotProp` 不会防护 `__proto__`、`constructor` 或 `prototype`。我们会在归一化之前的后处理中删除任何此类 key。
+cac's `setDotProp` does not guard against `__proto__`, `constructor`, or `prototype`. We delete any such keys in post-processing before normalization.
 
-## 测试用例
+## Test Cases
 
-测试位于 `packages/rolldown/tests/cli/cli-e2e.test.ts`。运行命令：`cd packages/rolldown/tests && pnpm test:cli`。
+Tests are in `packages/rolldown/tests/cli/cli-e2e.test.ts`. Run with `cd packages/rolldown/tests && pnpm test:cli`.
 
-| #   | 功能                     | 示例                                                                            |
-| --- | ------------------------ | ------------------------------------------------------------------------------- |
+| #   | Feature                   | Example                                                                         |
+| --- | ------------------------- | ------------------------------------------------------------------------------- |
 | 1   | `--version` / `-v`        | `rolldown --version`                                                            |
 | 2   | `--help` / `-h`           | `rolldown --help`                                                               |
-| 3   | 空参数时显示帮助         | `rolldown`                                                                      |
-| 4   | 帮助优先级 ([#8523])      | `rolldown lib -o dist/lib.js --help`                                            |
-| 5   | 布尔选项                 | `rolldown index.ts --minify -d dist`                                            |
-| 6   | 字符串选项               | `rolldown index.ts --format cjs -d dist`                                        |
-| 7   | 短标志                   | `rolldown index.ts -d dist -s`                                                  |
-| 8   | 数组（重复 flags）        | `rolldown index.ts --external node:path --external node:url -d dist`            |
-| 9   | 对象（重复 flags）        | `rolldown index.ts --module-types .123=text --module-types .b64=base64 -d dist` |
-| 9a  | 对象（逗号分隔）          | `rolldown index.ts --module-types .123=text,notjson=json,.b64=base64 -d dist`   |
-| 10  | `--no-*` 布尔取反         | `rolldown index.ts --no-external-live-bindings ...`                             |
-| 11  | 嵌套点号表示法           | `rolldown index.js --transform.define __DEFINE__=defined`                       |
-| 12  | positionals 作为 input   | `rolldown 1.ts --input ./2.js`                                                  |
-| 13  | 配置加载（`-c`）          | `rolldown -c rolldown.config.ts`                                                |
-| 14  | 配置函数 + rawArgs       | `rolldown -c rolldown.config.js --customArg=customValue`                        |
-| 15  | CLI 覆盖配置              | `rolldown -c rolldown.config.js --format cjs`                                   |
+| 3   | Help for empty args       | `rolldown`                                                                      |
+| 4   | Help precedence ([#8523]) | `rolldown lib -o dist/lib.js --help`                                            |
+| 5   | Boolean options           | `rolldown index.ts --minify -d dist`                                            |
+| 6   | String options            | `rolldown index.ts --format cjs -d dist`                                        |
+| 7   | Short flags               | `rolldown index.ts -d dist -s`                                                  |
+| 8   | Array (repeated flags)    | `rolldown index.ts --external node:path --external node:url -d dist`            |
+| 9   | Object (repeated flags)   | `rolldown index.ts --module-types .123=text --module-types .b64=base64 -d dist` |
+| 9a  | Object (comma-separated)  | `rolldown index.ts --module-types .123=text,notjson=json,.b64=base64 -d dist`   |
+| 10  | `--no-*` boolean negation | `rolldown index.ts --no-external-live-bindings ...`                             |
+| 11  | Nested dot-notation       | `rolldown index.js --transform.define __DEFINE__=defined`                       |
+| 12  | Positionals as input      | `rolldown 1.ts --input ./2.js`                                                  |
+| 13  | Config loading (`-c`)     | `rolldown -c rolldown.config.ts`                                                |
+| 14  | Config function + rawArgs | `rolldown -c rolldown.config.js --customArg=customValue`                        |
+| 15  | CLI overrides config      | `rolldown -c rolldown.config.js --format cjs`                                   |
 | 16  | `--environment`           | `rolldown -c --environment PRODUCTION,FOO:bar`                                  |
-| 17  | `requireValue` 校验       | `rolldown 1.ts -d`（错误：需要值）                                               |
-| 18  | 无效选项值               | `rolldown index.ts --format INCORRECT`                                          |
-| 19  | 未知选项警告             | `rolldown index.ts --someRandomFlag -d dist`                                    |
-| 20  | watch 模式               | `rolldown index.ts -d dist -w -s`                                               |
+| 17  | `requireValue` validation | `rolldown 1.ts -d` (error: requires value)                                      |
+| 18  | Invalid option value      | `rolldown index.ts --format INCORRECT`                                          |
+| 19  | Unknown option warns      | `rolldown index.ts --someRandomFlag -d dist`                                    |
+| 20  | Watch mode                | `rolldown index.ts -d dist -w -s`                                               |
 | 21  | camelCase input ([#8410]) | `rolldown index.ts --moduleTypes .png=dataurl -d dist`                          |
 
 [#8410]: https://github.com/rolldown/rolldown/issues/8410
 [#3248]: https://github.com/rolldown/rolldown/issues/3248
 [#8523]: https://github.com/rolldown/rolldown/issues/8523
 
-## 相关
+## Related
 
-- [#8410 — CLI 静默误处理 camelCase 选项](https://github.com/rolldown/rolldown/issues/8410)
-- [#3248 — `-s inline` 位置限制](https://github.com/rolldown/rolldown/issues/3248)
-- [#8523 — `--help` 对其他选项的优先级](https://github.com/rolldown/rolldown/issues/8523)
-- [Vite CLI 源码](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/cli.ts) — cac 使用模式的参考
+- [#8410 — CLI silently mishandles camelCase options](https://github.com/rolldown/rolldown/issues/8410)
+- [#3248 — `-s inline` position restriction](https://github.com/rolldown/rolldown/issues/3248)
+- [#8523 — `--help` precedence over other options](https://github.com/rolldown/rolldown/issues/8523)
+- [Vite CLI source](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/cli.ts) — reference for cac usage patterns
 
 ---
 
 <details>
-<summary>迁移背景（已归档）</summary>
+<summary>Migration context (archived)</summary>
 
-## 迁移：`parseArgs` → cac
+## Migration: `parseArgs` → cac
 
-之前的实现使用的是 Node.js 内置的 `parseArgs`，并带有 16 个手写的 workaround。#8410 的根本原因是 `parseArgs` 会把 `--moduleTypes` 视为未知的布尔值（因为它只识别 `--module-types`），并且会悄悄把该值丢进位置参数中。
+The previous implementation used Node.js's built-in `parseArgs` with 16 hand-rolled workarounds. The root cause of #8410 was that `parseArgs` treats `--moduleTypes` as an unknown boolean (since it only knows `--module-types`), silently dropping the value into positionals.
 
-### 变更内容
+### What Changed
 
-| 文件                         | 操作       | 详情                                         |
-| ---------------------------- | ---------- | ----------------------------------------------- |
-| `cli/arguments/index.ts`     | 重写       | 用 cac 替换 parseArgs，并添加后处理            |
-| `cli/arguments/normalize.ts` | 简化       | 移除 unflattening 循环 + 原型保护              |
-| `cli/arguments/alias.ts`     | 简化       | 移除 `default` 字段（死代码）                 |
-| `cli/arguments/utils.ts`     | 简化       | 移除 `kebabCaseToCamelCase`                   |
-| `cli/commands/help.ts`       | 小幅更新   | 适配新的 `options` 导出形状                  |
-| `cli/index.ts`               | 无变化     | 相同接口                                      |
-| `cli/commands/bundle.ts`     | 无变化     | 相同接口                                      |
+| File                         | Action       | Details                                         |
+| ---------------------------- | ------------ | ----------------------------------------------- |
+| `cli/arguments/index.ts`     | Rewrite      | Replace parseArgs with cac, add post-processing |
+| `cli/arguments/normalize.ts` | Simplify     | Remove unflattening loop + prototype guard      |
+| `cli/arguments/alias.ts`     | Simplify     | Remove `default` field (dead code)              |
+| `cli/arguments/utils.ts`     | Simplify     | Remove `kebabCaseToCamelCase`                   |
+| `cli/commands/help.ts`       | Minor update | Adjust to new `options` export shape            |
+| `cli/index.ts`               | No change    | Same interface                                  |
+| `cli/commands/bundle.ts`     | No change    | Same interface                                  |
 
-### 行为差异
+### Behavioral Differences
 
-| 变更                      | 之前                                               | 之后                                                 |
-| ------------------------- | -------------------------------------------------- | ---------------------------------------------------- |
-| 数字字符串强制转换        | `--code-splitting.min-size 1000` → 字符串 `"1000"` | → 数字 `1000`（mri 会强制转换看起来像数字的值）      |
-| 未知选项上的 `--no-*`     | 警告 "foo is unrecognized"                         | 警告相同，但值变为 `false` 而不是缺失                |
-| `--` 分隔符              | `--` 之后的参数变为位置参数                         | 收集到 `options['--']` 中，并在后处理时删除         |
-| 短旗标堆叠               | 不支持                                              | `-ms` = `--minify --sourcemap`                       |
+| Change                      | Before                                             | After                                                        |
+| --------------------------- | -------------------------------------------------- | ------------------------------------------------------------ |
+| Numeric string coercion     | `--code-splitting.min-size 1000` → string `"1000"` | → number `1000` (mri coerces numeric-looking values)         |
+| `--no-*` on unknown options | warns "foo is unrecognized"                        | same warning, value is `false` instead of absent             |
+| `--` delimiter              | args after `--` become positionals                 | collected into `options['--']`, then appended to positionals |
+| Short flag stacking         | not supported                                      | `-ms` = `--minify --sourcemap`                               |
 
-### 为什么从 `alias.ts` 中移除 `default`
+### Why `default` Was Removed From `alias.ts`
 
-三个 `reverse: true` 选项（`treeshake`、`externalLiveBindings`、`preserveEntrySignatures`）的 `default` 值在主分支上属于死代码——token 循环只会在没有传值时，对 `string`/`union` 类型使用 `default`，而这些全都是 `boolean`/`reverse` 选项。使用 `ignoreOptionDefaultValue()` 后，cac 也不会应用默认值。
+The three `reverse: true` options (`treeshake`, `externalLiveBindings`, `preserveEntrySignatures`) had `default` values that were dead code on main — the token loop only used `default` for `string`/`union` types passed without a value, and these are all `boolean`/`reverse` options. With `ignoreOptionDefaultValue()`, cac never applies defaults either.
 
 </details>
