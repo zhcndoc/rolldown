@@ -84,6 +84,14 @@ console.log(import_foo.value);
 
 ## 注意事项
 
+### ESM 输出中的 CommonJS 路径变量
+
+配置 [`platform: 'node'`](../guide/notable-features.md#platform-presets) 和 `format: 'esm'` 时，Rolldown 会使用 Node 的 [`import.meta.dirname`](https://nodejs.org/api/esm.html#importmetadirname) 和 [`import.meta.filename`](https://nodejs.org/api/esm.html#importmetafilename)，为打包后的 CommonJS 模块提供 `__dirname` 和 `__filename` 绑定。这样，当 CommonJS 依赖在 ESM 输出中使用这些变量时，就不会因 `ReferenceError` 而失败。ESM 源模块、本地声明的绑定、其他平台和其他输出格式均不受影响。
+
+每个生成的 CommonJS 包装器都有各自可变的绑定，符合 Node 按模块隔离的行为。这些绑定的初始值指向包含该包装器的 ESM 输出 chunk，而非原始源模块。它们可用于定位输出到 bundle 同目录的资源；但如果代码依赖相对于未打包源文件的路径，可能需要考虑新的输出位置。
+
+生成的输出要求 Node 版本支持 `import.meta.dirname` 和 `import.meta.filename`。从 Node 20.11.0 起可以使用这些属性，且它们只对本地 `file:` 模块存在。
+
 ### `require` 外部模块
 
 默认情况下，Rolldown 会尽量保持 `require` 的语义，不会把针对外部模块的 `require` 转换为 `import`。这是因为 `require` 的语义与 ES 模块中的 `import` 不同。例如，`require` 是延迟求值的，而 `import` 会在代码执行之前求值。

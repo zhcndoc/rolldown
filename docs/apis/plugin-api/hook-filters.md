@@ -81,6 +81,9 @@ Rolldown 会在 Rust 端评估过滤器，并且只有在过滤器匹配时才�
 > 在 `resolve` hook 中，`id` 必须是 `RegExp`，不允许使用 `string`。
 > 这是因为 `resolveId` 中的 `id` 值是导入语句中写入的精确文本，通常不是绝对路径，而 glob 模式是用来匹配绝对路径的。
 
+> [!NOTE]
+> 启用 [`experimental.importAttributes`](/in-depth/import-attributes) 后，带属性导入的模块 id 可能类似 `/src/a.json?attributes=...`。`load` 和 `transform` 的 `id` 过滤器会匹配完整 id，因此 `/\.json$/` 无法匹配。可以允许查询后缀，例如 `/\.json(?:\?.*)?$/`。另见[匹配扩展名](/in-depth/import-attributes#match-the-extension)。
+
 ## 可组合过滤器
 
 对于更复杂的过滤逻辑，Rolldown 通过 [`@rolldown/pluginutils`](https://github.com/rolldown/plugins/tree/main/packages/pluginutils) 包提供了可组合的过滤表达式。你可以使用 `and`、`or` 和 `not` 等逻辑运算符来构建过滤器。

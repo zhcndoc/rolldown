@@ -58,11 +58,13 @@ ROLLDOWN_WORKER_THREADS=2 RAYON_NUM_THREADS=2 npm run build
 
 ### 插件
 
-插件扩展了 Rolldown 的功能，但也可能引入性能开销。
+插件扩展了 Rolldown 的功能，也可能带来性能开销。要查看 `resolveId`、`load`、`transform` 和 `renderChunk` 的插件耗时，请启用[构建报告](/in-depth/build-report)并查看其中的 `timing.md`。
 
 #### 插件 Hook 过滤器
 
 Rolldown 提供了一项名为 **插件 Hook 过滤器** 的功能。这允许你精确指定插件 hook 应该处理哪些模块，从而减少 JavaScript 和 Rust 之间的通信开销。有关过滤器内部工作原理的详细信息，请参阅 [Hook Filters](/apis/plugin-api/hook-filters) 页面。
+
+[构建报告](/in-depth/build-report#files)的 `timing.md` 会列出没有执行任何工作的 hook。它们最适合作为添加过滤器的候选项。
 
 如果你是插件使用者，并且你使用的插件没有指定 hook 过滤器，你可以使用 Rolldown 导出的 `withFilter` 工具函数为其添加过滤器。
 

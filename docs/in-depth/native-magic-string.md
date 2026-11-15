@@ -99,10 +99,18 @@ Rolldown 的原生 MagicString 实现用 Rust 重写了核心功能，带来了�
 
 **Source Map 生成：**
 
-- `generateMap(options?)` - 生成一个 JSON 字符串形式的 source map
+- `generateMap(options?)` - 生成一个 source map 对象，其 `toString()` 会返回 JSON 字符串形式的 map，`toUrl()` 会返回 data URL
   - `options.source` - 源文件名
   - `options.includeContent` - 在 map 中包含原始源代码
-  - `options.hires` - 高分辨率模式：`true`、`false` 或 `"boundary"`
+  - `options.hires` - 高分辨率模式：`true`、`false` 或 `"boundary"`。默认值为实例的 `hires` 选项；未设置该选项时为 `false`
+
+构造函数还接受 `hires` 选项，这是 `magic-string` 所没有的：`new RolldownMagicString(code, { hires: false })`。该选项会设置从此实例生成的 source map 的分辨率。
+
+当 `transform` 或 `renderChunk` hook 返回原生 MagicString 且未提供 `map` 时，Rolldown 会为该步骤生成 map。它会使用 MagicString 的 `hires` 选项；未设置时则使用 `"boundary"`。使用 `"boundary"` 时，该 map 与链中的其他 map 合成后，输出 source map 会保留列位置和名称。使用 `hires: false` 时，该步骤的 map 更小、生成更快，但其中的每个位置都会映射到所在行的开头。
+
+如需使用其他分辨率，请在创建 MagicString 时设置 `hires` 选项。`meta.magicString` 没有可设置的选项，因为它由 Rolldown 创建；因此请根据 `code` 创建自己的实例。启用此选项后，当 `experimental.nativeMagicString` 和 source map 均开启时，Rolldown 仍会在后台线程生成 `transform` map。
+
+你也可以将自定义 map 与 MagicString 一起返回，例如 `{ code: magicString, map: magicString.generateMap({ hires: true }) }`。此时 Rolldown 会使用你提供的 map，不再自行生成；但该 map 会由你的 hook 在 JS 线程上生成。`map: null` 表示该步骤没有移动代码，因此 Rolldown 不会为其生成 map。如果该步骤移动了代码，输出 source map 就会指向错误位置。
 
 ### 尚未实现
 
